@@ -41,7 +41,7 @@ Adults who consume film and TV regularly and discover new content primarily thro
 - 1-to-1 recommendations to one or more friends (creates N separate records)
 - Recommendation note: optional, 500-character limit
 - Incoming recommendations inbox, separate from watchlist
-- Dismiss rec with optional quick-reply: "Not for me" / "Already watched" / "Save for later" / custom / silent
+- Dismiss rec with optional quick-reply: "Not for me" / "Already watched" / custom / silent. "Save for later" is intentionally NOT a dismiss option — that flow is the separate `accepted` state (adds the title to the watchlist with attribution; rec stays open).
 - Mark received rec as watched → sender is notified
 
 #### Recommendation lifecycle
