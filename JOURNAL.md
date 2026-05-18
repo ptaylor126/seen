@@ -37,15 +37,22 @@ Running session log. Newest entries at top. Read this first to brief future Clau
   - **Apple**: registered `com.paultaylor.seen` App ID in Apple Developer with Sign in with Apple capability. Configured Apple provider in Supabase (Client IDs field populated; no secret needed for the native Sign in with Apple flow that returns an identity token directly).
   - **Google**: created Google Cloud project "Seen" with OAuth Auth Platform configured (External audience). Created Google iOS OAuth Client (Client ID saved to password manager) and Google Web OAuth Client (Client ID + Secret saved to password manager). Configured Google provider in Supabase with both Client IDs comma-separated, the Web Client Secret, and "Skip nonce checks" enabled.
   - **Skipped for now**: Google Android OAuth Client — needs the app's release SHA-1 fingerprint, which only exists after the first EAS build. Will register post-iOS validation.
+- Authentication flow built and verified end-to-end on a physical iPhone:
+  - `npx expo install` added `expo-apple-authentication` and `@react-native-google-signin/google-signin`. Google's config plugin auto-registered in `app.json`.
+  - `app.json`: added `ios.usesAppleSignIn: true` and converted the Google plugin entry to array form with `iosUrlScheme` (reversed iOS Client ID). Filled the iOS Client ID into `GoogleSignin.configure` in `src/lib/auth.ts`.
+  - `src/lib/auth.ts` — three helpers: `signInWithApple` (FULL_NAME + EMAIL scopes, exchanges identity token via `supabase.auth.signInWithIdToken`), `signInWithGoogle` (Play Services check → signIn → getTokens → signInWithIdToken), `signOut`. Both flows let user-cancellation propagate as a typed error code so the screen can swallow it silently.
+  - `src/hooks/use-session.ts` — `useSession()` returns a discriminated union `{ status: 'loading' } | { status: 'ready', session }`, subscribed to `onAuthStateChange` (unsubscribed on unmount).
+  - `src/app/(auth)/_layout.tsx` + `src/app/(auth)/sign-in.tsx` — Stack group with header off; sign-in screen platform-branches the button (Apple's native `AppleAuthenticationButton` on iOS, themed coral Pressable on Android) under a centred "Seen" wordmark, with a tagline below and disclosure pinned to the bottom. Busy state disables re-tap.
+  - `src/app/_layout.tsx` — session-aware routing: `useEffect` on `(session, segments, router)` redirects to `/(auth)/sign-in` when signed out + outside the auth group, and to `/` when signed in + inside it. Loading overlay (ActivityIndicator on `palette.bg`) covers the navigator until the session resolves.
+- EAS workflow set up: installed/configured EAS CLI, ran `eas build:configure` for iOS, created and installed the first iOS development build on a physical iPhone.
+- End-to-end Sign in with Apple verified on device: signed in → auth.users row created → `profiles` row created via signup trigger → `invite_links` row created via the extended trigger from migration 2. Session-aware routing correctly directs unauthenticated users to `/(auth)/sign-in` and signed-in users back to `/`. Committed `98bda0c`.
 
 **Next**
-- Build auth screen UI: Sign in with Apple button (iOS), Sign in with Google button (Android).
-- Install `expo-apple-authentication` and `@react-native-google-signin/google-signin`.
-- Implement auth handlers that pass identity tokens to `supabase.auth.signInWithIdToken`.
-- Add the Google iOS URL scheme (reverse of the iOS OAuth Client ID) to `app.json` for the native Google sign-in flow.
-- Add a session check in `app/_layout.tsx` that routes unauthenticated users to `/sign-in`.
-- After first successful sign-in, drive into onboarding (steps 3-7 from PRD §5).
-- Still queued from earlier: load DM Sans via `useFonts`; build `src/lib/tmdb.ts` + `tmdb-proxy` Edge Function; then the post-onboarding tab structure per TECHNICAL §4.
+- Add a temporary sign-out button so we can re-run the auth flow without reinstalling — likely on the home placeholder, in the corner.
+- Build the onboarding flow (PRD §5: handle/display-name → last-watched → best-watched → watchlist-three → invite). Triggers fire on first INSERT but onboarding writes display_name + handle over the placeholders.
+- Build the TMDB proxy Edge Function (TMDB Read Access Token as Supabase secret) and `src/lib/tmdb.ts` wrapper.
+- First real screen pair after onboarding: TMDB search → add to library → library view.
+- Test Google Sign-In path: needs an Android dev build (which requires the SHA-1 → Google Android OAuth Client) or a second iOS test device with a Google account configured.
 
 **Open questions**
-- None blocking the auth UI work.
+- None for this phase. Schema phase handoff was clean.
