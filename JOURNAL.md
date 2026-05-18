@@ -18,10 +18,11 @@ Running session log. Newest entries at top. Read this first to brief future Clau
 - Created `rls-auditor` subagent (`.claude/agents/rls-auditor.md`) — reviews Supabase migrations for RLS correctness against TECHNICAL §2 / PRD §5
 - Created PreToolUse `block-secrets` hook (`.claude/hooks/block-secrets.sh`) — blocks Read/Edit/Write on `.env*`, `*.pem`, `*.key`, SSH keys, `.npmrc`/`.pypirc`/`.netrc`, and any path containing `credentials`/`secrets` (case-insensitive)
 - Resolved 5 open questions in PRD/TECHNICAL/DESIGN: TMDB hybrid proxy via `tmdb-proxy` Edge Function, `push_tokens` table, `pg_cron` daily deletion job, canonical theme path (`src/theme/theme.ts`), profile-visibility clarification
+- First migration applied: `supabase/migrations/20260518114602_create_profiles_and_handle_history.sql` — creates `public.profiles` and `public.handle_history` with check constraints, indexes, RLS, and the `handle_new_user()` signup trigger (security definer, placeholder handle `user_` + 12 hex chars). Auditor PASS, pushed to remote (`xhzrsdgrgimlrdnyzidr`), verified via `supabase inspect db table-stats --linked`. Not yet committed.
 
 **Next** (Foundation phase per PRD §9.1)
-- Write Supabase migrations for the 9 tables in TECHNICAL §1 (`profiles`, `handle_history`, `items`, `friendships`, `friend_requests`, `recommendations`, `invite_links`, `notifications`, `push_tokens`). For each: enable RLS, write SELECT/INSERT/UPDATE/DELETE policies, then run the `rls-auditor` subagent before applying
-- Auth-signup trigger that creates a `profiles` row and an `invite_links` row
+- Write the remaining migrations for TECHNICAL §1 (`items`, `friendships`, `friend_requests`, `recommendations`, `invite_links`, `notifications`, `push_tokens`). For each: enable RLS, write SELECT/INSERT/UPDATE/DELETE policies, then run the `rls-auditor` subagent before applying
+- Extend `handle_new_user()` to also insert into `invite_links` once that table exists
 - Build `src/lib/supabase.ts` client and `src/lib/tmdb.ts` (the TMDB wrapper hits the `tmdb-proxy` Edge Function — no direct TMDB calls from the client)
 - Create `src/theme/theme.ts` from DESIGN.md tokens; delete `src/constants/theme.ts` and the starter components (app-tabs, collapsible, starter `index.tsx`/`explore.tsx`); replace with minimal placeholders until real auth/onboarding screens land
 
