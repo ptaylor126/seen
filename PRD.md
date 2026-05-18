@@ -44,6 +44,13 @@ Adults who consume film and TV regularly and discover new content primarily thro
 - Dismiss rec with optional quick-reply: "Not for me" / "Already watched" / "Save for later" / custom / silent
 - Mark received rec as watched → sender is notified
 
+#### Recommendation lifecycle
+
+- **pending** — in the recipient's active inbox; not yet acted on.
+- **accepted** — recipient added the title to their watchlist with attribution. The rec stays open. Sender is NOT notified at this step; they only get the `rec_watched` push when the title actually gets watched.
+- **watched** — terminal. Sender is notified. Trigger fires on transitions from either `pending` or `accepted` into `watched`.
+- **dismissed** — terminal. Sender sees the dismiss reason (enum or free text, NULL allowed for silent dismiss).
+
 ### Friend system
 - Profile info (handle, display name, avatar) is visible to any signed-in user. This enables handle search and friend request discovery. All library activity, recommendations, and notes are gated by friendship.
 - Mutual accept required to become friends via handle search (sending a request → recipient accepts)

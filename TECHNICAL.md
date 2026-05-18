@@ -85,11 +85,17 @@ A rec sent from one user to one user. Multi-friend recommend creates N rows.
 | tmdb_id | int | |
 | media_type | text | 'movie' or 'tv' |
 | note | text | NULL or up to 500 chars |
-| status | text | 'pending' / 'watched' / 'dismissed' / 'saved' |
+| status | text | 'pending' / 'accepted' / 'watched' / 'dismissed' (see lifecycle below) |
 | dismiss_reason | text | NULL / 'not_for_me' / 'already_watched' / custom text |
 | watched_via_rec | bool | If recipient marked watched while rec was open |
 | sent_at | timestamptz | Default now() |
-| resolved_at | timestamptz | Set when status moves off 'pending' |
+| resolved_at | timestamptz | Set when status moves into 'watched' or 'dismissed' (terminal states). `resolved_at IS NULL ↔ rec is open` (pending or accepted). |
+
+Lifecycle:
+- `pending`: rec sits in the recipient's inbox; not yet acted on.
+- `accepted`: recipient added the title to their watchlist with attribution; rec is still open and will fire `rec_watched` on transition to `watched`. Sender is NOT notified at this step.
+- `watched`: terminal. Sender is notified via the `rec_watched` trigger when the row transitions from `pending` or `accepted` into `watched`.
+- `dismissed`: terminal. Sender sees the dismiss reason (NULL / enum / free text).
 
 Unique constraint: (from_user_id, to_user_id, tmdb_id, media_type) — prevents re-sends
 Indexes: (to_user_id, status), (from_user_id, status)
