@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "seen",
+    "name": "Seen",
     "slug": "seen",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,9 +8,11 @@
     "scheme": "seen",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "com.paultaylor.seen",
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.paultaylor.seen",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
