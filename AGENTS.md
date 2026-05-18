@@ -8,6 +8,7 @@ Seen is a mobile app for tracking films and TV shows and sharing personal recomm
 
 ## Reference documents
 
+- JOURNAL.md — running session log: what's done, what's next, open questions. Read this first to understand the current project state.
 - `PRD.md` — product requirements, scope, and locked decisions
 - `TECHNICAL.md` — data model, RLS rules, screens, conventions
 - `DESIGN.md` — visual language and motion principles
