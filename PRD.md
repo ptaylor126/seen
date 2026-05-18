@@ -28,7 +28,7 @@ Adults who consume film and TV regularly and discover new content primarily thro
 - iOS and Android in parallel from one codebase
 - React Native via Expo (SDK 54), TypeScript, Expo Router
 - Supabase (Postgres, Auth, Realtime, Edge Functions, Push)
-- TMDB API v4 for content metadata
+- TMDB API v4 for content metadata. The Read Access Token is stored as a Supabase secret and proxied through a `tmdb-proxy` Edge Function — never bundled into the client. Image URLs are served direct from the TMDB CDN (no proxy for images).
 - Sign in with Apple (iOS), Google Sign-In (Android)
 
 ## 5. In scope (MVP)
@@ -45,7 +45,8 @@ Adults who consume film and TV regularly and discover new content primarily thro
 - Mark received rec as watched → sender is notified
 
 ### Friend system
-- Mutual accept required for in-app handle search
+- Profile info (handle, display name, avatar) is visible to any signed-in user. This enables handle search and friend request discovery. All library activity, recommendations, and notes are gated by friendship.
+- Mutual accept required to become friends via handle search (sending a request → recipient accepts)
 - Auto-accept via personal invite link
 - Unfriend: severs silently, past recs remain visible to both parties
 - Friends see each other's library by default; per-item private toggle for exceptions

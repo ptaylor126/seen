@@ -120,6 +120,22 @@ In-app notification feed. Drives push and the bell icon.
 
 Index: (user_id, read_at), (user_id, created_at)
 
+### `push_tokens`
+Per-device Expo push tokens. A user can have multiple rows (one per device); notifications fan out to every active row.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid | PK |
+| user_id | uuid | FK profiles.id, ON DELETE CASCADE |
+| expo_push_token | text | Expo push token string |
+| platform | text | 'ios' or 'android' |
+| device_id | text | Stable per-device identifier |
+| created_at | timestamptz | Default now() |
+| last_seen_at | timestamptz | Updated on each app open |
+
+Unique constraint: (user_id, device_id)
+Index: user_id
+
 ## 2. Row Level Security policies
 
 Principle: by default, deny. Each table gets explicit `auth.uid()`-based policies.
@@ -158,6 +174,9 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 - UPDATE: own rows only (mark read).
 - INSERT: only via server-side triggers/functions.
 
+### push_tokens
+- SELECT / INSERT / UPDATE / DELETE: own rows only (`user_id = auth.uid()`).
+
 ## 3. Edge Functions / database functions
 
 - `accept_friend_request(request_id)` — moves friend_request → friendships row, deletes request, creates notifications for both users.
@@ -167,6 +186,13 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 - `delete_account()` — initiates 30-day soft delete. Sets profiles.deleted_at, deletes items, anonymises sent recommendations (sets from_user_id NULL), removes friendships, schedules hard delete via cron.
 - `restore_account()` — clears deleted_at if within 30 days.
 - `send_recommendation_notifications(rec_id)` — triggered on recommendation INSERT, batches per sender within 5-minute window for push.
+- `tmdb-proxy(path, params)` — forwards authenticated requests to TMDB API v4. The Read Access Token is held as a Supabase secret and never exposed to the client. Image URLs are returned unmodified; the client fetches posters and backdrops directly from the TMDB CDN.
+
+### Scheduled jobs
+
+The `pg_cron` extension is enabled. All times UTC.
+
+- **03:00 daily** — runs `hard_delete_expired_accounts()` (deletes `profiles` rows where `deleted_at < now() - interval '30 days'`) and `prune_stale_push_tokens()` (deletes `push_tokens` rows where `last_seen_at < now() - interval '90 days'`).
 
 ## 4. Screens
 
@@ -200,6 +226,7 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 - TMDB calls: never from components. Always via `src/lib/tmdb.ts`.
 - Supabase calls: typed via generated types in `src/lib/database.types.ts`.
 - All times: store UTC, display local.
+- Theme tokens: import from `src/theme/theme.ts` only. `src/constants/theme.ts` (from the starter template) is deprecated and will be deleted; do not add new references to it.
 
 ## 6. Type generation
 

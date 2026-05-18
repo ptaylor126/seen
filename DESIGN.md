@@ -1,6 +1,6 @@
 # Seen — Design System
 
-The visual language of Seen. The source of truth for tokens is `src/theme/theme.ts`. This document explains the why.
+The visual language of Seen. The source of truth for tokens is `src/theme/theme.ts` — the canonical location. Any other theme file (including `src/constants/theme.ts` from the starter template) is deprecated and slated for deletion. This document explains the why.
 
 ## Direction
 

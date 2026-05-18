@@ -24,6 +24,7 @@ Running session log. Newest entries at top. Read this first to brief future Clau
 - Implement Sign in with Apple (iOS) and Google Sign-In (Android) flows
 - TMDB search screen, "add to library", library view (watchlist / watching / watched tabs)
 - Create `src/theme/theme.ts` from DESIGN.md tokens (referenced by AGENTS.md but file does not yet exist)
+- Delete starter components dependent on `src/constants/theme.ts` (app-tabs, collapsible, starter index/explore screens). Replace with minimal placeholder screens until real auth/onboarding screens land.
 - Decide whether to set up the Supabase MCP now (read-only against dev) before writing migrations
 
 **Open questions**
