@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.paultaylor.seen",
+      "usesAppleSignIn": true,
       "icon": "./assets/expo.icon"
     },
     "android": {
@@ -37,7 +38,13 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.555711294328-a8bq6p5ot1nrpinkdr5k99c5u7en7ntn"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
