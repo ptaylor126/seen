@@ -14,23 +14,16 @@ Running session log. Newest entries at top. Read this first to brief future Clau
 - Enabled Claude Code plugins: `expo` (SDK skills) and `claude-code-setup` (automation recommender)
 - Produced automation recommendations for the Foundation phase: Supabase MCP, context7 MCP, `rls-check` and `new-supabase-migration` skills, `.env` block + tsc-on-edit hooks, `rls-auditor` and `supabase-schema-reviewer` subagents — none implemented yet
 - `expo-doctor` 17/17 clean; `tsc --noEmit` clean on `main`
+- Installed Supabase MCP (read-only) against the dev project
+- Created `rls-auditor` subagent (`.claude/agents/rls-auditor.md`) — reviews Supabase migrations for RLS correctness against TECHNICAL §2 / PRD §5
+- Created PreToolUse `block-secrets` hook (`.claude/hooks/block-secrets.sh`) — blocks Read/Edit/Write on `.env*`, `*.pem`, `*.key`, SSH keys, `.npmrc`/`.pypirc`/`.netrc`, and any path containing `credentials`/`secrets` (case-insensitive)
+- Resolved 5 open questions in PRD/TECHNICAL/DESIGN: TMDB hybrid proxy via `tmdb-proxy` Edge Function, `push_tokens` table, `pg_cron` daily deletion job, canonical theme path (`src/theme/theme.ts`), profile-visibility clarification
 
 **Next** (Foundation phase per PRD §9.1)
-- Create Supabase dev project; capture project-ref; decide where keys live (not in committed `.env.local`)
-- Author initial migrations with RLS for: `profiles`, `handle_history`, `items`, `friendships`, `friend_requests`, `recommendations`, `invite_links`, `notifications`
-- Add auth-signup trigger that creates a `profiles` row and an `invite_links` row
-- Build `src/lib/supabase.ts` client and generate `src/lib/database.types.ts` via `supabase gen types`
-- Build `src/lib/tmdb.ts` wrapper for TMDB v4 Read Access Token
-- Implement Sign in with Apple (iOS) and Google Sign-In (Android) flows
-- TMDB search screen, "add to library", library view (watchlist / watching / watched tabs)
-- Create `src/theme/theme.ts` from DESIGN.md tokens (referenced by AGENTS.md but file does not yet exist)
-- Delete starter components dependent on `src/constants/theme.ts` (app-tabs, collapsible, starter index/explore screens). Replace with minimal placeholder screens until real auth/onboarding screens land.
-- Decide whether to set up the Supabase MCP now (read-only against dev) before writing migrations
+- Write Supabase migrations for the 9 tables in TECHNICAL §1 (`profiles`, `handle_history`, `items`, `friendships`, `friend_requests`, `recommendations`, `invite_links`, `notifications`, `push_tokens`). For each: enable RLS, write SELECT/INSERT/UPDATE/DELETE policies, then run the `rls-auditor` subagent before applying
+- Auth-signup trigger that creates a `profiles` row and an `invite_links` row
+- Build `src/lib/supabase.ts` client and `src/lib/tmdb.ts` (the TMDB wrapper hits the `tmdb-proxy` Edge Function — no direct TMDB calls from the client)
+- Create `src/theme/theme.ts` from DESIGN.md tokens; delete `src/constants/theme.ts` and the starter components (app-tabs, collapsible, starter `index.tsx`/`explore.tsx`); replace with minimal placeholders until real auth/onboarding screens land
 
 **Open questions**
-- TMDB token: stored client-side via `EXPO_PUBLIC_*` or proxied through an Edge Function? PRD is silent
-- Push notifications: where do device tokens live? No `push_tokens` table in TECHNICAL.md yet
-- Account-deletion cron: Supabase `pg_cron` setup and hard-delete job location TBD
-- App route structure: `src/app/` currently has `index.tsx` + `explore.tsx` from the starter; needs `(auth)`, `(onboarding)`, `(tabs)` groups per TECHNICAL §4
-- DESIGN.md points at `src/theme/theme.ts`; the current code still uses `src/constants/theme.ts` (created by the starter)
-- Handle search vs. `profiles` SELECT policy: PRD says mutual-accept gate, TECHNICAL says any authenticated user can read profiles — reconfirm the boundary
+- None material before schema work begins.
