@@ -6,6 +6,15 @@ Read the exact versioned Expo docs at https://docs.expo.dev/versions/v54.0.0/ be
 
 Seen is a mobile app for tracking films and TV shows and sharing personal recommendations with friends. The differentiator is that recommendations come from people you know and trust, not strangers. It is not a public review platform.
 
+## Reference documents
+
+- `PRD.md` — product requirements, scope, and locked decisions
+- `TECHNICAL.md` — data model, RLS rules, screens, conventions
+- `DESIGN.md` — visual language and motion principles
+- `src/theme/theme.ts` — design tokens (always import from here, never hardcode)
+
+Read these before suggesting changes that touch product scope, data model, or visual design.
+
 ## Tech stack
 
 - **App**: React Native via Expo (SDK 54), TypeScript, Expo Router for file-based navigation
