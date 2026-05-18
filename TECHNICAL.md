@@ -239,7 +239,9 @@ The `pg_cron` extension is enabled. All times UTC.
 After every schema change, regenerate types:
 
 ```bash
-npx supabase gen types typescript --project-id [project-ref] > src/lib/database.types.ts
+npx supabase gen types typescript --linked --log-level error 2>/dev/null > src/lib/database.types.ts
 ```
+
+The `--log-level error 2>/dev/null` is needed because the CLI writes status messages to stdout by default, which would pollute the generated TypeScript file.
 
 This is non-negotiable - TypeScript correctness throughout the app depends on it.
