@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
@@ -237,12 +238,9 @@ export default function TitleDetailScreen() {
                             ]}
                         />
                     )}
-                    {/* TEMP: LinearGradient swapped for a plain View until next EAS dev build. Restore <LinearGradient colors={['transparent', palette.bg]} /> when native module is available. */}
-                    <View
-                        style={[
-                            styles.backdropGradient,
-                            { backgroundColor: palette.bg, opacity: 0.7 },
-                        ]}
+                    <LinearGradient
+                        colors={['transparent', palette.bg]}
+                        style={styles.backdropGradient}
                     />
                 </View>
 

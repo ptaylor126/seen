@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import { ChevronLeft } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -15,17 +16,12 @@ export default function AccountScreen() {
             edges={['top']}
         >
             <View style={styles.header}>
-                {/* TEMP: text-based back affordance until react-native-svg ships in
-                    the next EAS dev build. Restore <ChevronLeft color={palette.accent} size={28} />
-                    (and re-add the lucide-react-native import) when lucide icons work. */}
                 <Pressable
                     onPress={() => router.back()}
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
-                        ‹ Back
-                    </Text>
+                    <ChevronLeft color={palette.accent} size={28} />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>Account</Text>
             </View>
