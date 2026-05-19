@@ -1,11 +1,12 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { X } from 'lucide-react-native';
+import { ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Modal,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -21,6 +22,13 @@ import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 type MediaType = 'movie' | 'tv';
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
+type RatingThumb = 'up' | 'down';
+
+// Thumbs-up / thumbs-down map onto the legacy 5-star items.rating column
+// (the only rating storage we have). Up = 4 (positive), down = 2 (negative),
+// null = skipped (no rating recorded). Matching open recs also get their
+// rating_thumb field set in the same flow when applicable.
+const RATING_FROM_THUMB: Record<RatingThumb, number> = { up: 4, down: 2 };
 
 // Discriminated union so render code can narrow on `type` and access the
 // right shape (TMDBMovie.title vs TMDBTV.name etc.).
@@ -58,6 +66,8 @@ export default function TitleDetailScreen() {
     const [error, setError] = useState<string | null>(null);
     const [currentStatus, setCurrentStatus] = useState<ItemStatus | null>(null);
     const [updating, setUpdating] = useState(false);
+    const [showRatingSheet, setShowRatingSheet] = useState(false);
+    const [ratingBusy, setRatingBusy] = useState(false);
 
     // Load title detail (TMDB) and the current library status (Supabase) in
     // parallel. The detail fetch picks getMovie or getTV based on mediaType
@@ -113,8 +123,74 @@ export default function TitleDetailScreen() {
     }, [mediaType, tmdbId]);
 
     async function setStatus(newStatus: ItemStatus) {
-        if (updating || !mediaType || currentStatus === newStatus) return;
-        setUpdating(true);
+        // Block re-entry: while a status update is in flight, or while the
+        // rating sheet is already open / its network call is mid-air,
+        // ignore further taps.
+        if (updating || ratingBusy || showRatingSheet || !mediaType) return;
+
+        // Re-tapping Watched while already watched is meaningful — it
+        // reopens the rating sheet so the user can change their thumb.
+        // Skip the redundant upsert in that case.
+        const watchedReTap = newStatus === 'watched' && currentStatus === 'watched';
+        if (currentStatus === newStatus && !watchedReTap) return;
+
+        let succeeded = !watchedReTap ? false : true;
+
+        if (!watchedReTap) {
+            setUpdating(true);
+            try {
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+                const userId = session?.user.id;
+                if (!userId) throw new Error('Not authenticated');
+
+                const row = {
+                    user_id: userId,
+                    tmdb_id: tmdbId,
+                    media_type: mediaType,
+                    status: newStatus,
+                    // Only stamp watched_at on the watched transition; other
+                    // status changes leave it untouched (column-omit semantics
+                    // in upsert means the existing value is preserved).
+                    ...(newStatus === 'watched'
+                        ? { watched_at: new Date().toISOString() }
+                        : {}),
+                };
+
+                const { error: upsertError } = await supabase
+                    .from('items')
+                    .upsert(row, { onConflict: 'user_id,tmdb_id,media_type' });
+                if (upsertError) throw upsertError;
+
+                setCurrentStatus(newStatus);
+                succeeded = true;
+            } catch (err) {
+                console.error('items upsert failed:', err);
+                surfaceUpdateError(err);
+            } finally {
+                setUpdating(false);
+            }
+        }
+
+        if (succeeded && newStatus === 'watched') {
+            setShowRatingSheet(true);
+        }
+    }
+
+    // Apply a thumbs-up/down rating (or skip with `null`) after a watched
+    // transition. Updates items.rating when a thumb was chosen, and always
+    // transitions any matching open recommendations (pending | accepted)
+    // into `watched` — which fires the rec_watched notification trigger
+    // for the sender. rating_thumb on the rec only gets set when the user
+    // chose up/down; skipping leaves it null.
+    async function handleRate(thumb: RatingThumb | null) {
+        if (ratingBusy || !mediaType) return;
+        setRatingBusy(true);
+        // Close the sheet immediately so the UI doesn't trap the user
+        // behind a spinner if the network is slow. Errors surface via
+        // Alert; success is silent.
+        setShowRatingSheet(false);
         try {
             const {
                 data: { session },
@@ -122,46 +198,69 @@ export default function TitleDetailScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            const row = {
-                user_id: userId,
-                tmdb_id: tmdbId,
-                media_type: mediaType,
-                status: newStatus,
-                // Only stamp watched_at on the watched transition; other
-                // status changes leave it untouched (column-omit semantics
-                // in upsert means the existing value is preserved).
-                ...(newStatus === 'watched'
-                    ? { watched_at: new Date().toISOString() }
-                    : {}),
-            };
-
-            const { error: upsertError } = await supabase
-                .from('items')
-                .upsert(row, { onConflict: 'user_id,tmdb_id,media_type' });
-            if (upsertError) throw upsertError;
-
-            setCurrentStatus(newStatus);
-        } catch (err) {
-            // Log the full error first so the Metro log carries every
-            // diagnostic field (Supabase's PostgrestError exposes message,
-            // details, hint, code; standard Errors have stack).
-            console.error('items upsert failed:', err);
-            if (err && typeof err === 'object' && 'message' in err) {
-                const supaErr = err as {
-                    message: string;
-                    details?: string;
-                    hint?: string;
-                    code?: string;
-                };
-                Alert.alert(
-                    'Update failed',
-                    `${supaErr.message}${supaErr.hint ? '\n\n' + supaErr.hint : ''}`,
-                );
-            } else {
-                Alert.alert('Update failed', String(err));
+            if (thumb !== null) {
+                const { error: itemError } = await supabase
+                    .from('items')
+                    .update({ rating: RATING_FROM_THUMB[thumb] })
+                    .eq('user_id', userId)
+                    .eq('tmdb_id', tmdbId)
+                    .eq('media_type', mediaType);
+                if (itemError) throw itemError;
             }
+
+            const { data: openRecs, error: queryError } = await supabase
+                .from('recommendations')
+                .select('id')
+                .eq('to_user_id', userId)
+                .eq('tmdb_id', tmdbId)
+                .eq('media_type', mediaType)
+                .in('status', ['pending', 'accepted']);
+            if (queryError) throw queryError;
+
+            if (openRecs && openRecs.length > 0) {
+                const update: {
+                    status: 'watched';
+                    watched_via_rec: boolean;
+                    rating_thumb?: RatingThumb;
+                } = {
+                    status: 'watched',
+                    watched_via_rec: true,
+                };
+                if (thumb !== null) update.rating_thumb = thumb;
+
+                const { error: recError } = await supabase
+                    .from('recommendations')
+                    .update(update)
+                    .in(
+                        'id',
+                        openRecs.map((r) => r.id),
+                    );
+                if (recError) throw recError;
+            }
+        } catch (err) {
+            console.error('rating update failed:', err);
+            surfaceUpdateError(err);
         } finally {
-            setUpdating(false);
+            setRatingBusy(false);
+        }
+    }
+
+    // Shared error surfacing: PostgrestError fields land in Metro logs;
+    // user sees message + hint in an Alert. Plain-Error path also covered.
+    function surfaceUpdateError(err: unknown) {
+        if (err && typeof err === 'object' && 'message' in err) {
+            const supaErr = err as {
+                message: string;
+                details?: string;
+                hint?: string;
+                code?: string;
+            };
+            Alert.alert(
+                'Update failed',
+                `${supaErr.message}${supaErr.hint ? '\n\n' + supaErr.hint : ''}`,
+            );
+        } else {
+            Alert.alert('Update failed', String(err));
         }
     }
 
@@ -368,6 +467,90 @@ export default function TitleDetailScreen() {
                 fg={palette.textInverse}
                 onPress={router.back}
             />
+
+            {/* Rating sheet — opens after a successful Watched transition
+                (or a re-tap of Watched). Tap outside or hit Skip to leave
+                rating null. Nested-Pressable trick: outer Pressable
+                handles tap-to-dismiss on the backdrop; inner Pressable
+                with a no-op onPress consumes taps inside the sheet so
+                they don't propagate up. */}
+            <Modal
+                visible={showRatingSheet}
+                transparent
+                animationType="slide"
+                onRequestClose={() => handleRate(null)}
+            >
+                <Pressable
+                    style={[styles.sheetBackdrop, { backgroundColor: palette.overlay }]}
+                    onPress={() => handleRate(null)}
+                >
+                    <Pressable
+                        style={[
+                            styles.sheet,
+                            {
+                                backgroundColor: palette.surface,
+                                paddingBottom: insets.bottom + spacing.lg,
+                            },
+                        ]}
+                        onPress={() => {}}
+                    >
+                        <Text
+                            style={[
+                                typography.heading,
+                                styles.sheetTitle,
+                                { color: palette.text },
+                            ]}
+                        >
+                            How was it?
+                        </Text>
+                        <View style={styles.sheetActions}>
+                            <Pressable
+                                onPress={() => handleRate('up')}
+                                disabled={ratingBusy}
+                                style={({ pressed }) => [
+                                    styles.thumbButton,
+                                    {
+                                        backgroundColor: palette.surfaceAlt,
+                                        opacity: pressed || ratingBusy ? 0.6 : 1,
+                                    },
+                                ]}
+                            >
+                                <ThumbsUp color={palette.text} size={32} />
+                            </Pressable>
+                            <Pressable
+                                onPress={() => handleRate(null)}
+                                disabled={ratingBusy}
+                                style={({ pressed }) => [
+                                    styles.skipButton,
+                                    { opacity: pressed || ratingBusy ? 0.6 : 1 },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    Skip
+                                </Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={() => handleRate('down')}
+                                disabled={ratingBusy}
+                                style={({ pressed }) => [
+                                    styles.thumbButton,
+                                    {
+                                        backgroundColor: palette.surfaceAlt,
+                                        opacity: pressed || ratingBusy ? 0.6 : 1,
+                                    },
+                                ]}
+                            >
+                                <ThumbsDown color={palette.text} size={32} />
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </View>
     );
 }
@@ -473,5 +656,36 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 10,
+    },
+    sheetBackdrop: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    sheet: {
+        borderTopLeftRadius: radius.xl,
+        borderTopRightRadius: radius.xl,
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.lg,
+    },
+    sheetTitle: {
+        textAlign: 'center',
+        marginBottom: spacing.lg,
+    },
+    sheetActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-evenly',
+        paddingVertical: spacing.sm,
+    },
+    thumbButton: {
+        width: 64,
+        height: 64,
+        borderRadius: radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    skipButton: {
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.md,
     },
 });
