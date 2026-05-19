@@ -26,6 +26,7 @@ Read each migration file under review. List:
 - Constraints (PK, FK, UNIQUE) added or removed
 - Triggers added
 - `ENABLE ROW LEVEL SECURITY` statements
+- `GRANT` / `REVOKE` statements (schema-level, table-level, function-level)
 - Foreign keys and their `ON DELETE` clauses
 
 Use `Grep` / `Glob` against prior migrations under `supabase/migrations/` to find pre-existing state — e.g., whether RLS was enabled on a table being altered, or where a policy is currently defined.
@@ -51,6 +52,15 @@ Mark each check PASS or FAIL with one line of evidence.
 
 **Server-only tables.** `friendships` (INSERT/DELETE only via `accept_friend_request` / `unfriend` / `claim_invite_link` Edge Functions), `notifications` (INSERT only via server triggers), `profiles` (INSERT via signup trigger, DELETE via `delete_account` Edge Function). FAIL if a client-role policy bypasses any of these gates.
 
+**Grants match policies.** Postgres applies grants AND RLS as two separate layers; a policy without a matching grant fails with `permission denied (42501)` before the policy ever evaluates. For each table touched by the migration, cross-check:
+- For every policy command (SELECT, INSERT, UPDATE, DELETE) that exists on the table, a corresponding `GRANT <command> ON TABLE <table> TO authenticated` must exist in this migration or a prior one.
+- For every policy command that is *absent* (because TECHNICAL.md §2 reserves the operation for server-side paths), the corresponding grant should also be absent — granting an operation that no policy covers is a code smell that hides server-only intent.
+- For tables documented as service-role only (`handle_history`), no client grants should exist at all.
+- Functions called from RLS expressions (e.g., `is_friend_of_auth`, `can_send_friend_request`) must have `GRANT EXECUTE` to the caller's role, because policy expressions run in the caller's context regardless of any `SECURITY DEFINER` on the function body.
+- Use `Grep` against prior migrations to find pre-existing grants; FAIL only if neither this migration nor any prior one grants the needed privilege.
+
+FAIL any migration that adds RLS policies without the corresponding grants. The grant layer is non-optional.
+
 ### 4. recommendations-specific check
 
 If the migration creates or alters `recommendations`, confirm `UNIQUE (from_user_id, to_user_id, tmdb_id, media_type)` is present. This enforces the no-re-recommend rule (TECHNICAL.md §1). Missing → FAIL.
@@ -72,6 +82,7 @@ Return one report and nothing else. Use this exact structure:
     - Sender/recipient symmetry: PASS / FAIL / N/A
     - Cascade rules: PASS / FAIL — <FK and expected vs. actual>
     - Server-only access: PASS / FAIL
+    - Grants match policies: PASS / FAIL — <missing grant, if any>
 
     ## <table 2>
     ...
