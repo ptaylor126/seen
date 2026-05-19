@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
@@ -142,10 +141,24 @@ export default function TitleDetailScreen() {
 
             setCurrentStatus(newStatus);
         } catch (err) {
-            Alert.alert(
-                'Update failed',
-                err instanceof Error ? err.message : 'Unknown error',
-            );
+            // Log the full error first so the Metro log carries every
+            // diagnostic field (Supabase's PostgrestError exposes message,
+            // details, hint, code; standard Errors have stack).
+            console.error('items upsert failed:', err);
+            if (err && typeof err === 'object' && 'message' in err) {
+                const supaErr = err as {
+                    message: string;
+                    details?: string;
+                    hint?: string;
+                    code?: string;
+                };
+                Alert.alert(
+                    'Update failed',
+                    `${supaErr.message}${supaErr.hint ? '\n\n' + supaErr.hint : ''}`,
+                );
+            } else {
+                Alert.alert('Update failed', String(err));
+            }
         } finally {
             setUpdating(false);
         }
@@ -224,9 +237,12 @@ export default function TitleDetailScreen() {
                             ]}
                         />
                     )}
-                    <LinearGradient
-                        colors={['transparent', palette.bg]}
-                        style={styles.backdropGradient}
+                    {/* TEMP: LinearGradient swapped for a plain View until next EAS dev build. Restore <LinearGradient colors={['transparent', palette.bg]} /> when native module is available. */}
+                    <View
+                        style={[
+                            styles.backdropGradient,
+                            { backgroundColor: palette.bg, opacity: 0.7 },
+                        ]}
                     />
                 </View>
 
