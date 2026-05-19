@@ -10,7 +10,10 @@
     "ios": {
       "bundleIdentifier": "com.paultaylor.seen",
       "usesAppleSignIn": true,
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.paultaylor.seen",
@@ -49,6 +52,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f5b6bf67-e85d-4d40-b863-62fd4cbef79e"
+      }
     }
   }
 }
