@@ -11,8 +11,8 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
 import { getPalette, spacing, typography } from '@/theme/theme';
@@ -105,35 +105,33 @@ export default function ProfileScreen() {
 
     if (loading) {
         return (
-            <SafeAreaView
-                style={[styles.root, styles.fillCenter, { backgroundColor: palette.bg }]}
-                edges={['top']}
-            >
-                <ActivityIndicator color={palette.accent} />
-            </SafeAreaView>
+            <View style={[styles.root, { backgroundColor: palette.bg }]}>
+                <ScreenHeader title="Profile" />
+                <View style={styles.fillCenter}>
+                    <ActivityIndicator color={palette.accent} />
+                </View>
+            </View>
         );
     }
 
     if (error || !profile) {
         return (
-            <SafeAreaView
-                style={[styles.root, styles.fillCenter, { backgroundColor: palette.bg }]}
-                edges={['top']}
-            >
-                <Text style={[typography.body, { color: palette.error }]}>
-                    {error ?? 'Profile not available'}
-                </Text>
-            </SafeAreaView>
+            <View style={[styles.root, { backgroundColor: palette.bg }]}>
+                <ScreenHeader title="Profile" />
+                <View style={styles.fillCenter}>
+                    <Text style={[typography.body, { color: palette.error }]}>
+                        {error ?? 'Profile not available'}
+                    </Text>
+                </View>
+            </View>
         );
     }
 
     const firstLetter = profile.display_name[0]?.toUpperCase() ?? '?';
 
     return (
-        <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
-        >
+        <View style={[styles.root, { backgroundColor: palette.bg }]}>
+            <ScreenHeader title="Profile" />
             <View style={styles.card}>
                 {profile.avatar_url ? (
                     <Image
@@ -194,13 +192,13 @@ export default function ProfileScreen() {
                     </Fragment>
                 ))}
             </View>
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    fillCenter: { alignItems: 'center', justifyContent: 'center' },
+    fillCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     card: {
         alignItems: 'center',
         gap: spacing.sm,

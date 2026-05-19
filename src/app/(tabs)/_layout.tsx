@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { BookMarked, Home, Search, UserCircle, Users } from 'lucide-react-native';
+import { BookMarked, Home, UserCircle, Users } from 'lucide-react-native';
 import { useColorScheme } from 'react-native';
 
 import { getPalette } from '@/theme/theme';
@@ -32,13 +32,6 @@ export default function TabsLayout() {
                 options={{
                     title: 'Library',
                     tabBarIcon: ({ color, size }) => <BookMarked color={color} size={size} />,
-                }}
-            />
-            <Tabs.Screen
-                name="search"
-                options={{
-                    title: 'Search',
-                    tabBarIcon: ({ color, size }) => <Search color={color} size={size} />,
                 }}
             />
             <Tabs.Screen

@@ -11,8 +11,8 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenHeader } from '@/components/screen-header';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
@@ -159,39 +159,24 @@ export default function FriendsScreen() {
         );
     }
 
-    // Full empty state when there are no friends AND no pending requests —
-    // the user has nothing to do but invite or search by handle.
     const showEmptyState =
         !loading && !error && friends.length === 0 && pendingIncoming === 0;
 
-    if (loading) {
-        return (
-            <SafeAreaView
-                style={[styles.root, styles.fillCenter, { backgroundColor: palette.bg }]}
-                edges={['top']}
-            >
-                <ActivityIndicator color={palette.accent} />
-            </SafeAreaView>
-        );
-    }
+    return (
+        <View style={[styles.root, { backgroundColor: palette.bg }]}>
+            <ScreenHeader title="Friends" />
 
-    if (error) {
-        return (
-            <SafeAreaView
-                style={[styles.root, styles.fillCenter, { backgroundColor: palette.bg }]}
-                edges={['top']}
-            >
-                <Text style={[typography.body, { color: palette.error }]}>{error}</Text>
-            </SafeAreaView>
-        );
-    }
-
-    if (showEmptyState) {
-        return (
-            <SafeAreaView
-                style={[styles.root, { backgroundColor: palette.bg }]}
-                edges={['top']}
-            >
+            {loading ? (
+                <View style={styles.fillCenter}>
+                    <ActivityIndicator color={palette.accent} />
+                </View>
+            ) : error ? (
+                <View style={styles.fillCenter}>
+                    <Text style={[typography.body, { color: palette.error }]}>
+                        {error}
+                    </Text>
+                </View>
+            ) : showEmptyState ? (
                 <View style={styles.emptyState}>
                     <Users color={palette.textMuted} size={64} />
                     <Text
@@ -253,85 +238,80 @@ export default function FriendsScreen() {
                         </Pressable>
                     </View>
                 </View>
-            </SafeAreaView>
-        );
-    }
-
-    // Populated state: pending banner + friends list, with "Invite more"
-    // in the header row.
-    return (
-        <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
-        >
-            <View style={styles.headerRow}>
-                <Text style={[typography.display, { color: palette.text }]}>
-                    Friends
-                </Text>
-                <Pressable
-                    onPress={() => router.push('/friends/invite')}
-                    hitSlop={spacing.sm}
-                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                >
-                    <Text style={[typography.body, { color: palette.accent }]}>
-                        Invite more
-                    </Text>
-                </Pressable>
-            </View>
-
-            {pendingIncoming > 0 && (
-                <Pressable
-                    onPress={() => router.push('/friends/requests')}
-                    style={({ pressed }) => [
-                        styles.pendingBanner,
-                        {
-                            backgroundColor: palette.accentSubtle,
-                            opacity: pressed ? 0.6 : 1,
-                        },
-                    ]}
-                >
-                    <Text style={[typography.body, { color: palette.text }]}>
-                        {pendingIncoming === 1
-                            ? '1 pending request'
-                            : `${pendingIncoming} pending requests`}
-                    </Text>
-                    <ChevronRight color={palette.textMuted} size={20} />
-                </Pressable>
-            )}
-
-            {friends.length > 0 ? (
-                <FlatList
-                    data={friends}
-                    keyExtractor={(item) => item.userId}
-                    renderItem={renderFriendRow}
-                    contentContainerStyle={styles.listContent}
-                    ItemSeparatorComponent={() => (
-                        <View
-                            style={[
-                                styles.separator,
-                                { backgroundColor: palette.border },
-                            ]}
-                        />
-                    )}
-                />
             ) : (
-                <View style={styles.fillCenter}>
-                    <Text style={[typography.body, { color: palette.textMuted }]}>
-                        No friends yet — check pending requests or invite someone.
-                    </Text>
-                </View>
+                <>
+                    <View style={styles.actionRow}>
+                        <Pressable
+                            onPress={() => router.push('/friends/invite')}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                        >
+                            <Text style={[typography.body, { color: palette.accent }]}>
+                                Invite more
+                            </Text>
+                        </Pressable>
+                    </View>
+
+                    {pendingIncoming > 0 && (
+                        <Pressable
+                            onPress={() => router.push('/friends/requests')}
+                            style={({ pressed }) => [
+                                styles.pendingBanner,
+                                {
+                                    backgroundColor: palette.accentSubtle,
+                                    opacity: pressed ? 0.6 : 1,
+                                },
+                            ]}
+                        >
+                            <Text style={[typography.body, { color: palette.text }]}>
+                                {pendingIncoming === 1
+                                    ? '1 pending request'
+                                    : `${pendingIncoming} pending requests`}
+                            </Text>
+                            <ChevronRight color={palette.textMuted} size={20} />
+                        </Pressable>
+                    )}
+
+                    {friends.length > 0 ? (
+                        <FlatList
+                            data={friends}
+                            keyExtractor={(item) => item.userId}
+                            renderItem={renderFriendRow}
+                            contentContainerStyle={styles.listContent}
+                            ItemSeparatorComponent={() => (
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            )}
+                        />
+                    ) : (
+                        <View style={styles.fillCenter}>
+                            <Text style={[typography.body, { color: palette.textMuted }]}>
+                                No friends yet — check pending requests or invite
+                                someone.
+                            </Text>
+                        </View>
+                    )}
+                </>
             )}
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    fillCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xl },
-    headerRow: {
-        flexDirection: 'row',
+    fillCenter: {
+        flex: 1,
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
+        paddingHorizontal: spacing.xl,
+    },
+    actionRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
         paddingHorizontal: spacing.base,
         paddingTop: spacing.sm,
         paddingBottom: spacing.md,

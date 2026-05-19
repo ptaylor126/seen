@@ -1,19 +1,21 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
+    Keyboard,
     Pressable,
     StyleSheet,
     Text,
+    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenHeader } from '@/components/screen-header';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { getMovie, getTV, imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
@@ -32,31 +34,30 @@ interface LibraryRow {
     metaLoaded: boolean;
 }
 
-const TABS: readonly ItemStatus[] = ['watchlist', 'watching', 'watched'] as const;
+// search/multi returns movies, TV, and people; we surface only movies + TV
+// that have a poster (matches the old standalone search screen).
+type SearchableItem =
+    | (TMDBMediaItem & { media_type: 'movie'; poster_path: string })
+    | (TMDBMediaItem & { media_type: 'tv'; poster_path: string });
 
+const TABS: readonly ItemStatus[] = ['watchlist', 'watching', 'watched'] as const;
 const TAB_LABELS: Record<ItemStatus, string> = {
     watchlist: 'Watchlist',
     watching: 'Watching',
     watched: 'Watched',
 };
-
 const EMPTY_MESSAGES: Record<ItemStatus, string> = {
-    watchlist: 'Your watchlist is empty. Search to add something.',
+    watchlist: 'Your watchlist is empty. Search above to add something.',
     watching: 'Nothing currently watching.',
     watched: 'No watched titles yet.',
 };
 
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
+const DEBOUNCE_MS = 300;
 
-// Data fetch strategy is N+1: one query for items, then one TMDB call per
-// item. Acceptable while the library is small (~10-20 items per user).
-// When real testing surfaces 100+ item libraries, switch to one of:
-//   - denormalise title/poster_path/year into items at INSERT time
-//   - cache TMDB responses in AsyncStorage with a TTL
-//   - hit TMDB's `find` endpoint (one round trip per external_source id)
-// Posters themselves are cached by expo-image at the disk layer, so the
-// real cost is the JSON metadata fetch.
+// N+1 fetch — see prior journal entry for the trade-off comment. Posters
+// cache at the expo-image layer; only the JSON metadata is the cost.
 async function fetchItemMeta(tmdbId: number, mediaType: MediaType) {
     if (mediaType === 'movie') {
         const m = await getMovie(tmdbId);
@@ -79,22 +80,29 @@ export default function LibraryScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
 
+    // ---- Library state (watchlist / watching / watched) ----
     const [activeTab, setActiveTab] = useState<ItemStatus>('watchlist');
     const [rows, setRows] = useState<LibraryRow[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [libraryLoading, setLibraryLoading] = useState(true);
+    const [libraryError, setLibraryError] = useState<string | null>(null);
 
-    // useFocusEffect re-runs when the screen is focused AND when the
-    // callback identity changes (i.e. on tab switch via the [activeTab]
-    // dep). Cleanup flips `active` so a slower in-flight fetch can't
-    // overwrite state for a tab the user has already left.
+    // ---- Search state ----
+    const [query, setQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<SearchableItem[] | null>(null);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
+
+    const isSearching = query.length > 0;
+
+    // Library fetch — refetches on tab change and on screen focus
+    // (e.g., returning from the title detail modal after adding an item).
     useFocusEffect(
         useCallback(() => {
             let active = true;
 
             const load = async () => {
-                setLoading(true);
-                setError(null);
+                setLibraryLoading(true);
+                setLibraryError(null);
                 try {
                     const { data: items, error: itemsError } = await supabase
                         .from('items')
@@ -109,9 +117,6 @@ export default function LibraryScreen() {
 
                     const itemList = items ?? [];
 
-                    // Fetch every title's metadata in parallel; one failure
-                    // doesn't kill the rest. Failed rows fall back to a
-                    // placeholder title.
                     const metaResults = await Promise.allSettled(
                         itemList.map((row) =>
                             fetchItemMeta(row.tmdb_id, row.media_type as MediaType),
@@ -145,12 +150,12 @@ export default function LibraryScreen() {
                 } catch (err) {
                     if (!active) return;
                     console.error('library fetch failed:', err);
-                    setError(
+                    setLibraryError(
                         err instanceof Error ? err.message : 'Failed to load library',
                     );
                     setRows([]);
                 } finally {
-                    if (active) setLoading(false);
+                    if (active) setLibraryLoading(false);
                 }
             };
 
@@ -162,7 +167,52 @@ export default function LibraryScreen() {
         }, [activeTab]),
     );
 
-    function renderRow({ item }: { item: LibraryRow }) {
+    // Search effect — 300ms debounce + stale-result guard. Identical
+    // pattern to the old standalone search screen.
+    useEffect(() => {
+        const trimmed = query.trim();
+        if (!trimmed) {
+            setSearchResults(null);
+            setSearchError(null);
+            setSearchLoading(false);
+            return;
+        }
+
+        let active = true;
+        setSearchLoading(true);
+
+        const handle = setTimeout(async () => {
+            try {
+                const response = await searchMulti(trimmed, 1);
+                if (!active) return;
+                const filtered = response.results.filter(
+                    (item): item is SearchableItem =>
+                        (item.media_type === 'movie' || item.media_type === 'tv') &&
+                        !!item.poster_path,
+                );
+                setSearchResults(filtered);
+                setSearchError(null);
+            } catch (err) {
+                if (!active) return;
+                setSearchResults([]);
+                setSearchError(err instanceof Error ? err.message : 'Search failed');
+            } finally {
+                if (active) setSearchLoading(false);
+            }
+        }, DEBOUNCE_MS);
+
+        return () => {
+            active = false;
+            clearTimeout(handle);
+        };
+    }, [query]);
+
+    function handleCancelSearch() {
+        setQuery('');
+        Keyboard.dismiss();
+    }
+
+    function renderLibraryRow({ item }: { item: LibraryRow }) {
         const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
         const metaLine = [item.year, mediaLabel].filter(Boolean).join(' · ');
 
@@ -214,92 +264,221 @@ export default function LibraryScreen() {
         );
     }
 
+    function renderSearchRow({ item }: { item: SearchableItem }) {
+        const title = item.media_type === 'movie' ? item.title : item.name;
+        const dateField =
+            item.media_type === 'movie' ? item.release_date : item.first_air_date;
+        const year = dateField ? dateField.slice(0, 4) : '';
+        const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
+        const metaLine = [year, mediaLabel].filter(Boolean).join(' · ');
+
+        return (
+            <Pressable
+                onPress={() =>
+                    router.push(`/title/${item.media_type}/${item.id}`)
+                }
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <Image
+                    source={{ uri: imageUrl(item.poster_path, 'w185') }}
+                    style={styles.poster}
+                    contentFit="cover"
+                    transition={150}
+                />
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.bodyEmphasis, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        {title}
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {metaLine}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     return (
-        <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
-        >
-            <View style={styles.tabs}>
-                {TABS.map((tab) => {
-                    const isActive = activeTab === tab;
-                    return (
-                        <Pressable
-                            key={tab}
-                            onPress={() => setActiveTab(tab)}
-                            style={({ pressed }) => [
-                                styles.tabPill,
-                                {
-                                    backgroundColor: isActive
-                                        ? palette.accent
-                                        : 'transparent',
-                                    borderColor: palette.accent,
-                                    opacity: pressed ? 0.6 : 1,
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    {
-                                        color: isActive
-                                            ? palette.textInverse
-                                            : palette.accent,
-                                    },
-                                ]}
-                            >
-                                {TAB_LABELS[tab]}
-                            </Text>
-                        </Pressable>
-                    );
-                })}
+        <View style={[styles.root, { backgroundColor: palette.bg }]}>
+            <ScreenHeader title="Library" />
+
+            <View style={styles.searchBar}>
+                <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder="Search films and TV shows"
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    onSubmitEditing={() => Keyboard.dismiss()}
+                    style={[
+                        styles.input,
+                        typography.body,
+                        {
+                            backgroundColor: palette.surface,
+                            color: palette.text,
+                            borderColor: palette.border,
+                        },
+                    ]}
+                />
+                {isSearching && (
+                    <Pressable
+                        onPress={handleCancelSearch}
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <Text style={[typography.body, { color: palette.accent }]}>
+                            Cancel
+                        </Text>
+                    </Pressable>
+                )}
             </View>
 
-            {loading ? (
-                <View style={styles.statusBlock}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
-            ) : error ? (
-                <View style={styles.statusBlock}>
-                    <Text
-                        style={[typography.body, { color: palette.error }]}
-                        numberOfLines={3}
-                    >
-                        {error}
-                    </Text>
-                </View>
-            ) : rows.length === 0 ? (
-                <View style={styles.statusBlock}>
-                    <Text
-                        style={[typography.body, { color: palette.textMuted }]}
-                        numberOfLines={3}
-                    >
-                        {EMPTY_MESSAGES[activeTab]}
-                    </Text>
-                </View>
+            {isSearching ? (
+                /* Search body — same nested-Pressable keyboard-dismiss
+                   pattern as the old search screen; row Pressables
+                   consume the tap before the wrapper sees it. */
+                <Pressable style={styles.flex} onPress={Keyboard.dismiss}>
+                    {searchLoading ? (
+                        <View style={styles.statusBlock}>
+                            <ActivityIndicator color={palette.accent} />
+                        </View>
+                    ) : searchResults !== null &&
+                      searchResults.length === 0 ? (
+                        <View style={styles.statusBlock}>
+                            <Text
+                                style={[typography.body, { color: palette.textMuted }]}
+                                numberOfLines={2}
+                            >
+                                {searchError
+                                    ? searchError
+                                    : `No results for "${query.trim()}"`}
+                            </Text>
+                        </View>
+                    ) : searchResults !== null && searchResults.length > 0 ? (
+                        <FlatList
+                            data={searchResults}
+                            keyExtractor={(item) => `${item.media_type}-${item.id}`}
+                            renderItem={renderSearchRow}
+                            keyboardShouldPersistTaps="handled"
+                            contentContainerStyle={styles.listContent}
+                            ItemSeparatorComponent={() => (
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            )}
+                        />
+                    ) : null}
+                </Pressable>
             ) : (
-                <FlatList
-                    data={rows}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderRow}
-                    contentContainerStyle={styles.listContent}
-                    ItemSeparatorComponent={() => (
-                        <View
-                            style={[styles.separator, { backgroundColor: palette.border }]}
+                <>
+                    <View style={styles.tabs}>
+                        {TABS.map((tab) => {
+                            const isActive = activeTab === tab;
+                            return (
+                                <Pressable
+                                    key={tab}
+                                    onPress={() => setActiveTab(tab)}
+                                    style={({ pressed }) => [
+                                        styles.tabPill,
+                                        {
+                                            backgroundColor: isActive
+                                                ? palette.accent
+                                                : 'transparent',
+                                            borderColor: palette.accent,
+                                            opacity: pressed ? 0.6 : 1,
+                                        },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            typography.bodyEmphasis,
+                                            {
+                                                color: isActive
+                                                    ? palette.textInverse
+                                                    : palette.accent,
+                                            },
+                                        ]}
+                                    >
+                                        {TAB_LABELS[tab]}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+
+                    {libraryLoading ? (
+                        <View style={styles.statusBlock}>
+                            <ActivityIndicator color={palette.accent} />
+                        </View>
+                    ) : libraryError ? (
+                        <View style={styles.statusBlock}>
+                            <Text
+                                style={[typography.body, { color: palette.error }]}
+                                numberOfLines={3}
+                            >
+                                {libraryError}
+                            </Text>
+                        </View>
+                    ) : rows.length === 0 ? (
+                        <View style={styles.statusBlock}>
+                            <Text
+                                style={[typography.body, { color: palette.textMuted }]}
+                                numberOfLines={3}
+                            >
+                                {EMPTY_MESSAGES[activeTab]}
+                            </Text>
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={rows}
+                            keyExtractor={(item) => item.id}
+                            renderItem={renderLibraryRow}
+                            contentContainerStyle={styles.listContent}
+                            ItemSeparatorComponent={() => (
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            )}
                         />
                     )}
-                />
+                </>
             )}
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
+    flex: { flex: 1 },
+    searchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.sm,
+        paddingBottom: spacing.md,
+    },
+    input: {
+        flex: 1,
+        height: 44,
+        borderRadius: radius.sm,
+        borderWidth: 1,
+        paddingHorizontal: spacing.md,
+    },
     tabs: {
         flexDirection: 'row',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
         paddingBottom: spacing.md,
     },
     tabPill: {
