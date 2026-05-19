@@ -363,7 +363,14 @@ export default function LibraryScreen() {
                             data={searchResults}
                             keyExtractor={(item) => `${item.media_type}-${item.id}`}
                             renderItem={renderSearchRow}
+                            // keyboardShouldPersistTaps + the outer Pressable
+                            // handle taps in non-FlatList space; the FlatList's
+                            // own ScrollView absorbs taps inside its bounds, so
+                            // we additionally dismiss the keyboard on scroll —
+                            // the most common "I want to see results" gesture.
                             keyboardShouldPersistTaps="handled"
+                            keyboardDismissMode="on-drag"
+                            onScrollBeginDrag={() => Keyboard.dismiss()}
                             contentContainerStyle={styles.listContent}
                             ItemSeparatorComponent={() => (
                                 <View
