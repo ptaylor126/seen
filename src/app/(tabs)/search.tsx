@@ -4,6 +4,7 @@ import {
     ActivityIndicator,
     FlatList,
     Keyboard,
+    Pressable,
     StyleSheet,
     Text,
     TextInput,
@@ -135,51 +136,57 @@ export default function SearchScreen() {
                 />
             </View>
 
-            {loading && (
-                <View style={styles.statusBlock}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
-            )}
+            {/* Tap anywhere below the input to dismiss the keyboard. Row
+                taps that gain their own onPress later will win because
+                child handlers consume the gesture before this wrapper. */}
+            <Pressable style={styles.body} onPress={Keyboard.dismiss}>
+                {loading && (
+                    <View style={styles.statusBlock}>
+                        <ActivityIndicator color={palette.accent} />
+                    </View>
+                )}
 
-            {!loading && results === null && (
-                <View style={styles.statusBlock}>
-                    <Text style={[typography.body, { color: palette.textMuted }]}>
-                        Search for a film or TV show
-                    </Text>
-                </View>
-            )}
+                {!loading && results === null && (
+                    <View style={styles.statusBlock}>
+                        <Text style={[typography.body, { color: palette.textMuted }]}>
+                            Search for a film or TV show
+                        </Text>
+                    </View>
+                )}
 
-            {!loading && results !== null && results.length === 0 && (
-                <View style={styles.statusBlock}>
-                    <Text
-                        style={[typography.body, { color: palette.textMuted }]}
-                        numberOfLines={2}
-                    >
-                        {error ? error : `No results for "${query.trim()}"`}
-                    </Text>
-                </View>
-            )}
+                {!loading && results !== null && results.length === 0 && (
+                    <View style={styles.statusBlock}>
+                        <Text
+                            style={[typography.body, { color: palette.textMuted }]}
+                            numberOfLines={2}
+                        >
+                            {error ? error : `No results for "${query.trim()}"`}
+                        </Text>
+                    </View>
+                )}
 
-            {!loading && results !== null && results.length > 0 && (
-                <FlatList
-                    data={results}
-                    keyExtractor={(item) => `${item.media_type}-${item.id}`}
-                    renderItem={renderRow}
-                    keyboardShouldPersistTaps="handled"
-                    contentContainerStyle={styles.listContent}
-                    ItemSeparatorComponent={() => (
-                        <View
-                            style={[styles.separator, { backgroundColor: palette.border }]}
-                        />
-                    )}
-                />
-            )}
+                {!loading && results !== null && results.length > 0 && (
+                    <FlatList
+                        data={results}
+                        keyExtractor={(item) => `${item.media_type}-${item.id}`}
+                        renderItem={renderRow}
+                        keyboardShouldPersistTaps="handled"
+                        contentContainerStyle={styles.listContent}
+                        ItemSeparatorComponent={() => (
+                            <View
+                                style={[styles.separator, { backgroundColor: palette.border }]}
+                            />
+                        )}
+                    />
+                )}
+            </Pressable>
         </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
+    body: { flex: 1 },
     searchBar: {
         paddingHorizontal: spacing.base,
         paddingTop: spacing.sm,
