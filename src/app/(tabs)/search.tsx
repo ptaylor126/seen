@@ -17,10 +17,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
-// search/multi returns movies, TV, and people; we surface only the first two.
+// search/multi returns movies, TV, and people; we surface only movies + TV
+// that have a poster (no-poster rows feel broken in a visual list, so we
+// drop them before render).
 type SearchableItem =
-    | (TMDBMediaItem & { media_type: 'movie' })
-    | (TMDBMediaItem & { media_type: 'tv' });
+    | (TMDBMediaItem & { media_type: 'movie'; poster_path: string })
+    | (TMDBMediaItem & { media_type: 'tv'; poster_path: string });
 
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
@@ -56,7 +58,9 @@ export default function SearchScreen() {
                 if (!active) return;
                 const filtered = response.results.filter(
                     (item): item is SearchableItem =>
-                        item.media_type === 'movie' || item.media_type === 'tv',
+                        (item.media_type === 'movie' ||
+                            item.media_type === 'tv') &&
+                        !!item.poster_path,
                 );
                 setResults(filtered);
                 setError(null);
@@ -92,18 +96,12 @@ export default function SearchScreen() {
                     pressed && { opacity: 0.6 },
                 ]}
             >
-                {item.poster_path ? (
-                    <Image
-                        source={{ uri: imageUrl(item.poster_path, 'w185') }}
-                        style={styles.poster}
-                        contentFit="cover"
-                        transition={150}
-                    />
-                ) : (
-                    <View
-                        style={[styles.poster, { backgroundColor: palette.surfaceAlt }]}
-                    />
-                )}
+                <Image
+                    source={{ uri: imageUrl(item.poster_path, 'w185') }}
+                    style={styles.poster}
+                    contentFit="cover"
+                    transition={150}
+                />
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.bodyEmphasis, { color: palette.text }]}
