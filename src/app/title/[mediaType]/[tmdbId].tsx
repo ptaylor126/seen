@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { Send, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -459,6 +459,24 @@ export default function TitleDetailScreen() {
                         );
                     })}
                 </View>
+
+                <Pressable
+                    onPress={() =>
+                        router.push(`/title/${mediaType}/${tmdbId}/recommend`)
+                    }
+                    style={({ pressed }) => [
+                        styles.recommendButton,
+                        {
+                            borderColor: palette.accent,
+                            opacity: pressed ? 0.6 : 1,
+                        },
+                    ]}
+                >
+                    <Send color={palette.accent} size={18} />
+                    <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
+                        Recommend to a friend
+                    </Text>
+                </Pressable>
             </ScrollView>
 
             <CloseButton
@@ -646,6 +664,17 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    recommendButton: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: spacing.base,
+        marginTop: spacing.md,
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        borderWidth: 1.5,
     },
     closeButton: {
         position: 'absolute',

@@ -35,6 +35,10 @@ export default function RootLayout() {
                     name="title/[mediaType]/[tmdbId]"
                     options={{ presentation: 'modal' }}
                 />
+                <Stack.Screen
+                    name="title/[mediaType]/[tmdbId]/recommend"
+                    options={{ presentation: 'modal' }}
+                />
             </Stack>
             {session.status === 'loading' && (
                 <View style={[styles.loadingOverlay, { backgroundColor: palette.bg }]}>
