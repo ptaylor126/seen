@@ -31,17 +31,41 @@ Running session log. Newest entries at top. Read this first to brief future Clau
 - Auditor flagged two non-blocking follow-ups for a future migration if desired: (1) `REVOKE EXECUTE ... FROM PUBLIC` on the six trigger functions to close a narrow surface where SECURITY DEFINER trigger functions are technically callable via `supabase.rpc()` (they'd fail without NEW/OLD context but `notify_*` and `handle_new_user` would attempt privileged inserts if the caller could coerce a NEW record); (2) document `generate_invite_token` in TECHNICAL §3 as a client-callable function for invite-token regeneration UX.
 - Real Library screen replacing the "Coming soon" stub (`6c297c9`). Three sub-tab pills at the top (Watchlist / Watching / Watched), same filled-accent-vs-outline style as the title detail action buttons. Data flow: `useFocusEffect` with `[activeTab]` dep refetches `items` filtered by status, ordered by `updated_at desc`. For each item, a parallel `Promise.allSettled` of `fetchItemMeta(tmdb_id, media_type)` calls TMDB through the proxy; one failure surfaces as "Unable to load title" on that row without breaking the rest. Watched-tab rows get an extra `4★ · <date>` meta line when rating or watched_at are present (`.toLocaleDateString()` for now — will swap to PRD §7's relative/absolute formatter later). Stale-guard via `active` flag identical to Search. RLS does the user-scoping; query has no explicit `eq('user_id', ...)`. N+1 fetch is intentional for MVP scale; a comment block lists three concrete migration paths when 100+ item libraries surface (denormalise into items, AsyncStorage TTL cache, or TMDB `find` endpoint). One known unknown to verify on device: whether dismissing the title modal re-fires `useFocusEffect` on the Library tab below it — if not, swap to a Supabase realtime subscription on `items` instead.
 - Search screen filters out poster-less results (`8ceb789`). `SearchableItem` type intersected each variant with `{ poster_path: string }` so the narrowed type forbids null; filter predicate extended with `&& !!item.poster_path`; renderRow's `item.poster_path ? <Image> : <View placeholder>` ternary collapsed to just `<Image>` since the type now guarantees a poster. Title detail screen left untouched — its `TMDBMovie`/`TMDBTV` types keep `poster_path: string | null` and the defensive fallback `<View>` stays as is.
+- Verified full library loop end-to-end on device: TMDB search → tap result → title detail modal → tap status button → upsert via `items` → close modal → return to Library tab → row appears in the right status tab on refocus. The full Foundation-phase core loop is now solo-usable per PRD §9.1.
+
+### Session recap (high-level)
+
+**Done**
+- Sign-out button on home (temporary, will move to profile/settings).
+- TMDB proxy Edge Function with token as Supabase secret, deployed to dev.
+- `src/lib/tmdb.ts` client wrapper (typed, calls Edge Function via `supabase.functions.invoke`).
+- End-to-end TMDB chain verified: app → Supabase auth → Edge Function → TMDB → typed response.
+- Tab structure with five tabs (Home, Library, Search, Friends, Profile — Library/Friends/Profile started as placeholders).
+- Real Search screen: TMDB-backed, 300 ms debounce, stale-result guard, expo-image posters, error/empty/loading states, tap-outside-to-dismiss keyboard.
+- Filtered search results to only show items with `poster_path` (hides TMDB-database noise).
+- Title detail modal at `src/app/title/[mediaType]/[tmdbId].tsx`: backdrop, poster, metadata, three status action buttons that upsert to `items`.
+- Real Library screen: three tabs (Watchlist / Watching / Watched), `useFocusEffect` refresh-on-return, `Promise.allSettled` for per-row TMDB metadata with graceful degradation.
+- Verified full library loop on device.
+
+**Bug fixes & lessons**
+- All six prior migrations enabled RLS but never granted table privileges to `authenticated`. Postgres has two layers (grants AND RLS); we'd only set up the second. The signup trigger worked because it's SECURITY DEFINER and bypasses grants — client mutations failed with `code 42501 permission denied for table items` on the first "add to library" tap.
+- Fix: `20260519102336_grant_authenticated_privileges_on_public_tables.sql` granting the right operations per table, matched exactly to the policies they back.
+- Patched `rls-auditor` subagent with a new "Grants match policies" check so this can't recur. Added a "Two-layer permission model" preamble to TECHNICAL §2.
+- `LinearGradient` native module wasn't in the running dev build (JS package installed but no EAS rebuild yet). Swapped for a plain `<View>` with `opacity: 0.7` until the next dev build picks the module up. TEMP comment in the JSX has the verbatim restore line.
 
 **Next**
-- Verify the modal-dismiss-refocus assumption on device. If `useFocusEffect` doesn't re-fire on Library when the title modal dismisses, add a Supabase realtime subscription on `items` for the current user.
-- Next EAS dev build to pick up `expo-linear-gradient` native module; restore the real gradient on the title screen (TEMP comment has the line to drop back in).
-- Drive post-sign-in into onboarding (PRD §5 steps 3-7: handle/display-name → last-watched → best-watched → watchlist-three → invite). Current placeholder home only allows sign out; first-time users should land in onboarding instead.
-- Load DM Sans via `useFonts` in root `_layout.tsx` so `fontFamily` tokens take effect (text currently falls through to system font).
-- Test Google Sign-In (still queued — needs Android dev build with SHA-1 in Google Android OAuth Client, or a separate iOS device with a Google account).
-- Optional defence-in-depth migration: `REVOKE EXECUTE ... FROM PUBLIC` on the six trigger functions per the rls-auditor's flag on the grants migration.
+- (Optional) Mark-watched flow with a thumbs prompt — currently just sets status, doesn't ask for a rating.
+- Onboarding flow (PRD §5 steps 3-7).
+- Friends system UI + invite-link flow.
+- Recommend flow: friend picker → optional note → send → inbox.
+- Push notifications wiring: register Expo push token on signup, send via Edge Function with the 5-min per-sender batching from PRD §5.
+- `delete_account` / `restore_account` Edge Functions (PRD §5 lifecycle).
+- `pg_cron` daily 03:00 UTC job: `hard_delete_expired_accounts` + `prune_stale_push_tokens`.
+- EAS rebuild to restore `LinearGradient` and pick up any other native modules added since.
+- Carrying over from earlier: load DM Sans via `useFonts`; test Google Sign-In on Android dev build (needs SHA-1); optional `REVOKE EXECUTE … FROM PUBLIC` migration on trigger functions.
 
 **Open questions**
-- None.
+- Refresh-on-focus for Library after closing the title detail modal: works empirically but hasn't been stress-tested. May need a Supabase realtime subscription on `items` or manual cache invalidation later.
 
 ---
 
