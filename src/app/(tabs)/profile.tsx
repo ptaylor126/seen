@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
 import { getPalette, spacing, typography } from '@/theme/theme';
@@ -29,6 +30,7 @@ export default function ProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const { count: unreadCount } = useUnreadCount();
 
     const [profile, setProfile] = useState<ProfileData | null>(null);
     const [loading, setLoading] = useState(true);
@@ -106,7 +108,7 @@ export default function ProfileScreen() {
     if (loading) {
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
-                <ScreenHeader title="Profile" />
+                <ScreenHeader title="Profile" unreadCount={unreadCount} />
                 <View style={styles.fillCenter}>
                     <ActivityIndicator color={palette.accent} />
                 </View>
@@ -117,7 +119,7 @@ export default function ProfileScreen() {
     if (error || !profile) {
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
-                <ScreenHeader title="Profile" />
+                <ScreenHeader title="Profile" unreadCount={unreadCount} />
                 <View style={styles.fillCenter}>
                     <Text style={[typography.body, { color: palette.error }]}>
                         {error ?? 'Profile not available'}
@@ -131,7 +133,7 @@ export default function ProfileScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Profile" />
+            <ScreenHeader title="Profile" unreadCount={unreadCount} />
             <View style={styles.card}>
                 {profile.avatar_url ? (
                     <Image

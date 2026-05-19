@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
@@ -29,6 +30,7 @@ export default function FriendsScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const { count: unreadCount } = useUnreadCount();
 
     const [friends, setFriends] = useState<FriendRow[]>([]);
     const [pendingIncoming, setPendingIncoming] = useState(0);
@@ -164,7 +166,7 @@ export default function FriendsScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Friends" />
+            <ScreenHeader title="Friends" unreadCount={unreadCount} />
 
             {loading ? (
                 <View style={styles.fillCenter}>

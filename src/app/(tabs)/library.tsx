@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -79,6 +80,7 @@ export default function LibraryScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const { count: unreadCount } = useUnreadCount();
 
     // ---- Library state (watchlist / watching / watched) ----
     const [activeTab, setActiveTab] = useState<ItemStatus>('watchlist');
@@ -302,7 +304,7 @@ export default function LibraryScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Library" />
+            <ScreenHeader title="Library" unreadCount={unreadCount} />
 
             <View style={styles.searchBar}>
                 <TextInput

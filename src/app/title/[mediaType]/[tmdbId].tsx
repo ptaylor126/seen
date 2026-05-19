@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -47,8 +48,21 @@ const BACKDROP_HEIGHT = 240;
 const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
 
+interface RecContext {
+    note: string | null;
+    sender: {
+        handle: string;
+        displayName: string;
+        avatarUrl: string | null;
+    };
+}
+
 export default function TitleDetailScreen() {
-    const params = useLocalSearchParams<{ mediaType: string; tmdbId: string }>();
+    const params = useLocalSearchParams<{
+        mediaType: string;
+        tmdbId: string;
+        fromRec?: string;
+    }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -60,6 +74,7 @@ export default function TitleDetailScreen() {
             : null;
     const tmdbIdRaw = typeof params.tmdbId === 'string' ? params.tmdbId : '';
     const tmdbId = Number.parseInt(tmdbIdRaw, 10);
+    const fromRec = typeof params.fromRec === 'string' ? params.fromRec : null;
 
     const [detail, setDetail] = useState<Detail | null>(null);
     const [loading, setLoading] = useState(true);
@@ -68,6 +83,7 @@ export default function TitleDetailScreen() {
     const [updating, setUpdating] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [ratingBusy, setRatingBusy] = useState(false);
+    const [recContext, setRecContext] = useState<RecContext | null>(null);
 
     // Load title detail (TMDB) and the current library status (Supabase) in
     // parallel. The detail fetch picks getMovie or getTV based on mediaType
@@ -110,6 +126,37 @@ export default function TitleDetailScreen() {
                         setCurrentStatus(item.status as ItemStatus);
                     }
                 }
+
+                // If we arrived from the inbox via ?fromRec=<id>, load the
+                // recommendation + sender so we can render the "Sarah
+                // recommended this" card above the backdrop. Failures here
+                // are silent — the rest of the screen renders fine.
+                if (fromRec) {
+                    const { data: rec, error: recError } = await supabase
+                        .from('recommendations')
+                        .select('from_user_id, note')
+                        .eq('id', fromRec)
+                        .maybeSingle();
+                    if (recError) {
+                        console.warn('rec context fetch failed:', recError);
+                    } else if (active && rec?.from_user_id) {
+                        const { data: senderProfile } = await supabase
+                            .from('profiles')
+                            .select('handle, display_name, avatar_url')
+                            .eq('id', rec.from_user_id)
+                            .maybeSingle();
+                        if (active && senderProfile) {
+                            setRecContext({
+                                note: rec.note,
+                                sender: {
+                                    handle: senderProfile.handle,
+                                    displayName: senderProfile.display_name,
+                                    avatarUrl: senderProfile.avatar_url,
+                                },
+                            });
+                        }
+                    }
+                }
             } catch (err) {
                 if (active) setError(err instanceof Error ? err.message : 'Failed to load');
             } finally {
@@ -120,7 +167,7 @@ export default function TitleDetailScreen() {
         return () => {
             active = false;
         };
-    }, [mediaType, tmdbId]);
+    }, [mediaType, tmdbId, fromRec]);
 
     async function setStatus(newStatus: ItemStatus) {
         // Block re-entry: while a status update is in flight, or while the
@@ -317,6 +364,44 @@ export default function TitleDetailScreen() {
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScrollView contentContainerStyle={styles.scrollContent}>
+                {recContext && (
+                    <View
+                        style={[
+                            styles.recContextCard,
+                            { backgroundColor: palette.surfaceAlt },
+                        ]}
+                    >
+                        <Avatar
+                            avatarUrl={recContext.sender.avatarUrl}
+                            displayName={recContext.sender.displayName}
+                            size={36}
+                        />
+                        <View style={styles.recContextText}>
+                            <Text
+                                style={[typography.caption, { color: palette.text }]}
+                                numberOfLines={2}
+                            >
+                                <Text style={typography.bodyEmphasis}>
+                                    {recContext.sender.displayName}
+                                </Text>{' '}
+                                recommended this to you
+                            </Text>
+                            {recContext.note && (
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.recContextNote,
+                                        { color: palette.textMuted },
+                                    ]}
+                                    numberOfLines={3}
+                                >
+                                    “{recContext.note}”
+                                </Text>
+                            )}
+                        </View>
+                    </View>
+                )}
+
                 {/* Backdrop with a gradient fade at the bottom so the
                     seam between image and the surrounding content blends. */}
                 <View style={styles.backdropContainer}>
@@ -599,6 +684,24 @@ const styles = StyleSheet.create({
     root: { flex: 1 },
     fillCenter: { alignItems: 'center', justifyContent: 'center' },
     scrollContent: { paddingBottom: spacing.xxl },
+    recContextCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        marginHorizontal: spacing.base,
+        marginTop: spacing.md,
+        marginBottom: spacing.sm,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+        borderRadius: radius.md,
+    },
+    recContextText: {
+        flex: 1,
+        gap: spacing.xs,
+    },
+    recContextNote: {
+        fontStyle: 'italic',
+    },
     backdropContainer: {
         width: '100%',
         height: BACKDROP_HEIGHT,
