@@ -17,7 +17,7 @@ export default function HomeScreen() {
     }
 
     return (
-        <SafeAreaView style={[styles.root, { backgroundColor: palette.bg }]}>
+        <SafeAreaView style={[styles.root, { backgroundColor: palette.bg }]} edges={['top']}>
             <View style={styles.center}>
                 <Text style={[typography.display, { color: palette.text }]}>Seen</Text>
 

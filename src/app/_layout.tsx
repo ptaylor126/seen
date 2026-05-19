@@ -24,7 +24,7 @@ export default function RootLayout() {
         if (!session.session && !inAuthGroup) {
             router.replace('/(auth)/sign-in');
         } else if (session.session && inAuthGroup) {
-            router.replace('/');
+            router.replace('/(tabs)');
         }
     }, [session, segments, router]);
 
