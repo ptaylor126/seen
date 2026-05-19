@@ -394,12 +394,13 @@ export default function HomeScreen() {
     function renderActivity(activity: ActivityItem) {
         const headerLabel =
             activity.status === 'watching' ? 'Continue watching' : 'Last watched';
+        // Subline only appears for watched items with a recorded date —
+        // the "stream progress" subtitle doesn't fit our show-level model,
+        // so the watching case just shows the title.
         const subline =
-            activity.status === 'watching'
-                ? 'Pick up where you left off'
-                : activity.watchedAt
-                  ? `You watched this on ${formatWatchedDate(activity.watchedAt)}`
-                  : 'In your watched list';
+            activity.status === 'watched' && activity.watchedAt
+                ? `You watched this on ${formatWatchedDate(activity.watchedAt)}`
+                : null;
         return (
             <View style={styles.section}>
                 <Text style={[typography.bodyEmphasis, styles.sectionHeader, { color: palette.text }]}>
@@ -435,12 +436,14 @@ export default function HomeScreen() {
                         >
                             {activity.title}
                         </Text>
-                        <Text
-                            style={[typography.caption, { color: palette.textMuted }]}
-                            numberOfLines={2}
-                        >
-                            {subline}
-                        </Text>
+                        {subline && (
+                            <Text
+                                style={[typography.caption, { color: palette.textMuted }]}
+                                numberOfLines={2}
+                            >
+                                {subline}
+                            </Text>
+                        )}
                     </View>
                 </Pressable>
             </View>
@@ -751,7 +754,7 @@ export default function HomeScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader unreadCount={unreadCount} />
+            <ScreenHeader title="Seen" unreadCount={unreadCount} />
             {body}
         </View>
     );
