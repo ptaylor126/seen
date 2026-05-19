@@ -201,7 +201,7 @@ export default function FriendsScreen() {
                             { color: palette.text },
                         ]}
                     >
-                        Add friends to start sharing recs
+                        Seen is better with friends. Add yours to get started.
                     </Text>
                     <Text
                         style={[
@@ -210,8 +210,7 @@ export default function FriendsScreen() {
                             { color: palette.textMuted },
                         ]}
                     >
-                        Send your invite link to a friend, or add someone by their
-                        handle.
+                        Share your invite link, or add someone by their handle.
                     </Text>
                     <View style={styles.emptyActions}>
                         <Pressable

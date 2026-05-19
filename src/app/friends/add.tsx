@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -25,12 +25,47 @@ export default function AddFriendScreen() {
 
     const [handle, setHandle] = useState('');
     const [busy, setBusy] = useState(false);
+    const [myHandle, setMyHandle] = useState<string | null>(null);
 
     const trimmed = handle.trim().toLowerCase();
     const canSubmit = trimmed.length >= MIN_HANDLE_LENGTH && !busy;
 
+    // Pre-fetch the current user's handle so the self-request guard in
+    // handleSubmit can compare against it before doing the target lookup.
+    useEffect(() => {
+        let active = true;
+        (async () => {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) return;
+            const { data, error: queryError } = await supabase
+                .from('profiles')
+                .select('handle')
+                .eq('id', userId)
+                .single();
+            if (queryError) {
+                console.error('own-handle fetch failed:', queryError);
+                return;
+            }
+            if (active && data) setMyHandle(data.handle);
+        })();
+        return () => {
+            active = false;
+        };
+    }, []);
+
     async function handleSubmit() {
         if (!canSubmit) return;
+
+        // Self-request guard — block before the lookup so we don't bother
+        // querying for the user's own profile just to reject it.
+        if (myHandle && trimmed === myHandle) {
+            Alert.alert("That's you!", "You can't send a friend request to yourself.");
+            return;
+        }
+
         setBusy(true);
         try {
             const {
@@ -162,6 +197,19 @@ function surfaceError(err: unknown, title: string) {
             hint?: string;
             code?: string;
         };
+        // Code 42501 on this screen means the friend_requests INSERT was
+        // rejected by RLS — i.e. can_send_friend_request returned false
+        // (existing friendship, reverse pending request, or otherwise
+        // ineligible). The raw Postgres message ("new row violates row-
+        // level security policy for table 'friend_requests'") is jargon;
+        // replace with something the user can act on.
+        if (supaErr.code === '42501') {
+            Alert.alert(
+                title,
+                "Can't send a request to this user right now. You might already be friends, or there's an existing request between you.",
+            );
+            return;
+        }
         Alert.alert(
             title,
             `${supaErr.message}${supaErr.hint ? '\n\n' + supaErr.hint : ''}`,
