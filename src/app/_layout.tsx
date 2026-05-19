@@ -30,7 +30,12 @@ export default function RootLayout() {
 
     return (
         <SafeAreaProvider>
-            <Stack screenOptions={{ headerShown: false }} />
+            <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen
+                    name="title/[mediaType]/[tmdbId]"
+                    options={{ presentation: 'modal' }}
+                />
+            </Stack>
             {session.status === 'loading' && (
                 <View style={[styles.loadingOverlay, { backgroundColor: palette.bg }]}>
                     <ActivityIndicator color={palette.accent} />

@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -28,6 +29,7 @@ const DEBOUNCE_MS = 300;
 export default function SearchScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
+    const router = useRouter();
 
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchableItem[] | null>(null);
@@ -81,7 +83,15 @@ export default function SearchScreen() {
         const metaLine = [year, mediaLabel].filter(Boolean).join(' · ');
 
         return (
-            <View style={styles.row}>
+            <Pressable
+                onPress={() =>
+                    router.push(`/title/${item.media_type}/${item.id}`)
+                }
+                style={({ pressed }) => [
+                    styles.row,
+                    pressed && { opacity: 0.6 },
+                ]}
+            >
                 {item.poster_path ? (
                     <Image
                         source={{ uri: imageUrl(item.poster_path, 'w185') }}
@@ -105,7 +115,7 @@ export default function SearchScreen() {
                         {metaLine}
                     </Text>
                 </View>
-            </View>
+            </Pressable>
         );
     }
 
