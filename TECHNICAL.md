@@ -146,6 +146,8 @@ Index: user_id
 
 Principle: by default, deny. Each table gets explicit `auth.uid()`-based policies.
 
+**Two-layer permission model.** Postgres applies grants AND RLS. A client query first has to pass the role's table grants (`SELECT`/`INSERT`/`UPDATE`/`DELETE`) — only then does RLS evaluate which rows it can touch. Both layers are required: RLS without a matching grant fails with `permission denied (42501)` before any policy runs. The `authenticated` role must be granted the operations listed below for each table, matching the policies that follow. (See migration `20260519102336_grant_authenticated_privileges_on_public_tables.sql`.)
+
 ### profiles
 - SELECT: anyone authenticated can read any profile (handle, display_name, avatar). Required for search.
 - UPDATE: only `id = auth.uid()`.
