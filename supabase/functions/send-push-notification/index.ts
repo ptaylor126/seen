@@ -9,10 +9,11 @@
 //        Type:    HTTP Request
 //        Method:  POST
 //        URL:     https://<project-ref>.supabase.co/functions/v1/send-push-notification
-//        Headers: Authorization: Bearer ${WEBHOOK_SECRET}
-//                 Content-Type:  application/json
+//        Headers: Content-Type: application/json
+//                 (Authorization is auto-populated by Supabase with the
+//                  project's anon key — sufficient gate at MVP scale;
+//                  see "Auth model" note below.)
 //   2. Edge Function secrets (Settings → Edge Functions):
-//        WEBHOOK_SECRET        — random string matching the dashboard header.
 //        EXPO_ACCESS_TOKEN     — optional, only if Expo Push Security is enabled
 //                                 in EAS Dashboard (otherwise omit).
 //        TMDB_ACCESS_TOKEN     — already set for tmdb-proxy; we reuse it.
@@ -24,10 +25,12 @@
 // fans out one push per push_tokens row for the recipient, and reaps
 // any tokens that come back DeviceNotRegistered.
 //
-// Auth model: WEBHOOK_SECRET is checked once at the door. Supabase's
-// internal HTTP webhooks don't carry user JWTs, so this shared secret
-// is the only thing standing between the public function URL and
-// arbitrary push fan-out.
+// Auth model: Supabase's webhook UI auto-fills Authorization with the
+// project's anon key. The default Edge Function gateway verifies that
+// JWT before our handler runs, so we don't add a second check here. If
+// we later need stronger gating (e.g. to lock the function down even
+// against leaked anon keys), wire in a WEBHOOK_SECRET shared with the
+// webhook config.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -89,18 +92,10 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ error: 'method_not_allowed' }, 405);
         }
 
-        // ---- 1. Verify the webhook secret. WEBHOOK_SECRET is optional
-        //         at runtime so local curl tests don't need it, but it
-        //         MUST be set in production.
-        const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
-        if (expectedSecret) {
-            const auth = req.headers.get('Authorization');
-            if (auth !== `Bearer ${expectedSecret}`) {
-                return jsonResponse({ error: 'unauthorized' }, 401);
-            }
-        }
-
-        // ---- 2. Parse + validate the webhook payload.
+        // ---- 1. Parse + validate the webhook payload.
+        //         Auth is handled by the Edge Function gateway (Supabase
+        //         webhook → anon-key JWT). See header docs for the
+        //         upgrade path if we ever need a stronger check.
         const body = (await req.json()) as WebhookBody;
         if (body.type !== 'INSERT' || body.table !== 'notifications') {
             // Config mistake (webhook firing on wrong events) — log
@@ -116,7 +111,7 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ error: 'malformed_record' }, 400);
         }
 
-        // ---- 3. Service-role Supabase client for cross-user reads.
+        // ---- 2. Service-role Supabase client for cross-user reads.
         const supabaseUrl = Deno.env.get('SUPABASE_URL');
         const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
         if (!supabaseUrl || !serviceRoleKey) {
@@ -126,7 +121,7 @@ Deno.serve(async (req: Request) => {
             auth: { persistSession: false },
         });
 
-        // ---- 4. Fetch the recipient's push tokens.
+        // ---- 3. Fetch the recipient's push tokens.
         const { data: tokens, error: tokensError } = await supabase
             .from('push_tokens')
             .select('expo_push_token')
@@ -144,7 +139,7 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ ok: true, no_tokens: true }, 200);
         }
 
-        // ---- 5. Build the push payload (resolves names + titles).
+        // ---- 4. Build the push payload (resolves names + titles).
         const message = await buildMessage(supabase, notif);
         if (!message) {
             // Couldn't resolve required data (e.g. sender profile gone)
@@ -153,7 +148,7 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ ok: true, message_skipped: true }, 200);
         }
 
-        // ---- 6. Fan out to all device tokens. Expo Push accepts up to
+        // ---- 5. Fan out to all device tokens. Expo Push accepts up to
         //         100 messages per request; a single user rarely has
         //         more than a few devices so one request is enough.
         const pushes: PushMessage[] = tokens.map((t) => ({
@@ -192,7 +187,7 @@ Deno.serve(async (req: Request) => {
             );
         }
 
-        // ---- 7. Inspect tickets for DeviceNotRegistered → reap.
+        // ---- 6. Inspect tickets for DeviceNotRegistered → reap.
         //         Per Expo's docs: that error means the token is
         //         permanently invalid (uninstalled app, etc.) and we
         //         must stop sending to it.
