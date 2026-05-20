@@ -246,6 +246,7 @@ export type Database = {
           handle: string
           handle_changed_at: string | null
           id: string
+          onboarded: boolean
         }
         Insert: {
           avatar_url?: string | null
@@ -255,6 +256,7 @@ export type Database = {
           handle: string
           handle_changed_at?: string | null
           id: string
+          onboarded?: boolean
         }
         Update: {
           avatar_url?: string | null
@@ -264,6 +266,7 @@ export type Database = {
           handle?: string
           handle_changed_at?: string | null
           id?: string
+          onboarded?: boolean
         }
         Relationships: []
       }
