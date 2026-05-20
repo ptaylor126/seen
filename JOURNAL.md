@@ -4,6 +4,28 @@ Running session log. Newest entries at top. Read this first to brief future Clau
 
 ---
 
+## 2026-05-20
+
+**Done**
+- TMDB proxy body-decoder fix (`74a395a`). The Home dashboard was hitting `tmdb-proxy 500: Internal Server Error` on every open. Root cause: the proxy was calling `await tmdbResponse.text()` outside any inner try/catch, and the Supabase Edge runtime's HTTP body reader was throwing `"unexpected end of file"` mid-body on TMDB's compressed/chunked responses. The original `Internal Server Error` text was the Edge runtime's default 500 page surfacing the uncaught exception. Three layered changes to the proxy: (1) top-level try/catch around the whole handler so any unhandled exception returns a structured JSON 500 with the actual error in `detail` (so the client sees what failed instead of generic text); (2) inner try/catches around the outbound `fetch` (502 `upstream_fetch_failed`) and the body read (502 `upstream_body_read_failed`) for diagnostic granularity; (3) **`Accept-Encoding: identity`** on the outbound TMDB request — this is the actual fix, forcing TMDB to send a non-compressed non-chunked body so the runtime's decoder never gets out of sync. TMDB JSON is small enough that the bandwidth trade-off is negligible. Also added `console.error`/`console.warn` lines so the dashboard logs surface the path + status + detail on every failure. Verified on device: warnings stopped.
+- Home activity tolerance (`3209c28`). Separately from the proxy fix, hardened the Home dashboard against single-TMDB-call failures: the activity item's metadata fetch was the only unwrapped `await` in `fetchHomeData` (friend cards and recs were already using `Promise.allSettled`). Wrapped it in `.catch(() => null)` — on failure the section just doesn't render, rather than the whole Home crashing. Defence-in-depth alongside the proxy fix; even if a future TMDB failure slips past the proxy hardening, the screen still loads.
+- Library tab refactor to Spotify-style header (`df44dda`). Removed the inline TMDB search that used to take over the body of the Library screen. **New header** is a custom layout (not `ScreenHeader` — the three-column centred-title shape doesn't fit Spotify's left-aligned title + right-aligned icon row). Two modes: normal (left-aligned `typography.display` "Library" + Search/Plus/Bell icons on the right, `gap: spacing.base`) and search-active (full-width `TextInput autoFocus` + Cancel button in `palette.accent`). State `searching: boolean` flips between them; `exitSearch()` clears the filter and dismisses the keyboard. Bell badge still wired to `useUnreadCount` — bell-with-badge JSX is ~25 lines duplicated from `ScreenHeader`; held off on extracting a `NotificationBell` component until a third site needs it (same threshold I held off on for `<Avatar />`). **Local filter** is client-side `rows.filter(r => r.title.toLowerCase().includes(...))` over the already-loaded library — no new fetch. Empty-state copy switches to `'No matches for "X"'` when the filter is non-empty. **New modal** at `src/app/library/add.tsx` reachable via the Plus icon: resurrects the old standalone Search experience as a pushed modal with X-close header, `autoFocus` TextInput, 300ms-debounced TMDB results. Tapping a result pushes the existing `/title/[mediaType]/[tmdbId]` modal on top; when the user dismisses it they land back on the add-search modal with state preserved (because the modal's `useState` survives the cover-and-uncover cycle). Modal route registered in root `_layout.tsx` alongside the existing title-detail and recommend modal registrations.
+
+**Bug fixes & lessons**
+- Edge functions that throw an uncaught exception return Edge runtime's plain `"Internal Server Error"` text — not our structured JSON. Wrapping the entire handler in try/catch and returning the actual exception message in the response body turned an opaque "something failed" into a diagnosable `"unexpected end of file"` within one reload. Lesson applies to any Edge function we write later.
+- The Supabase Edge runtime + chunked/compressed upstream responses is a known interaction-bug class. `Accept-Encoding: identity` on outbound `fetch` is the safe default for small JSON APIs.
+
+**Next**
+- Three rec actions on the title detail screen when arrived via `?fromRec=<id>` — "Already seen / Add to my list / Not for me" — wired to `recommendations` status transitions. Still carrying over from yesterday.
+- Refactor inline avatars in `profile.tsx`, `(tabs)/friends.tsx`, `friends/requests.tsx` to use the shared `<Avatar />` component.
+- Optionally extract `<NotificationBell unreadCount />` shared between `ScreenHeader` and the Library tab's custom header — wait for a third use site.
+- Onboarding flow (PRD §5 steps 3-7).
+
+**Open questions**
+- None.
+
+---
+
 ## 2026-05-19
 
 **Done**
