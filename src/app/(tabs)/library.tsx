@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Bell, Plus, Search } from 'lucide-react-native';
+import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
@@ -12,11 +13,11 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
+import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
@@ -35,12 +36,6 @@ interface LibraryRow {
     metaLoaded: boolean;
 }
 
-// search/multi returns movies, TV, and people; we surface only movies + TV
-// that have a poster (matches the old standalone search screen).
-type SearchableItem =
-    | (TMDBMediaItem & { media_type: 'movie'; poster_path: string })
-    | (TMDBMediaItem & { media_type: 'tv'; poster_path: string });
-
 const TABS: readonly ItemStatus[] = ['watchlist', 'watching', 'watched'] as const;
 const TAB_LABELS: Record<ItemStatus, string> = {
     watchlist: 'Watchlist',
@@ -48,17 +43,16 @@ const TAB_LABELS: Record<ItemStatus, string> = {
     watched: 'Watched',
 };
 const EMPTY_MESSAGES: Record<ItemStatus, string> = {
-    watchlist: 'Your watchlist is empty. Search above to add something.',
+    watchlist: 'Your watchlist is empty. Tap + to add something.',
     watching: 'Nothing currently watching.',
     watched: 'No watched titles yet.',
 };
 
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
-const DEBOUNCE_MS = 300;
 
-// N+1 fetch — see prior journal entry for the trade-off comment. Posters
-// cache at the expo-image layer; only the JSON metadata is the cost.
+// N+1 metadata fetch — see prior journal entry for the trade-off. Posters
+// cache at the expo-image layer; only the JSON metadata is the real cost.
 async function fetchItemMeta(tmdbId: number, mediaType: MediaType) {
     if (mediaType === 'movie') {
         const m = await getMovie(tmdbId);
@@ -82,29 +76,24 @@ export default function LibraryScreen() {
     const router = useRouter();
     const { count: unreadCount } = useUnreadCount();
 
-    // ---- Library state (watchlist / watching / watched) ----
     const [activeTab, setActiveTab] = useState<ItemStatus>('watchlist');
     const [rows, setRows] = useState<LibraryRow[]>([]);
-    const [libraryLoading, setLibraryLoading] = useState(true);
-    const [libraryError, setLibraryError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    // ---- Search state ----
-    const [query, setQuery] = useState('');
-    const [searchResults, setSearchResults] = useState<SearchableItem[] | null>(null);
-    const [searchLoading, setSearchLoading] = useState(false);
-    const [searchError, setSearchError] = useState<string | null>(null);
+    // Local search state — filters the loaded library by title substring.
+    // Distinct from TMDB search (which lives in the /library/add modal
+    // behind the Plus icon).
+    const [searching, setSearching] = useState(false);
+    const [filter, setFilter] = useState('');
 
-    const isSearching = query.length > 0;
-
-    // Library fetch — refetches on tab change and on screen focus
-    // (e.g., returning from the title detail modal after adding an item).
     useFocusEffect(
         useCallback(() => {
             let active = true;
 
             const load = async () => {
-                setLibraryLoading(true);
-                setLibraryError(null);
+                setLoading(true);
+                setError(null);
                 try {
                     const { data: items, error: itemsError } = await supabase
                         .from('items')
@@ -152,12 +141,12 @@ export default function LibraryScreen() {
                 } catch (err) {
                     if (!active) return;
                     console.error('library fetch failed:', err);
-                    setLibraryError(
+                    setError(
                         err instanceof Error ? err.message : 'Failed to load library',
                     );
                     setRows([]);
                 } finally {
-                    if (active) setLibraryLoading(false);
+                    if (active) setLoading(false);
                 }
             };
 
@@ -169,52 +158,27 @@ export default function LibraryScreen() {
         }, [activeTab]),
     );
 
-    // Search effect — 300ms debounce + stale-result guard. Identical
-    // pattern to the old standalone search screen.
-    useEffect(() => {
-        const trimmed = query.trim();
-        if (!trimmed) {
-            setSearchResults(null);
-            setSearchError(null);
-            setSearchLoading(false);
-            return;
-        }
+    function enterSearch() {
+        setSearching(true);
+    }
 
-        let active = true;
-        setSearchLoading(true);
-
-        const handle = setTimeout(async () => {
-            try {
-                const response = await searchMulti(trimmed, 1);
-                if (!active) return;
-                const filtered = response.results.filter(
-                    (item): item is SearchableItem =>
-                        (item.media_type === 'movie' || item.media_type === 'tv') &&
-                        !!item.poster_path,
-                );
-                setSearchResults(filtered);
-                setSearchError(null);
-            } catch (err) {
-                if (!active) return;
-                setSearchResults([]);
-                setSearchError(err instanceof Error ? err.message : 'Search failed');
-            } finally {
-                if (active) setSearchLoading(false);
-            }
-        }, DEBOUNCE_MS);
-
-        return () => {
-            active = false;
-            clearTimeout(handle);
-        };
-    }, [query]);
-
-    function handleCancelSearch() {
-        setQuery('');
+    function exitSearch() {
+        setSearching(false);
+        setFilter('');
         Keyboard.dismiss();
     }
 
-    function renderLibraryRow({ item }: { item: LibraryRow }) {
+    // Filter applied client-side over the already-loaded rows. Case-
+    // insensitive substring match on the displayed title.
+    const trimmedFilter = filter.trim();
+    const filteredRows =
+        trimmedFilter.length === 0
+            ? rows
+            : rows.filter((r) =>
+                  r.title.toLowerCase().includes(trimmedFilter.toLowerCase()),
+              );
+
+    function renderRow({ item }: { item: LibraryRow }) {
         const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
         const metaLine = [item.year, mediaLabel].filter(Boolean).join(' · ');
 
@@ -228,7 +192,13 @@ export default function LibraryScreen() {
         return (
             <Pressable
                 onPress={() =>
-                    router.push(`/title/${item.media_type}/${item.tmdb_id}`)
+                    router.push({
+                        pathname: '/title/[mediaType]/[tmdbId]',
+                        params: {
+                            mediaType: item.media_type,
+                            tmdbId: String(item.tmdb_id),
+                        },
+                    })
                 }
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
@@ -266,201 +236,183 @@ export default function LibraryScreen() {
         );
     }
 
-    function renderSearchRow({ item }: { item: SearchableItem }) {
-        const title = item.media_type === 'movie' ? item.title : item.name;
-        const dateField =
-            item.media_type === 'movie' ? item.release_date : item.first_air_date;
-        const year = dateField ? dateField.slice(0, 4) : '';
-        const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
-        const metaLine = [year, mediaLabel].filter(Boolean).join(' · ');
-
-        return (
-            <Pressable
-                onPress={() =>
-                    router.push(`/title/${item.media_type}/${item.id}`)
-                }
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
-            >
-                <Image
-                    source={{ uri: imageUrl(item.poster_path, 'w185') }}
-                    style={styles.poster}
-                    contentFit="cover"
-                    transition={150}
-                />
-                <View style={styles.rowText}>
-                    <Text
-                        style={[typography.bodyEmphasis, { color: palette.text }]}
-                        numberOfLines={2}
-                    >
-                        {title}
-                    </Text>
-                    <Text style={[typography.caption, { color: palette.textMuted }]}>
-                        {metaLine}
-                    </Text>
-                </View>
-            </Pressable>
-        );
-    }
-
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Library" unreadCount={unreadCount} />
+            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
+                <View style={styles.header}>
+                    {searching ? (
+                        <>
+                            <TextInput
+                                value={filter}
+                                onChangeText={setFilter}
+                                placeholder="Search your library"
+                                placeholderTextColor={palette.textMuted}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                autoFocus
+                                returnKeyType="search"
+                                onSubmitEditing={() => Keyboard.dismiss()}
+                                style={[
+                                    styles.searchInput,
+                                    typography.body,
+                                    {
+                                        backgroundColor: palette.surface,
+                                        color: palette.text,
+                                        borderColor: palette.border,
+                                    },
+                                ]}
+                            />
+                            <Pressable
+                                onPress={exitSearch}
+                                hitSlop={spacing.sm}
+                                style={({ pressed }) => [
+                                    styles.cancelButton,
+                                    pressed && { opacity: 0.6 },
+                                ]}
+                            >
+                                <Text
+                                    style={[typography.body, { color: palette.accent }]}
+                                >
+                                    Cancel
+                                </Text>
+                            </Pressable>
+                        </>
+                    ) : (
+                        <>
+                            <Text
+                                style={[typography.display, { color: palette.text }]}
+                                numberOfLines={1}
+                            >
+                                Library
+                            </Text>
+                            <View style={styles.iconRow}>
+                                <Pressable
+                                    onPress={enterSearch}
+                                    hitSlop={spacing.sm}
+                                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                                >
+                                    <Search color={palette.text} size={24} />
+                                </Pressable>
+                                <Pressable
+                                    onPress={() =>
+                                        router.push({ pathname: '/library/add' })
+                                    }
+                                    hitSlop={spacing.sm}
+                                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                                >
+                                    <Plus color={palette.text} size={24} />
+                                </Pressable>
+                                <Pressable
+                                    onPress={() =>
+                                        router.push({ pathname: '/inbox' })
+                                    }
+                                    hitSlop={spacing.sm}
+                                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                                >
+                                    <View>
+                                        <Bell color={palette.text} size={24} />
+                                        {unreadCount > 0 && (
+                                            <View
+                                                style={[
+                                                    styles.badge,
+                                                    { backgroundColor: palette.accent },
+                                                ]}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.badgeText,
+                                                        {
+                                                            color: palette.textInverse,
+                                                        },
+                                                    ]}
+                                                >
+                                                    {unreadCount > 9
+                                                        ? '9+'
+                                                        : String(unreadCount)}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                </Pressable>
+                            </View>
+                        </>
+                    )}
+                </View>
+            </SafeAreaView>
 
-            <View style={styles.searchBar}>
-                <TextInput
-                    value={query}
-                    onChangeText={setQuery}
-                    placeholder="Search films and TV shows"
-                    placeholderTextColor={palette.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
-                    onSubmitEditing={() => Keyboard.dismiss()}
-                    style={[
-                        styles.input,
-                        typography.body,
-                        {
-                            backgroundColor: palette.surface,
-                            color: palette.text,
-                            borderColor: palette.border,
-                        },
-                    ]}
-                />
-                {isSearching && (
-                    <Pressable
-                        onPress={handleCancelSearch}
-                        hitSlop={spacing.sm}
-                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                    >
-                        <Text style={[typography.body, { color: palette.accent }]}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                )}
+            <View style={styles.tabs}>
+                {TABS.map((tab) => {
+                    const isActive = activeTab === tab;
+                    return (
+                        <Pressable
+                            key={tab}
+                            onPress={() => setActiveTab(tab)}
+                            style={({ pressed }) => [
+                                styles.tabPill,
+                                {
+                                    backgroundColor: isActive
+                                        ? palette.accent
+                                        : 'transparent',
+                                    borderColor: palette.accent,
+                                    opacity: pressed ? 0.6 : 1,
+                                },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    {
+                                        color: isActive
+                                            ? palette.textInverse
+                                            : palette.accent,
+                                    },
+                                ]}
+                            >
+                                {TAB_LABELS[tab]}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
             </View>
 
-            {isSearching ? (
-                /* Search body — same nested-Pressable keyboard-dismiss
-                   pattern as the old search screen; row Pressables
-                   consume the tap before the wrapper sees it. */
-                <Pressable style={styles.flex} onPress={Keyboard.dismiss}>
-                    {searchLoading ? (
-                        <View style={styles.statusBlock}>
-                            <ActivityIndicator color={palette.accent} />
-                        </View>
-                    ) : searchResults !== null &&
-                      searchResults.length === 0 ? (
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[typography.body, { color: palette.textMuted }]}
-                                numberOfLines={2}
-                            >
-                                {searchError
-                                    ? searchError
-                                    : `No results for "${query.trim()}"`}
-                            </Text>
-                        </View>
-                    ) : searchResults !== null && searchResults.length > 0 ? (
-                        <FlatList
-                            data={searchResults}
-                            keyExtractor={(item) => `${item.media_type}-${item.id}`}
-                            renderItem={renderSearchRow}
-                            // keyboardShouldPersistTaps + the outer Pressable
-                            // handle taps in non-FlatList space; the FlatList's
-                            // own ScrollView absorbs taps inside its bounds, so
-                            // we additionally dismiss the keyboard on scroll —
-                            // the most common "I want to see results" gesture.
-                            keyboardShouldPersistTaps="handled"
-                            keyboardDismissMode="on-drag"
-                            onScrollBeginDrag={() => Keyboard.dismiss()}
-                            contentContainerStyle={styles.listContent}
-                            ItemSeparatorComponent={() => (
-                                <View
-                                    style={[
-                                        styles.separator,
-                                        { backgroundColor: palette.border },
-                                    ]}
-                                />
-                            )}
-                        />
-                    ) : null}
-                </Pressable>
+            {loading ? (
+                <View style={styles.statusBlock}>
+                    <ActivityIndicator color={palette.accent} />
+                </View>
+            ) : error ? (
+                <View style={styles.statusBlock}>
+                    <Text
+                        style={[typography.body, { color: palette.error }]}
+                        numberOfLines={3}
+                    >
+                        {error}
+                    </Text>
+                </View>
+            ) : filteredRows.length === 0 ? (
+                <View style={styles.statusBlock}>
+                    <Text
+                        style={[typography.body, { color: palette.textMuted }]}
+                        numberOfLines={3}
+                    >
+                        {trimmedFilter.length > 0
+                            ? `No matches for "${trimmedFilter}"`
+                            : EMPTY_MESSAGES[activeTab]}
+                    </Text>
+                </View>
             ) : (
-                <>
-                    <View style={styles.tabs}>
-                        {TABS.map((tab) => {
-                            const isActive = activeTab === tab;
-                            return (
-                                <Pressable
-                                    key={tab}
-                                    onPress={() => setActiveTab(tab)}
-                                    style={({ pressed }) => [
-                                        styles.tabPill,
-                                        {
-                                            backgroundColor: isActive
-                                                ? palette.accent
-                                                : 'transparent',
-                                            borderColor: palette.accent,
-                                            opacity: pressed ? 0.6 : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            typography.bodyEmphasis,
-                                            {
-                                                color: isActive
-                                                    ? palette.textInverse
-                                                    : palette.accent,
-                                            },
-                                        ]}
-                                    >
-                                        {TAB_LABELS[tab]}
-                                    </Text>
-                                </Pressable>
-                            );
-                        })}
-                    </View>
-
-                    {libraryLoading ? (
-                        <View style={styles.statusBlock}>
-                            <ActivityIndicator color={palette.accent} />
-                        </View>
-                    ) : libraryError ? (
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[typography.body, { color: palette.error }]}
-                                numberOfLines={3}
-                            >
-                                {libraryError}
-                            </Text>
-                        </View>
-                    ) : rows.length === 0 ? (
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[typography.body, { color: palette.textMuted }]}
-                                numberOfLines={3}
-                            >
-                                {EMPTY_MESSAGES[activeTab]}
-                            </Text>
-                        </View>
-                    ) : (
-                        <FlatList
-                            data={rows}
-                            keyExtractor={(item) => item.id}
-                            renderItem={renderLibraryRow}
-                            contentContainerStyle={styles.listContent}
-                            ItemSeparatorComponent={() => (
-                                <View
-                                    style={[
-                                        styles.separator,
-                                        { backgroundColor: palette.border },
-                                    ]}
-                                />
-                            )}
+                <FlatList
+                    data={filteredRows}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderRow}
+                    contentContainerStyle={styles.listContent}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    ItemSeparatorComponent={() => (
+                        <View
+                            style={[styles.separator, { backgroundColor: palette.border }]}
                         />
                     )}
-                </>
+                />
             )}
         </View>
     );
@@ -468,26 +420,49 @@ export default function LibraryScreen() {
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    flex: { flex: 1 },
-    searchBar: {
+    header: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.sm,
+        justifyContent: 'space-between',
         paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
-        paddingBottom: spacing.md,
+        paddingVertical: spacing.md,
+        gap: spacing.sm,
     },
-    input: {
+    iconRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.base,
+    },
+    badge: {
+        position: 'absolute',
+        top: -4,
+        right: -6,
+        minWidth: 16,
+        height: 16,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 3,
+    },
+    badgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    searchInput: {
         flex: 1,
-        height: 44,
+        height: 40,
         borderRadius: radius.sm,
         borderWidth: 1,
         paddingHorizontal: spacing.md,
+    },
+    cancelButton: {
+        paddingHorizontal: spacing.xs,
     },
     tabs: {
         flexDirection: 'row',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
+        paddingTop: spacing.sm,
         paddingBottom: spacing.md,
     },
     tabPill: {
