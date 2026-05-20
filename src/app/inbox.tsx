@@ -13,6 +13,7 @@ import {
 
 import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
+import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -350,6 +351,16 @@ export default function InboxScreen() {
                     (it) => !(it.kind === 'friend_request' && it.requestId === requestId),
                 ),
             );
+
+            // Social-commitment moment: this is where it's natural to ask
+            // for push permissions. Helper is silent on every error so a
+            // permission hiccup can't surface as an Accept failure.
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            if (session?.user.id) {
+                await maybeEnablePushAfterAccept(session.user.id);
+            }
         } catch (err) {
             console.error('accept failed:', err);
             Alert.alert(

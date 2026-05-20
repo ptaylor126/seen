@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
@@ -136,6 +137,16 @@ export default function FriendRequestsScreen() {
             if (rpcError) throw rpcError;
             // Remove from the local list optimistically.
             setIncoming((prev) => prev.filter((r) => r.requestId !== requestId));
+
+            // Social-commitment moment: this is where it's natural to ask
+            // for push permissions. Helper is silent on every error so a
+            // permission hiccup can't surface as an Accept failure.
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            if (session?.user.id) {
+                await maybeEnablePushAfterAccept(session.user.id);
+            }
         } catch (err) {
             console.error('accept failed:', err);
             surfaceError(err, "Couldn't accept");
