@@ -7,7 +7,6 @@ import {
     Alert,
     FlatList,
     Keyboard,
-    Modal,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -36,11 +35,12 @@ type SearchableItem =
 
 const SEARCH_DEBOUNCE_MS = 300;
 // Distance from the SafeArea top inset to the bottom of the search bar.
-// Used to position the search results sheet just below the input.
-// Sized empirically from the header + searchBar style values below
-// (header padding + display text height + searchBar marginTop + padding
-// + content height ≈ 110).
-const SEARCH_SHEET_TOP_OFFSET = 110;
+// Used to position the search results overlay's top edge just under the
+// input. Sized from the header + searchBar style values below:
+// header padding (12 + 12) + display lineHeight (38) + searchBar
+// marginTop (8) + searchBar height (44) = 114; rounded to 116 for a
+// hairline of breathing room.
+const SEARCH_SHEET_TOP_OFFSET = 116;
 const SEARCH_RESULT_POSTER_W = 56;
 const SEARCH_RESULT_POSTER_H = 84;
 
@@ -1138,89 +1138,68 @@ export default function HomeScreen() {
                 busy={ratingBusy}
                 onSubmit={handleRatingSubmit}
             />
-            <Modal
-                visible={searchModalVisible}
-                animationType="slide"
-                transparent
-                presentationStyle="overFullScreen"
-                onRequestClose={handleSearchDismiss}
-            >
-                <View style={styles.searchModalRoot}>
+            {searchModalVisible && (
+                <View
+                    style={[
+                        styles.searchOverlay,
+                        {
+                            top: searchSheetTop,
+                            backgroundColor: palette.bg,
+                            borderTopColor: palette.border,
+                        },
+                    ]}
+                >
                     <Pressable
-                        style={[styles.searchScrimTop, { height: searchSheetTop }]}
                         onPress={handleSearchDismiss}
-                    />
-                    <View
-                        style={[
-                            styles.searchSheet,
-                            {
-                                backgroundColor: palette.bg,
-                                borderTopColor: palette.border,
-                            },
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => [
+                            styles.searchClose,
+                            pressed && { opacity: 0.6 },
                         ]}
                     >
-                        <Pressable
-                            onPress={handleSearchDismiss}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [
-                                styles.searchClose,
-                                pressed && { opacity: 0.6 },
-                            ]}
-                        >
-                            <X color={palette.textMuted} size={20} />
-                        </Pressable>
-                        {searchLoading ? (
-                            <View style={styles.searchStatusBlock}>
-                                <ActivityIndicator color={palette.accent} />
-                            </View>
-                        ) : searchResults === null ? (
-                            <View style={styles.searchStatusBlock}>
-                                <Text
+                        <X color={palette.textMuted} size={20} />
+                    </Pressable>
+                    {searchLoading ? (
+                        <View style={styles.searchStatusBlock}>
+                            <ActivityIndicator color={palette.accent} />
+                        </View>
+                    ) : searchResults === null ? (
+                        <View style={styles.searchStatusBlock}>
+                            <Text style={[typography.body, { color: palette.textMuted }]}>
+                                Type to search
+                            </Text>
+                        </View>
+                    ) : searchResults.length === 0 ? (
+                        <View style={styles.searchStatusBlock}>
+                            <Text
+                                style={[typography.body, { color: palette.textMuted }]}
+                                numberOfLines={2}
+                            >
+                                {searchError
+                                    ? searchError
+                                    : `No results for "${homeSearchQuery.trim()}"`}
+                            </Text>
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={searchResults}
+                            keyExtractor={(item) => `${item.media_type}-${item.id}`}
+                            renderItem={renderSearchResult}
+                            keyboardShouldPersistTaps="handled"
+                            keyboardDismissMode="on-drag"
+                            contentContainerStyle={styles.searchListContent}
+                            ItemSeparatorComponent={() => (
+                                <View
                                     style={[
-                                        typography.body,
-                                        { color: palette.textMuted },
+                                        styles.searchSeparator,
+                                        { backgroundColor: palette.border },
                                     ]}
-                                >
-                                    Type to search
-                                </Text>
-                            </View>
-                        ) : searchResults.length === 0 ? (
-                            <View style={styles.searchStatusBlock}>
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        { color: palette.textMuted },
-                                    ]}
-                                    numberOfLines={2}
-                                >
-                                    {searchError
-                                        ? searchError
-                                        : `No results for "${homeSearchQuery.trim()}"`}
-                                </Text>
-                            </View>
-                        ) : (
-                            <FlatList
-                                data={searchResults}
-                                keyExtractor={(item) =>
-                                    `${item.media_type}-${item.id}`
-                                }
-                                renderItem={renderSearchResult}
-                                keyboardShouldPersistTaps="handled"
-                                keyboardDismissMode="on-drag"
-                                contentContainerStyle={styles.searchListContent}
-                                ItemSeparatorComponent={() => (
-                                    <View
-                                        style={[
-                                            styles.searchSeparator,
-                                            { backgroundColor: palette.border },
-                                        ]}
-                                    />
-                                )}
-                            />
-                        )}
-                    </View>
+                                />
+                            )}
+                        />
+                    )}
                 </View>
-            </Modal>
+            )}
         </View>
     );
 }
@@ -1358,18 +1337,19 @@ const styles = StyleSheet.create({
         padding: spacing.base,
         gap: spacing.sm,
     },
-    // Inline search Modal
-    searchModalRoot: {
-        flex: 1,
-    },
-    searchScrimTop: {
-        // Transparent tap-to-dismiss region above the sheet. Sized via
-        // dynamic `height` set inline from insets.top + SEARCH_SHEET_TOP_OFFSET
-        // so the sheet top lines up just under the search input.
-    },
-    searchSheet: {
-        flex: 1,
+    // Inline search overlay. Absolutely positioned over the ScrollView
+    // body — `top` is set inline from insets.top + SEARCH_SHEET_TOP_OFFSET
+    // so the overlay starts directly below the search bar. zIndex keeps
+    // it above the body's ScrollView; the header + searchBar sit above
+    // the overlay's top edge in normal flow, so the input stays
+    // tappable while the overlay is open.
+    searchOverlay: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
         borderTopWidth: StyleSheet.hairlineWidth,
+        zIndex: 10,
     },
     searchClose: {
         position: 'absolute',
