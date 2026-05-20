@@ -3,6 +3,7 @@ import { ChevronLeft } from 'lucide-react-native';
 import { useState } from 'react';
 import {
     Alert,
+    Keyboard,
     Pressable,
     StyleSheet,
     Text,
@@ -21,29 +22,25 @@ import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
-interface PickedItem {
+interface AddedItem {
     tmdbId: number;
     mediaType: 'movie' | 'tv';
     title: string;
 }
 
-const TARGET_COUNT = 3;
-
-export default function WatchlistScreen() {
+export default function CurrentlyWatchingScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
     const { refresh: refreshProfile } = useProfile();
 
-    const [picked, setPicked] = useState<PickedItem[]>([]);
+    const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
 
     async function handlePick(item: SearchableItem) {
-        if (busy || picked.length >= TARGET_COUNT) return;
-        // Note: `items.watchlist_at` doesn't exist in the schema — only
-        // `watched_at` does. The generic updated_at trigger captures
-        // when the row last changed, which is fine for ordering.
+        if (busy) return;
         setBusy(true);
+        Keyboard.dismiss();
         try {
             const {
                 data: { session },
@@ -52,23 +49,23 @@ export default function WatchlistScreen() {
             if (!userId) throw new Error('Not authenticated');
 
             const title = item.media_type === 'movie' ? item.title : item.name;
+            // Repeated picks overwrite via the (user_id, tmdb_id, media_type)
+            // unique constraint — last pick wins, matching the visible
+            // confirmation. The user can re-pick freely without leaving
+            // a trail of half-committed rows.
             const { error } = await supabase.from('items').upsert(
                 {
                     user_id: userId,
                     tmdb_id: item.id,
                     media_type: item.media_type,
-                    status: 'watchlist',
+                    status: 'watching',
                 },
                 { onConflict: 'user_id,tmdb_id,media_type' },
             );
             if (error) throw error;
-
-            setPicked((prev) => [
-                ...prev,
-                { tmdbId: item.id, mediaType: item.media_type, title },
-            ]);
+            setAdded({ tmdbId: item.id, mediaType: item.media_type, title });
         } catch (err) {
-            console.error('watchlist add failed:', err);
+            console.error('currently-watching add failed:', err);
             Alert.alert(
                 "Couldn't add",
                 err instanceof Error ? err.message : 'Unknown error',
@@ -79,7 +76,7 @@ export default function WatchlistScreen() {
     }
 
     async function handleContinue() {
-        if (picked.length < TARGET_COUNT) return;
+        if (!added || busy) return;
         await finishOnboarding({
             onComplete: () => router.replace('/(tabs)'),
             refreshProfile,
@@ -92,13 +89,6 @@ export default function WatchlistScreen() {
             refreshProfile,
         });
     }
-
-    const pickedKeys = picked.map((p) => `${p.mediaType}:${p.tmdbId}`);
-    const remaining = TARGET_COUNT - picked.length;
-    const counterLabel =
-        picked.length >= TARGET_COUNT
-            ? "All three added — you're set"
-            : `${picked.length} of ${TARGET_COUNT} added`;
 
     return (
         <SafeAreaView
@@ -116,66 +106,46 @@ export default function WatchlistScreen() {
             </View>
             <View style={styles.body}>
                 <Text style={[typography.display, { color: palette.text }]}>
-                    Three things you want to watch but haven&apos;t
+                    What are you watching right now?
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Search and add three titles to your watchlist.
+                    Anything you&apos;re in the middle of? Add it —
+                    we&apos;ll keep track.
                 </Text>
-                <Text
-                    style={[
-                        typography.caption,
-                        { color: palette.accent, marginTop: spacing.sm },
-                    ]}
-                >
-                    {counterLabel}
-                </Text>
-                {remaining > 0 ? (
-                    <View style={styles.searchWrap}>
-                        <OnboardingSearch
-                            placeholder="Search films and TV shows"
-                            onPick={handlePick}
-                            pickedKeys={pickedKeys}
-                        />
-                    </View>
-                ) : null}
-                {picked.length > 0 ? (
-                    <View style={styles.pickedList}>
-                        {picked.map((p) => (
-                            <View
-                                key={`${p.mediaType}-${p.tmdbId}`}
-                                style={[
-                                    styles.pickedRow,
-                                    { backgroundColor: palette.surfaceAlt },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        { color: palette.text },
-                                    ]}
-                                    numberOfLines={1}
-                                >
-                                    {p.title}
-                                </Text>
-                            </View>
-                        ))}
+                <View style={styles.searchWrap}>
+                    <OnboardingSearch
+                        placeholder="Search films and TV shows"
+                        onPick={handlePick}
+                    />
+                </View>
+                {added ? (
+                    <View
+                        style={[
+                            styles.confirmation,
+                            { backgroundColor: palette.surfaceAlt },
+                        ]}
+                    >
+                        <Text style={[typography.caption, { color: palette.textMuted }]}>
+                            Added to currently watching
+                        </Text>
+                        <Text
+                            style={[typography.bodyEmphasis, { color: palette.text }]}
+                            numberOfLines={2}
+                        >
+                            {added.title}
+                        </Text>
                     </View>
                 ) : null}
             </View>
             <View style={styles.footer}>
                 <Pressable
                     onPress={handleContinue}
-                    disabled={picked.length < TARGET_COUNT || busy}
+                    disabled={!added || busy}
                     style={({ pressed }) => [
                         styles.primaryButton,
                         {
                             backgroundColor: palette.accent,
-                            opacity:
-                                picked.length < TARGET_COUNT || busy
-                                    ? 0.4
-                                    : pressed
-                                      ? 0.6
-                                      : 1,
+                            opacity: !added || busy ? 0.4 : pressed ? 0.6 : 1,
                         },
                     ]}
                 >
@@ -218,14 +188,10 @@ const styles = StyleSheet.create({
         flex: 1,
         marginTop: spacing.md,
     },
-    pickedList: {
-        gap: spacing.sm,
-        marginTop: spacing.md,
-    },
-    pickedRow: {
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md,
+    confirmation: {
+        padding: spacing.md,
         borderRadius: radius.sm,
+        gap: spacing.xs,
     },
     footer: {
         gap: spacing.sm,

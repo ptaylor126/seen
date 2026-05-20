@@ -109,7 +109,7 @@ export default function BestWatchedScreen() {
     }
 
     function handleContinue() {
-        router.push('/(onboarding)/watchlist');
+        router.push('/(onboarding)/currently-watching');
     }
 
     async function handleSkip() {
