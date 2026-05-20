@@ -848,7 +848,7 @@ export default function HomeScreen() {
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
-                            See what your friends are watching.{' '}
+                            See what your friends are watching.{'\n'}
                             <Text
                                 style={[typography.body, { color: palette.accent }]}
                                 onPress={() =>
