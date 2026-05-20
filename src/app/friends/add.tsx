@@ -184,6 +184,49 @@ export default function AddFriendScreen() {
                         </Text>
                     )}
                 </Pressable>
+
+                {/* "Or" branch for friends who aren't on Seen yet —
+                    routes to the existing invite-link screen. Sits
+                    below the handle form with the divider matching
+                    typography.caption / palette.textMuted. */}
+                <View style={styles.dividerRow}>
+                    <View
+                        style={[
+                            styles.dividerLine,
+                            { backgroundColor: palette.border },
+                        ]}
+                    />
+                    <Text
+                        style={[
+                            typography.caption,
+                            styles.dividerLabel,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        Or
+                    </Text>
+                    <View
+                        style={[
+                            styles.dividerLine,
+                            { backgroundColor: palette.border },
+                        ]}
+                    />
+                </View>
+
+                <View style={styles.inviteRow}>
+                    <Text style={[typography.body, { color: palette.textMuted }]}>
+                        Friend not on Seen yet?
+                    </Text>
+                    <Pressable
+                        onPress={() => router.push({ pathname: '/friends/invite' })}
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
+                            Send invite link
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
         </SafeAreaView>
     );
@@ -250,5 +293,25 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    dividerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        marginTop: spacing.sm,
+    },
+    dividerLine: {
+        flex: 1,
+        height: StyleSheet.hairlineWidth,
+    },
+    dividerLabel: {
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+    },
+    inviteRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: spacing.md,
     },
 });

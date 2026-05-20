@@ -764,11 +764,11 @@ export default function HomeScreen() {
                             <Text
                                 style={[typography.body, { color: palette.accent }]}
                                 onPress={() =>
-                                    router.push({ pathname: '/friends/invite' })
+                                    router.push({ pathname: '/friends/add' })
                                 }
                                 suppressHighlighting
                             >
-                                Invite friends
+                                Add friends
                             </Text>
                         </Text>
                     </View>
