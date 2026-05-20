@@ -1,27 +1,48 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Mail, Search } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import { Mail, Search, X } from 'lucide-react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    FlatList,
+    Keyboard,
+    Modal,
     Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { RatingSheet } from '@/components/rating-sheet';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { getMovie, getTV, imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
+
+// Same shape as the /library/add modal: surface only movies and TV
+// with a poster — TMDB returns plenty of poster-less rows that don't
+// belong in a results list.
+type SearchableItem =
+    | (TMDBMediaItem & { media_type: 'movie'; poster_path: string })
+    | (TMDBMediaItem & { media_type: 'tv'; poster_path: string });
+
+const SEARCH_DEBOUNCE_MS = 300;
+// Distance from the SafeArea top inset to the bottom of the search bar.
+// Used to position the search results sheet just below the input.
+// Sized empirically from the header + searchBar style values below
+// (header padding + display text height + searchBar marginTop + padding
+// + content height ≈ 110).
+const SEARCH_SHEET_TOP_OFFSET = 110;
+const SEARCH_RESULT_POSTER_W = 56;
+const SEARCH_RESULT_POSTER_H = 84;
 
 interface RecForYou {
     id: string;
@@ -305,6 +326,7 @@ export default function HomeScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const { count: unreadCount } = useUnreadCount();
 
     const [data, setData] = useState<HomeData | null>(null);
@@ -321,6 +343,95 @@ export default function HomeScreen() {
         mediaType: MediaType;
     } | null>(null);
     const [ratingBusy, setRatingBusy] = useState(false);
+
+    // Inline search. The TextInput in the header lives on Home itself;
+    // when focused (or whenever it holds text) the results sheet Modal
+    // opens below it. The Modal's top region is a tap-to-dismiss scrim
+    // so the user can swipe back to Home without committing a search.
+    const homeInputRef = useRef<TextInput>(null);
+    const [homeSearchQuery, setHomeSearchQuery] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [searchResults, setSearchResults] = useState<SearchableItem[] | null>(null);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
+
+    // 300 ms debounce + stale-result guard. Mirrors the pattern used in
+    // src/app/library/add.tsx; the search is driven by the query alone,
+    // so closing the modal doesn't cancel an in-flight request — the
+    // stale guard's `active` flag is enough.
+    useEffect(() => {
+        const trimmed = homeSearchQuery.trim();
+        if (!trimmed) {
+            setSearchResults(null);
+            setSearchError(null);
+            setSearchLoading(false);
+            return;
+        }
+
+        let active = true;
+        setSearchLoading(true);
+
+        const handle = setTimeout(async () => {
+            try {
+                const response = await searchMulti(trimmed, 1);
+                if (!active) return;
+                const filtered = response.results.filter(
+                    (item): item is SearchableItem =>
+                        (item.media_type === 'movie' || item.media_type === 'tv') &&
+                        !!item.poster_path,
+                );
+                setSearchResults(filtered);
+                setSearchError(null);
+            } catch (err) {
+                if (!active) return;
+                setSearchResults([]);
+                setSearchError(err instanceof Error ? err.message : 'Search failed');
+            } finally {
+                if (active) setSearchLoading(false);
+            }
+        }, SEARCH_DEBOUNCE_MS);
+
+        return () => {
+            active = false;
+            clearTimeout(handle);
+        };
+    }, [homeSearchQuery]);
+
+    function handleSearchFocus() {
+        setSearchOpen(true);
+    }
+
+    function handleSearchDismiss() {
+        setHomeSearchQuery('');
+        setSearchResults(null);
+        setSearchError(null);
+        setSearchOpen(false);
+        homeInputRef.current?.blur();
+        Keyboard.dismiss();
+    }
+
+    function handleSearchResultTap(item: SearchableItem) {
+        handleSearchDismiss();
+        router.push({
+            pathname: '/title/[mediaType]/[tmdbId]',
+            params: {
+                mediaType: item.media_type,
+                tmdbId: String(item.id),
+            },
+        });
+    }
+
+    // CTA from the Currently watching empty state: refocus the home
+    // input so the user lands directly in the search experience.
+    // Fallback to the /library/add modal route on the unlikely event
+    // the input ref is not yet attached.
+    function handleSearchFromEmpty() {
+        if (homeInputRef.current) {
+            homeInputRef.current.focus();
+        } else {
+            router.push({ pathname: '/library/add' });
+        }
+    }
 
     const load = useCallback(async () => {
         const {
@@ -507,24 +618,66 @@ export default function HomeScreen() {
 
     function renderSearchBar() {
         return (
-            <Pressable
-                onPress={() => router.push({ pathname: '/library/add' })}
-                style={({ pressed }) => [
+            <View
+                style={[
                     styles.searchBar,
                     {
                         backgroundColor: palette.surface,
                         borderColor: palette.border,
-                        opacity: pressed ? 0.6 : 1,
                     },
                 ]}
             >
                 <Search color={palette.textMuted} size={20} />
-                <Text
-                    style={[typography.body, { color: palette.textMuted }]}
-                    numberOfLines={1}
-                >
-                    Search to add or find anything
-                </Text>
+                <TextInput
+                    ref={homeInputRef}
+                    value={homeSearchQuery}
+                    onChangeText={setHomeSearchQuery}
+                    onFocus={handleSearchFocus}
+                    placeholder="Search to add or find anything"
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    style={[styles.searchInput, typography.body, { color: palette.text }]}
+                />
+            </View>
+        );
+    }
+
+    function renderSearchResult({ item }: { item: SearchableItem }) {
+        const titleText = item.media_type === 'movie' ? item.title : item.name;
+        const dateField =
+            item.media_type === 'movie' ? item.release_date : item.first_air_date;
+        const year = dateField ? dateField.slice(0, 4) : '';
+        const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
+        const metaLine = [year, mediaLabel].filter(Boolean).join(' · ');
+        return (
+            <Pressable
+                onPress={() => handleSearchResultTap(item)}
+                style={({ pressed }) => [
+                    styles.searchResultRow,
+                    pressed && { opacity: 0.6 },
+                ]}
+            >
+                <Image
+                    source={{ uri: imageUrl(item.poster_path, 'w185') }}
+                    style={styles.searchResultPoster}
+                    contentFit="cover"
+                    transition={150}
+                />
+                <View style={styles.searchResultText}>
+                    <Text
+                        style={[typography.bodyEmphasis, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        {titleText}
+                    </Text>
+                    {metaLine ? (
+                        <Text style={[typography.caption, { color: palette.textMuted }]}>
+                            {metaLine}
+                        </Text>
+                    ) : null}
+                </View>
             </Pressable>
         );
     }
@@ -607,21 +760,17 @@ export default function HomeScreen() {
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
-                            When friends recommend something, it shows up here.
-                            Share your invite link to get started.
-                        </Text>
-                        <Pressable
-                            onPress={() => router.push({ pathname: '/friends' })}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [
-                                styles.emptyLink,
-                                pressed && { opacity: 0.6 },
-                            ]}
-                        >
-                            <Text style={[typography.body, { color: palette.accent }]}>
+                            When friends recommend something, it shows up here.{' '}
+                            <Text
+                                style={[typography.body, { color: palette.accent }]}
+                                onPress={() =>
+                                    router.push({ pathname: '/friends/invite' })
+                                }
+                                suppressHighlighting
+                            >
                                 Invite friends
                             </Text>
-                        </Pressable>
+                        </Text>
                     </View>
                 )}
             </View>
@@ -699,21 +848,17 @@ export default function HomeScreen() {
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
-                            See what your friends are watching. Add some friends to
-                            fill this up.
-                        </Text>
-                        <Pressable
-                            onPress={() => router.push({ pathname: '/friends' })}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [
-                                styles.emptyLink,
-                                pressed && { opacity: 0.6 },
-                            ]}
-                        >
-                            <Text style={[typography.body, { color: palette.accent }]}>
+                            See what your friends are watching.{' '}
+                            <Text
+                                style={[typography.body, { color: palette.accent }]}
+                                onPress={() =>
+                                    router.push({ pathname: '/friends/add' })
+                                }
+                                suppressHighlighting
+                            >
                                 Add friends
                             </Text>
-                        </Pressable>
+                        </Text>
                     </View>
                 )}
             </View>
@@ -846,8 +991,15 @@ export default function HomeScreen() {
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
-                            Things you&apos;re in the middle of watching live here. Add
-                            something to currently watching to start tracking.
+                            Things you&apos;re watching live here. Add something to
+                            start tracking.{' '}
+                            <Text
+                                style={[typography.body, { color: palette.accent }]}
+                                onPress={handleSearchFromEmpty}
+                                suppressHighlighting
+                            >
+                                Search to add
+                            </Text>
                         </Text>
                     </View>
                 )}
@@ -954,7 +1106,6 @@ export default function HomeScreen() {
                     />
                 }
             >
-                {renderSearchBar()}
                 {globalEmpty ? (
                     renderGlobalEmpty()
                 ) : (
@@ -970,15 +1121,106 @@ export default function HomeScreen() {
         body = null;
     }
 
+    const searchModalVisible = searchOpen || homeSearchQuery.length > 0;
+    const searchSheetTop = insets.top + SEARCH_SHEET_TOP_OFFSET;
+
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             {renderHeader()}
+            {/* Search bar lives outside the ScrollView so its screen
+                position is deterministic — the search results Modal
+                positions its sheet directly below it via a fixed
+                offset (SEARCH_SHEET_TOP_OFFSET). */}
+            {renderSearchBar()}
             {body}
             <RatingSheet
                 visible={!!ratingTarget}
                 busy={ratingBusy}
                 onSubmit={handleRatingSubmit}
             />
+            <Modal
+                visible={searchModalVisible}
+                animationType="slide"
+                transparent
+                presentationStyle="overFullScreen"
+                onRequestClose={handleSearchDismiss}
+            >
+                <View style={styles.searchModalRoot}>
+                    <Pressable
+                        style={[styles.searchScrimTop, { height: searchSheetTop }]}
+                        onPress={handleSearchDismiss}
+                    />
+                    <View
+                        style={[
+                            styles.searchSheet,
+                            {
+                                backgroundColor: palette.bg,
+                                borderTopColor: palette.border,
+                            },
+                        ]}
+                    >
+                        <Pressable
+                            onPress={handleSearchDismiss}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                styles.searchClose,
+                                pressed && { opacity: 0.6 },
+                            ]}
+                        >
+                            <X color={palette.textMuted} size={20} />
+                        </Pressable>
+                        {searchLoading ? (
+                            <View style={styles.searchStatusBlock}>
+                                <ActivityIndicator color={palette.accent} />
+                            </View>
+                        ) : searchResults === null ? (
+                            <View style={styles.searchStatusBlock}>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    Type to search
+                                </Text>
+                            </View>
+                        ) : searchResults.length === 0 ? (
+                            <View style={styles.searchStatusBlock}>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.textMuted },
+                                    ]}
+                                    numberOfLines={2}
+                                >
+                                    {searchError
+                                        ? searchError
+                                        : `No results for "${homeSearchQuery.trim()}"`}
+                                </Text>
+                            </View>
+                        ) : (
+                            <FlatList
+                                data={searchResults}
+                                keyExtractor={(item) =>
+                                    `${item.media_type}-${item.id}`
+                                }
+                                renderItem={renderSearchResult}
+                                keyboardShouldPersistTaps="handled"
+                                keyboardDismissMode="on-drag"
+                                contentContainerStyle={styles.searchListContent}
+                                ItemSeparatorComponent={() => (
+                                    <View
+                                        style={[
+                                            styles.searchSeparator,
+                                            { backgroundColor: palette.border },
+                                        ]}
+                                    />
+                                )}
+                            />
+                        )}
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -1023,9 +1265,15 @@ const styles = StyleSheet.create({
         marginHorizontal: spacing.base,
         marginTop: spacing.sm,
         paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md,
         borderRadius: radius.sm,
         borderWidth: 1,
+        height: 44,
+    },
+    searchInput: {
+        flex: 1,
+        // padding zeroed: the parent .searchBar height owns vertical
+        // sizing so the icon and text stay perfectly aligned.
+        paddingVertical: 0,
     },
     section: {
         paddingTop: spacing.lg,
@@ -1110,8 +1358,58 @@ const styles = StyleSheet.create({
         padding: spacing.base,
         gap: spacing.sm,
     },
-    emptyLink: {
-        alignSelf: 'flex-start',
+    // Inline search Modal
+    searchModalRoot: {
+        flex: 1,
+    },
+    searchScrimTop: {
+        // Transparent tap-to-dismiss region above the sheet. Sized via
+        // dynamic `height` set inline from insets.top + SEARCH_SHEET_TOP_OFFSET
+        // so the sheet top lines up just under the search input.
+    },
+    searchSheet: {
+        flex: 1,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    searchClose: {
+        position: 'absolute',
+        top: spacing.sm,
+        right: spacing.base,
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    searchStatusBlock: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: spacing.xl,
+    },
+    searchListContent: {
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.xl,
+        paddingBottom: spacing.lg,
+    },
+    searchResultRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: spacing.md,
+        gap: spacing.md,
+    },
+    searchResultPoster: {
+        width: SEARCH_RESULT_POSTER_W,
+        height: SEARCH_RESULT_POSTER_H,
+        borderRadius: radius.sm,
+    },
+    searchResultText: {
+        flex: 1,
+        gap: spacing.xs,
+    },
+    searchSeparator: {
+        height: StyleSheet.hairlineWidth,
+        marginLeft: SEARCH_RESULT_POSTER_W + spacing.md,
     },
     // Global empty
     globalEmpty: {
