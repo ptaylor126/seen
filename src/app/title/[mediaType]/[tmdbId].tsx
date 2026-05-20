@@ -1,12 +1,11 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Send, Star, X } from 'lucide-react-native';
+import { Send, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    Modal,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -17,22 +16,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { RatingSheet } from '@/components/rating-sheet';
+import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
-type MediaType = 'movie' | 'tv';
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
-type RatingThumb = 'up' | 'down';
-
-// items.rating stores the 1-5 value directly. The recommendations table
-// still carries a coarser rating_thumb (up | down) as the credibility
-// signal between friends — derived from the star value: 1-2 = down,
-// 3-5 = up. Skipping (rating === null) leaves both untouched on items
-// but still marks any matching open recs as watched.
-function thumbFromRating(rating: number): RatingThumb {
-    return rating <= 2 ? 'down' : 'up';
-}
 
 // Discriminated union so render code can narrow on `type` and access the
 // right shape (TMDBMovie.title vs TMDBTV.name etc.).
@@ -51,13 +41,44 @@ const BACKDROP_HEIGHT = 240;
 const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
 
+interface Sender {
+    handle: string;
+    displayName: string;
+    avatarUrl: string | null;
+}
+
+// Rec attribution shown above the backdrop whenever this title has been
+// recommended to the current user. `senders` is the deduped list of
+// recommenders (ordered by most recent rec first); `totalCount` matches
+// senders.length but is kept distinct in case we later cap the displayed
+// list. `note` is set only when arrived via ?fromRec=<id> — that param
+// pins which rec's note to surface; without it the senders are shown
+// without a quoted note.
 interface RecContext {
+    senders: Sender[];
+    totalCount: number;
     note: string | null;
-    sender: {
-        handle: string;
-        displayName: string;
-        avatarUrl: string | null;
-    };
+}
+
+function firstName(displayName: string): string {
+    const trimmed = displayName.trim();
+    const first = trimmed.split(/\s+/)[0];
+    return first || trimmed || 'A friend';
+}
+
+function formatSenderLine(senders: Sender[]): string {
+    if (senders.length === 0) return '';
+    const names = senders.map((s) => firstName(s.displayName));
+    if (names.length === 1) {
+        return `${names[0]} recommended this to you`;
+    }
+    if (names.length === 2) {
+        return `${names[0]} & ${names[1]} recommended this to you`;
+    }
+    const others = names.length - 2;
+    return `${names[0]}, ${names[1]} & ${others} other${
+        others === 1 ? '' : 's'
+    } recommended this to you`;
 }
 
 export default function TitleDetailScreen() {
@@ -87,9 +108,6 @@ export default function TitleDetailScreen() {
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
-    // Drives the fill-on-press preview: when the user is mid-press on the
-    // 4th star, stars 1-4 fill. Cleared on press-out and after dismiss.
-    const [pressedRating, setPressedRating] = useState<number | null>(null);
 
     // Load title detail (TMDB) and the current library status (Supabase) in
     // parallel. The detail fetch picks getMovie or getTV based on mediaType
@@ -133,32 +151,81 @@ export default function TitleDetailScreen() {
                     }
                 }
 
-                // If we arrived from the inbox via ?fromRec=<id>, load the
-                // recommendation + sender so we can render the "Sarah
-                // recommended this" card above the backdrop. Failures here
+                // Always-on rec attribution: load every recommendation this
+                // user has received for this title (any non-dismissed
+                // status — pending / accepted / watched) and surface the
+                // sender list. The fromRec query param, when present, just
+                // pins which rec's note to display below the senders;
+                // without it we show senders without a note. Failures here
                 // are silent — the rest of the screen renders fine.
-                if (fromRec) {
-                    const { data: rec, error: recError } = await supabase
+                if (userId) {
+                    const { data: recRows, error: recsError } = await supabase
                         .from('recommendations')
-                        .select('from_user_id, note')
-                        .eq('id', fromRec)
-                        .maybeSingle();
-                    if (recError) {
-                        console.warn('rec context fetch failed:', recError);
-                    } else if (active && rec?.from_user_id) {
-                        const { data: senderProfile } = await supabase
-                            .from('profiles')
-                            .select('handle, display_name, avatar_url')
-                            .eq('id', rec.from_user_id)
-                            .maybeSingle();
-                        if (active && senderProfile) {
+                        .select('from_user_id, sent_at')
+                        .eq('to_user_id', userId)
+                        .eq('tmdb_id', tmdbId)
+                        .eq('media_type', mediaType)
+                        .in('status', ['pending', 'accepted', 'watched'])
+                        .order('sent_at', { ascending: false });
+                    if (recsError) {
+                        console.warn('rec context fetch failed:', recsError);
+                    } else if (active && recRows && recRows.length > 0) {
+                        // Dedup senders (a single sender might appear twice
+                        // if they re-sent after a dismiss — rare but cheap
+                        // to guard) preserving the most-recent-first order.
+                        const senderIds: string[] = [];
+                        const seenIds = new Set<string>();
+                        for (const row of recRows) {
+                            const sid = row.from_user_id;
+                            if (!sid || seenIds.has(sid)) continue;
+                            seenIds.add(sid);
+                            senderIds.push(sid);
+                        }
+
+                        let senders: Sender[] = [];
+                        if (senderIds.length > 0) {
+                            const { data: profileRows } = await supabase
+                                .from('profiles')
+                                .select('id, handle, display_name, avatar_url')
+                                .in('id', senderIds);
+                            const profileById = new Map(
+                                (profileRows ?? []).map((p) => [p.id, p]),
+                            );
+                            senders = senderIds
+                                .map((id) => profileById.get(id))
+                                .filter(
+                                    (
+                                        p,
+                                    ): p is {
+                                        id: string;
+                                        handle: string;
+                                        display_name: string;
+                                        avatar_url: string | null;
+                                    } => !!p,
+                                )
+                                .map((p) => ({
+                                    handle: p.handle,
+                                    displayName: p.display_name,
+                                    avatarUrl: p.avatar_url,
+                                }));
+                        }
+
+                        // Note from the specific rec we arrived via, if any.
+                        let note: string | null = null;
+                        if (fromRec) {
+                            const { data: pinnedRec } = await supabase
+                                .from('recommendations')
+                                .select('note')
+                                .eq('id', fromRec)
+                                .maybeSingle();
+                            note = pinnedRec?.note ?? null;
+                        }
+
+                        if (active && senders.length > 0) {
                             setRecContext({
-                                note: rec.note,
-                                sender: {
-                                    handle: senderProfile.handle,
-                                    displayName: senderProfile.display_name,
-                                    avatarUrl: senderProfile.avatar_url,
-                                },
+                                senders,
+                                totalCount: senders.length,
+                                note,
                             });
                         }
                     }
@@ -232,12 +299,8 @@ export default function TitleDetailScreen() {
     }
 
     // Apply a 1-5 star rating (or skip with `null`) after a watched
-    // transition. Updates items.rating when a value was chosen, and always
-    // transitions any matching open recommendations (pending | accepted)
-    // into `watched` — which fires the rec_watched notification trigger
-    // for the sender. rating_thumb on the rec is derived from the star
-    // value (1-2 = down, 3-5 = up) only when the user chose a rating;
-    // skipping leaves it null.
+    // transition. Database writes (items.rating, matching-rec status
+    // transitions) are delegated to applyWatchedRating in lib/rating.
     async function handleRate(rating: number | null) {
         if (ratingBusy || !mediaType) return;
         setRatingBusy(true);
@@ -245,7 +308,6 @@ export default function TitleDetailScreen() {
         // behind a spinner if the network is slow. Errors surface via
         // Alert; success is silent.
         setShowRatingSheet(false);
-        setPressedRating(null);
         try {
             const {
                 data: { session },
@@ -253,45 +315,7 @@ export default function TitleDetailScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            if (rating !== null) {
-                const { error: itemError } = await supabase
-                    .from('items')
-                    .update({ rating })
-                    .eq('user_id', userId)
-                    .eq('tmdb_id', tmdbId)
-                    .eq('media_type', mediaType);
-                if (itemError) throw itemError;
-            }
-
-            const { data: openRecs, error: queryError } = await supabase
-                .from('recommendations')
-                .select('id')
-                .eq('to_user_id', userId)
-                .eq('tmdb_id', tmdbId)
-                .eq('media_type', mediaType)
-                .in('status', ['pending', 'accepted']);
-            if (queryError) throw queryError;
-
-            if (openRecs && openRecs.length > 0) {
-                const update: {
-                    status: 'watched';
-                    watched_via_rec: boolean;
-                    rating_thumb?: RatingThumb;
-                } = {
-                    status: 'watched',
-                    watched_via_rec: true,
-                };
-                if (rating !== null) update.rating_thumb = thumbFromRating(rating);
-
-                const { error: recError } = await supabase
-                    .from('recommendations')
-                    .update(update)
-                    .in(
-                        'id',
-                        openRecs.map((r) => r.id),
-                    );
-                if (recError) throw recError;
-            }
+            await applyWatchedRating({ userId, tmdbId, mediaType, rating });
         } catch (err) {
             console.error('rating update failed:', err);
             surfaceUpdateError(err);
@@ -380,8 +404,8 @@ export default function TitleDetailScreen() {
                         ]}
                     >
                         <Avatar
-                            avatarUrl={recContext.sender.avatarUrl}
-                            displayName={recContext.sender.displayName}
+                            avatarUrl={recContext.senders[0].avatarUrl}
+                            displayName={recContext.senders[0].displayName}
                             size={36}
                         />
                         <View style={styles.recContextText}>
@@ -389,10 +413,7 @@ export default function TitleDetailScreen() {
                                 style={[typography.caption, { color: palette.text }]}
                                 numberOfLines={2}
                             >
-                                <Text style={typography.bodyEmphasis}>
-                                    {recContext.sender.displayName}
-                                </Text>{' '}
-                                recommended this to you
+                                {formatSenderLine(recContext.senders)}
                             </Text>
                             {recContext.note && (
                                 <Text
@@ -579,70 +600,11 @@ export default function TitleDetailScreen() {
                 onPress={router.back}
             />
 
-            {/* Rating sheet — opens after a successful Watched transition
-                (or a re-tap of Watched). Tap outside or hit Skip to leave
-                rating null. Nested-Pressable trick: outer Pressable
-                handles tap-to-dismiss on the backdrop; inner Pressable
-                with a no-op onPress consumes taps inside the sheet so
-                they don't propagate up. */}
-            <Modal
+            <RatingSheet
                 visible={showRatingSheet}
-                transparent
-                animationType="slide"
-                onRequestClose={() => handleRate(null)}
-            >
-                <Pressable
-                    style={[styles.sheetBackdrop, { backgroundColor: palette.overlay }]}
-                    onPress={() => handleRate(null)}
-                >
-                    <Pressable
-                        style={[
-                            styles.sheet,
-                            {
-                                backgroundColor: palette.surface,
-                                paddingBottom: insets.bottom + spacing.lg,
-                            },
-                        ]}
-                        onPress={() => {}}
-                    >
-                        <Text
-                            style={[
-                                typography.heading,
-                                styles.sheetTitle,
-                                { color: palette.text },
-                            ]}
-                        >
-                            How was it?
-                        </Text>
-                        <StarRow
-                            pressedRating={pressedRating}
-                            onPressIn={setPressedRating}
-                            onPressOut={() => setPressedRating(null)}
-                            onPress={handleRate}
-                            disabled={ratingBusy}
-                            fillColor={palette.accent}
-                            outlineColor={palette.textMuted}
-                        />
-                        <Pressable
-                            onPress={() => handleRate(null)}
-                            disabled={ratingBusy}
-                            style={({ pressed }) => [
-                                styles.skipButton,
-                                { opacity: pressed || ratingBusy ? 0.6 : 1 },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                Skip
-                            </Text>
-                        </Pressable>
-                    </Pressable>
-                </Pressable>
-            </Modal>
+                busy={ratingBusy}
+                onSubmit={handleRate}
+            />
         </View>
     );
 }
@@ -666,56 +628,6 @@ function CloseButton({
         >
             <X color={fg} size={20} />
         </Pressable>
-    );
-}
-
-// Row of 5 tappable stars. Press-in/press-out preview the fill so the
-// user sees their selection before lifting off; commit fires on release
-// via onPress.
-function StarRow({
-    pressedRating,
-    onPressIn,
-    onPressOut,
-    onPress,
-    disabled,
-    fillColor,
-    outlineColor,
-}: {
-    pressedRating: number | null;
-    onPressIn: (rating: number) => void;
-    onPressOut: () => void;
-    onPress: (rating: number) => void;
-    disabled: boolean;
-    fillColor: string;
-    outlineColor: string;
-}) {
-    return (
-        <View style={styles.starsRow}>
-            {[1, 2, 3, 4, 5].map((value) => {
-                const filled = pressedRating !== null && value <= pressedRating;
-                const color = filled ? fillColor : outlineColor;
-                return (
-                    <Pressable
-                        key={value}
-                        onPressIn={() => onPressIn(value)}
-                        onPressOut={onPressOut}
-                        onPress={() => onPress(value)}
-                        disabled={disabled}
-                        hitSlop={spacing.xs}
-                        style={({ pressed }) => [
-                            styles.starButton,
-                            { opacity: pressed || disabled ? 0.6 : 1 },
-                        ]}
-                    >
-                        <Star
-                            color={color}
-                            fill={filled ? fillColor : 'transparent'}
-                            size={36}
-                        />
-                    </Pressable>
-                );
-            })}
-        </View>
     );
 }
 
@@ -827,38 +739,5 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 10,
-    },
-    sheetBackdrop: {
-        flex: 1,
-        justifyContent: 'flex-end',
-    },
-    sheet: {
-        borderTopLeftRadius: radius.xl,
-        borderTopRightRadius: radius.xl,
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.lg,
-    },
-    sheetTitle: {
-        textAlign: 'center',
-        marginBottom: spacing.lg,
-    },
-    starsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: spacing.sm,
-        paddingVertical: spacing.sm,
-    },
-    starButton: {
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    skipButton: {
-        alignSelf: 'center',
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.md,
-        marginTop: spacing.sm,
     },
 });

@@ -1,8 +1,10 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { Mail, Search } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -11,24 +13,23 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
-import { ScreenHeader } from '@/components/screen-header';
+import { RatingSheet } from '@/components/rating-sheet';
 import { useUnreadCount } from '@/hooks/use-unread-count';
+import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography, type Palette } from '@/theme/theme';
+import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
-type MediaType = 'movie' | 'tv';
-type RecStatus = 'pending' | 'accepted' | 'watched' | 'dismissed';
-
-interface ActivityItem {
+interface RecForYou {
+    id: string;
     tmdbId: number;
     mediaType: MediaType;
-    status: 'watching' | 'watched';
-    watchedAt: string | null;
     title: string;
     posterPath: string | null;
+    sender: { handle: string; displayName: string; avatarUrl: string | null };
 }
 
 interface FriendCard {
@@ -39,43 +40,29 @@ interface FriendCard {
     attribution: string;
 }
 
-interface RecRow {
-    id: string;
+interface WatchingItem {
     tmdbId: number;
     mediaType: MediaType;
-    direction: 'sent' | 'received';
-    status: RecStatus;
-    other: {
-        handle: string;
-        displayName: string;
-        avatarUrl: string | null;
-    };
     title: string;
+    posterPath: string | null;
+    year: string;
 }
 
 interface HomeData {
-    activity: ActivityItem | null;
+    recsForYou: RecForYou[];
     friendCards: FriendCard[];
-    hasFriends: boolean;
-    recs: RecRow[];
+    currentlyWatching: WatchingItem[];
     hasLibraryItems: boolean;
+    hasFriends: boolean;
 }
 
-const STATUS_PILL: Record<
-    RecStatus,
-    { bg: keyof Palette; fg: keyof Palette; label: string }
-> = {
-    pending: { bg: 'accentSubtle', fg: 'accent', label: 'Pending' },
-    accepted: { bg: 'surfaceAlt', fg: 'text', label: 'Accepted' },
-    watched: { bg: 'success', fg: 'textInverse', label: 'Watched' },
-    dismissed: { bg: 'textMuted', fg: 'textInverse', label: 'Dismissed' },
-};
-
-const ACTIVITY_POSTER_W = 80;
-const ACTIVITY_POSTER_H = 120;
+const REC_CARD_W = 120;
+const REC_CARD_H = 180;
 const FRIEND_POSTER_W = 100;
 const FRIEND_POSTER_H = 150;
-const REC_AVATAR_SIZE = 44;
+const REC_AVATAR_SIZE = 18;
+const WATCHING_POSTER_W = 56;
+const WATCHING_POSTER_H = 84;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -83,58 +70,60 @@ function firstName(displayName: string): string {
     return first || trimmed || 'A friend';
 }
 
-function formatWatchedDate(iso: string | null): string {
-    if (!iso) return '';
-    return new Date(iso).toLocaleDateString();
-}
-
-// Fetches everything for the Home screen. Two waves: a first parallel
-// batch of source queries, then a second parallel batch of metadata
-// lookups (friend items, profiles, TMDB titles). N+1 on the TMDB layer is
-// acceptable at MVP scale; expo-image caches posters by URL so the
-// repeated metadata calls are the only real cost.
+// Fetch everything for the Home screen. Three waves: source queries,
+// dependent profile/items lookups, then TMDB metadata. The TMDB layer
+// is N+1 across all sections — acceptable at MVP scale since expo-image
+// caches posters by URL; only the JSON metadata is the real cost.
 async function fetchHomeData(userId: string): Promise<HomeData> {
-    // ---- Wave 1: source queries
+    // ---- Wave 1: source queries (parallel)
     const [
-        activityResult,
-        friendshipsResult,
         recsResult,
+        friendshipsResult,
+        watchingResult,
         itemsCountResult,
     ] = await Promise.all([
         supabase
-            .from('items')
-            .select('tmdb_id, media_type, status, updated_at, watched_at')
-            .eq('user_id', userId)
-            .in('status', ['watching', 'watched'])
-            .order('updated_at', { ascending: false })
+            .from('recommendations')
+            .select('id, from_user_id, tmdb_id, media_type, sent_at')
+            .eq('to_user_id', userId)
+            .in('status', ['pending', 'accepted'])
+            .order('sent_at', { ascending: false })
             .limit(10),
         supabase
             .from('friendships')
             .select('user_a_id, user_b_id')
             .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`),
         supabase
-            .from('recommendations')
-            .select('id, from_user_id, to_user_id, tmdb_id, media_type, status, sent_at')
-            .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
-            .order('sent_at', { ascending: false })
-            .limit(5),
+            .from('items')
+            .select('tmdb_id, media_type, updated_at')
+            .eq('user_id', userId)
+            .eq('status', 'watching')
+            .order('updated_at', { ascending: false })
+            .limit(20),
         supabase
             .from('items')
             .select('id', { count: 'exact', head: true })
             .eq('user_id', userId),
     ]);
 
-    if (activityResult.error) throw activityResult.error;
-    if (friendshipsResult.error) throw friendshipsResult.error;
     if (recsResult.error) throw recsResult.error;
+    if (friendshipsResult.error) throw friendshipsResult.error;
+    if (watchingResult.error) throw watchingResult.error;
     if (itemsCountResult.error) throw itemsCountResult.error;
 
+    const recs = recsResult.data ?? [];
+    const watchingRows = watchingResult.data ?? [];
     const friendIds = (friendshipsResult.data ?? []).map((f) =>
         f.user_a_id === userId ? f.user_b_id : f.user_a_id,
     );
 
-    // ---- Wave 2: dependent fetches (friend items + profiles + TMDB)
-    const [friendItemsResult, recsOtherProfilesResult] = await Promise.all([
+    // ---- Wave 2: friend items + sender profiles (parallel)
+    const senderIds = new Set<string>();
+    for (const r of recs) {
+        if (r.from_user_id) senderIds.add(r.from_user_id);
+    }
+
+    const [friendItemsResult, senderProfilesResult] = await Promise.all([
         friendIds.length > 0
             ? supabase
                   .from('items')
@@ -144,31 +133,20 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
                   .order('updated_at', { ascending: false })
                   .limit(15)
             : Promise.resolve({ data: [], error: null }),
-        (async () => {
-            const recs = recsResult.data ?? [];
-            const otherIds = new Set<string>();
-            for (const r of recs) {
-                const otherId =
-                    r.from_user_id === userId ? r.to_user_id : r.from_user_id;
-                if (otherId) otherIds.add(otherId);
-            }
-            if (otherIds.size === 0) {
-                return { data: [], error: null };
-            }
-            return supabase
-                .from('profiles')
-                .select('id, handle, display_name, avatar_url')
-                .in('id', Array.from(otherIds));
-        })(),
+        senderIds.size > 0
+            ? supabase
+                  .from('profiles')
+                  .select('id, handle, display_name, avatar_url')
+                  .in('id', Array.from(senderIds))
+            : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (friendItemsResult.error) throw friendItemsResult.error;
-    if (recsOtherProfilesResult.error) throw recsOtherProfilesResult.error;
+    if (senderProfilesResult.error) throw senderProfilesResult.error;
 
-    // ---- Section 2: friend profiles + TMDB titles for the unique titles
-
-    // Explicit row shape: the conditional `Promise.resolve({ data: [] })`
-    // in wave 2 means TS would otherwise widen `data` to `never[]`.
+    // Dedup friend items by (media_type, tmdb_id) — show one card per
+    // title, attributed to the most recent watcher (the SQL ordering
+    // already has the most recent first, so the first occurrence wins).
     interface FriendItemRow {
         user_id: string;
         tmdb_id: number;
@@ -177,9 +155,6 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         updated_at: string;
     }
     const friendItems = (friendItemsResult.data ?? []) as FriendItemRow[];
-
-    // Dedup by tmdb+media — show one card per title, attributed to the
-    // most recent watcher (the array is already updated_at desc).
     const seenTitleKeys = new Set<string>();
     const uniqueFriendItems: FriendItemRow[] = [];
     for (const item of friendItems) {
@@ -194,8 +169,11 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         new Set(uniqueFriendItems.map((i) => i.user_id)),
     );
 
-    // ---- Wave 3: friend display names + TMDB titles for friend cards,
-    //              + TMDB titles for activity and recs
+    // ---- Wave 3: friend owner display names + TMDB metadata (parallel)
+    //
+    // TMDB requests are wrapped in Promise.allSettled so a single failed
+    // lookup doesn't take down the whole Home dashboard — the section
+    // just won't render that card.
     const friendProfilesPromise =
         friendItemOwnerIds.length > 0
             ? supabase
@@ -204,60 +182,54 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
                   .in('id', friendItemOwnerIds)
             : Promise.resolve({ data: [], error: null });
 
-    const activityChoice =
-        (activityResult.data ?? []).find((i) => i.status === 'watching') ??
-        (activityResult.data ?? []).find((i) => i.status === 'watched');
-
-    // Wrap the activity TMDB fetch so a single TMDB hiccup doesn't take
-    // down the whole Home screen — friend cards and recs already swallow
-    // per-item failures via Promise.allSettled; the activity title is the
-    // last unconditional await in this chain and was the cascade source.
-    // On failure: log + return null, the section just won't render.
-    const activityTitlePromise: Promise<{
-        title: string;
-        posterPath: string | null;
-    } | null> = activityChoice
-        ? (activityChoice.media_type === 'movie'
-              ? getMovie(activityChoice.tmdb_id).then((m) => ({
-                    title: m.title,
-                    posterPath: m.poster_path,
-                }))
-              : getTV(activityChoice.tmdb_id).then((t) => ({
-                    title: t.name,
-                    posterPath: t.poster_path,
-                }))
-          ).catch((err) => {
-              console.warn('home activity title fetch failed:', err);
-              return null;
-          })
-        : Promise.resolve(null);
-
-    const friendTitleResults = await Promise.allSettled(
-        uniqueFriendItems.map((i) =>
-            i.media_type === 'movie'
-                ? getMovie(i.tmdb_id).then((m) => ({
-                      title: m.title,
-                      posterPath: m.poster_path,
-                  }))
-                : getTV(i.tmdb_id).then((t) => ({
-                      title: t.name,
-                      posterPath: t.poster_path,
-                  })),
-        ),
+    const recTitlePromises = recs.map((r) =>
+        r.media_type === 'movie'
+            ? getMovie(r.tmdb_id).then((m) => ({
+                  title: m.title,
+                  posterPath: m.poster_path,
+              }))
+            : getTV(r.tmdb_id).then((t) => ({
+                  title: t.name,
+                  posterPath: t.poster_path,
+              })),
     );
 
-    const recs = recsResult.data ?? [];
-    const recTitleResults = await Promise.allSettled(
-        recs.map((r) =>
-            r.media_type === 'movie'
-                ? getMovie(r.tmdb_id).then((m) => m.title)
-                : getTV(r.tmdb_id).then((t) => t.name),
-        ),
+    const friendTitlePromises = uniqueFriendItems.map((i) =>
+        i.media_type === 'movie'
+            ? getMovie(i.tmdb_id).then((m) => ({
+                  title: m.title,
+                  posterPath: m.poster_path,
+              }))
+            : getTV(i.tmdb_id).then((t) => ({
+                  title: t.name,
+                  posterPath: t.poster_path,
+              })),
     );
 
-    const [friendProfilesResult, activityTitle] = await Promise.all([
+    const watchingTitlePromises = watchingRows.map((w) =>
+        w.media_type === 'movie'
+            ? getMovie(w.tmdb_id).then((m) => ({
+                  title: m.title,
+                  posterPath: m.poster_path,
+                  year: m.release_date ? m.release_date.slice(0, 4) : '',
+              }))
+            : getTV(w.tmdb_id).then((t) => ({
+                  title: t.name,
+                  posterPath: t.poster_path,
+                  year: t.first_air_date ? t.first_air_date.slice(0, 4) : '',
+              })),
+    );
+
+    const [
+        friendProfilesResult,
+        recTitleResults,
+        friendTitleResults,
+        watchingTitleResults,
+    ] = await Promise.all([
         friendProfilesPromise,
-        activityTitlePromise,
+        Promise.allSettled(recTitlePromises),
+        Promise.allSettled(friendTitlePromises),
+        Promise.allSettled(watchingTitlePromises),
     ]);
 
     if (friendProfilesResult.error) throw friendProfilesResult.error;
@@ -265,70 +237,67 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     const friendDisplayNameById = new Map<string, string>(
         friendProfilesResult.data?.map((p) => [p.id, p.display_name]) ?? [],
     );
+    const senderProfileById = new Map(
+        senderProfilesResult.data?.map((p) => [p.id, p]) ?? [],
+    );
 
     // ---- Build sections
 
-    const activity: ActivityItem | null =
-        activityChoice && activityTitle
-            ? {
-                  tmdbId: activityChoice.tmdb_id,
-                  mediaType: activityChoice.media_type as MediaType,
-                  status: activityChoice.status as 'watching' | 'watched',
-                  watchedAt: activityChoice.watched_at,
-                  title: activityTitle.title,
-                  posterPath: activityTitle.posterPath,
-              }
+    const recsForYou: RecForYou[] = [];
+    recs.forEach((r, i) => {
+        const titleResult = recTitleResults[i];
+        if (titleResult.status !== 'fulfilled') return;
+        const senderProfile = r.from_user_id
+            ? senderProfileById.get(r.from_user_id)
             : null;
+        recsForYou.push({
+            id: r.id,
+            tmdbId: r.tmdb_id,
+            mediaType: r.media_type as MediaType,
+            title: titleResult.value.title,
+            posterPath: titleResult.value.posterPath,
+            sender: {
+                handle: senderProfile?.handle ?? 'unknown',
+                displayName: senderProfile?.display_name ?? 'Former user',
+                avatarUrl: senderProfile?.avatar_url ?? null,
+            },
+        });
+    });
 
     const friendCards: FriendCard[] = [];
     uniqueFriendItems.forEach((item, i) => {
         const titleResult = friendTitleResults[i];
         if (titleResult.status !== 'fulfilled') return;
-        const displayName =
-            friendDisplayNameById.get(item.user_id) ?? 'A friend';
+        const displayName = friendDisplayNameById.get(item.user_id) ?? 'A friend';
+        const verb = item.status === 'watching' ? 'is watching this' : 'watched this';
         friendCards.push({
             tmdbId: item.tmdb_id,
             mediaType: item.media_type as MediaType,
             title: titleResult.value.title,
             posterPath: titleResult.value.posterPath,
-            attribution: firstName(displayName),
+            attribution: `${firstName(displayName)} ${verb}`,
         });
     });
 
-    const otherProfileById = new Map(
-        recsOtherProfilesResult.data?.map((p) => [p.id, p]) ?? [],
-    );
-
-    const recRows: RecRow[] = [];
-    recs.forEach((r, i) => {
-        const otherId =
-            r.from_user_id === userId ? r.to_user_id : r.from_user_id;
-        const otherProfile = otherId ? otherProfileById.get(otherId) : null;
-        const titleResult = recTitleResults[i];
-        const title =
-            titleResult?.status === 'fulfilled' ? titleResult.value : null;
-        if (!title) return;
-        recRows.push({
-            id: r.id,
-            tmdbId: r.tmdb_id,
-            mediaType: r.media_type as MediaType,
-            direction: r.from_user_id === userId ? 'sent' : 'received',
-            status: r.status as RecStatus,
-            other: {
-                handle: otherProfile?.handle ?? 'unknown',
-                displayName: otherProfile?.display_name ?? 'Former user',
-                avatarUrl: otherProfile?.avatar_url ?? null,
-            },
-            title,
+    const currentlyWatching: WatchingItem[] = [];
+    watchingRows.forEach((w, i) => {
+        const titleResult = watchingTitleResults[i];
+        if (titleResult.status !== 'fulfilled') return;
+        currentlyWatching.push({
+            tmdbId: w.tmdb_id,
+            mediaType: w.media_type as MediaType,
+            title: titleResult.value.title,
+            posterPath: titleResult.value.posterPath,
+            year: titleResult.value.year,
         });
     });
 
     return {
-        activity,
+        recsForYou,
         friendCards,
-        hasFriends: friendIds.length > 0,
-        recs: recRows,
+        currentlyWatching,
         hasLibraryItems: (itemsCountResult.count ?? 0) > 0,
+        hasFriends: friendIds.length > 0,
     };
 }
 
@@ -342,6 +311,16 @@ export default function HomeScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Rating sheet target: when present, the sheet is shown for this
+    // (mediaType, tmdbId) pair. handleMarkWatched sets it after the
+    // 'watching' → 'watched' transition succeeds; submission/dismiss
+    // clears it.
+    const [ratingTarget, setRatingTarget] = useState<{
+        tmdbId: number;
+        mediaType: MediaType;
+    } | null>(null);
+    const [ratingBusy, setRatingBusy] = useState(false);
 
     const load = useCallback(async () => {
         const {
@@ -389,10 +368,10 @@ export default function HomeScreen() {
         }
     }
 
+    // Object form (rather than a template-literal string) so the typed
+    // router accepts the call — string interpolation widens to `string`
+    // and doesn't pattern-match the `/title/${...}/${...}` Href shape.
     function navigateToTitle(mediaType: MediaType, tmdbId: number, fromRec?: string) {
-        // Object form (rather than a template-literal string) so the typed
-        // router accepts it — string interpolation widens to `string` and
-        // doesn't pattern-match the `/title/${...}/${...}` Href shape.
         router.push({
             pathname: '/title/[mediaType]/[tmdbId]',
             params: fromRec
@@ -401,63 +380,250 @@ export default function HomeScreen() {
         });
     }
 
+    // Transition a Currently Watching row to status='watched', then open
+    // the rating sheet. The rating itself (and any matching open rec's
+    // transition into watched) is applied by handleRatingSubmit after
+    // the user picks stars or skips.
+    async function handleMarkWatched(item: WatchingItem) {
+        if (ratingBusy || ratingTarget) return;
+        setRatingBusy(true);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+
+            const { error: updateError } = await supabase
+                .from('items')
+                .update({
+                    status: 'watched',
+                    watched_at: new Date().toISOString(),
+                })
+                .eq('user_id', userId)
+                .eq('tmdb_id', item.tmdbId)
+                .eq('media_type', item.mediaType);
+            if (updateError) throw updateError;
+
+            setRatingTarget({ tmdbId: item.tmdbId, mediaType: item.mediaType });
+        } catch (err) {
+            console.error('mark watched failed:', err);
+            surfaceUpdateError(err);
+        } finally {
+            setRatingBusy(false);
+        }
+    }
+
+    async function handleRatingSubmit(rating: number | null) {
+        const target = ratingTarget;
+        if (!target) return;
+        // Close the sheet immediately so the UI doesn't trap the user
+        // behind a spinner if the network is slow.
+        setRatingTarget(null);
+        setRatingBusy(true);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+
+            await applyWatchedRating({
+                userId,
+                tmdbId: target.tmdbId,
+                mediaType: target.mediaType,
+                rating,
+            });
+
+            // Refresh so the now-watched item drops out of Currently
+            // watching and the rec (if any) leaves Recs for you.
+            const refreshed = await load();
+            setData(refreshed);
+        } catch (err) {
+            console.error('rating apply failed:', err);
+            surfaceUpdateError(err);
+        } finally {
+            setRatingBusy(false);
+        }
+    }
+
+    function surfaceUpdateError(err: unknown) {
+        if (err && typeof err === 'object' && 'message' in err) {
+            const supaErr = err as {
+                message: string;
+                hint?: string;
+            };
+            Alert.alert(
+                'Update failed',
+                `${supaErr.message}${supaErr.hint ? '\n\n' + supaErr.hint : ''}`,
+            );
+        } else {
+            Alert.alert('Update failed', String(err));
+        }
+    }
+
     // ---- Renderers
 
-    function renderActivity(activity: ActivityItem) {
-        const headerLabel =
-            activity.status === 'watching' ? 'Continue watching' : 'Last watched';
-        // Subline only appears for watched items with a recorded date —
-        // the "stream progress" subtitle doesn't fit our show-level model,
-        // so the watching case just shows the title.
-        const subline =
-            activity.status === 'watched' && activity.watchedAt
-                ? `You watched this on ${formatWatchedDate(activity.watchedAt)}`
-                : null;
+    function renderHeader() {
+        return (
+            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
+                <View style={styles.header}>
+                    <Text
+                        style={[typography.display, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        Seen
+                    </Text>
+                    <Pressable
+                        onPress={() => router.push({ pathname: '/inbox' })}
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <View>
+                            <Mail color={palette.text} size={24} />
+                            {unreadCount > 0 && (
+                                <View
+                                    style={[
+                                        styles.badge,
+                                        { backgroundColor: palette.accent },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.badgeText,
+                                            { color: palette.textInverse },
+                                        ]}
+                                    >
+                                        {unreadCount > 9 ? '9+' : String(unreadCount)}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+                    </Pressable>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    function renderSearchBar() {
+        return (
+            <Pressable
+                onPress={() => router.push({ pathname: '/library/add' })}
+                style={({ pressed }) => [
+                    styles.searchBar,
+                    {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                        opacity: pressed ? 0.6 : 1,
+                    },
+                ]}
+            >
+                <Search color={palette.textMuted} size={20} />
+                <Text
+                    style={[typography.body, { color: palette.textMuted }]}
+                    numberOfLines={1}
+                >
+                    Search to add or find anything
+                </Text>
+            </Pressable>
+        );
+    }
+
+    function renderRecsForYou(data: HomeData) {
         return (
             <View style={styles.section}>
-                <Text style={[typography.bodyEmphasis, styles.sectionHeader, { color: palette.text }]}>
-                    {headerLabel}
-                </Text>
-                <Pressable
-                    onPress={() => navigateToTitle(activity.mediaType, activity.tmdbId)}
-                    style={({ pressed }) => [
-                        styles.activityCard,
-                        { backgroundColor: palette.surfaceAlt },
-                        pressed && { opacity: 0.6 },
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        styles.sectionHeader,
+                        { color: palette.text },
                     ]}
                 >
-                    {activity.posterPath ? (
-                        <Image
-                            source={{ uri: imageUrl(activity.posterPath, 'w185') }}
-                            style={styles.activityPoster}
-                            contentFit="cover"
-                            transition={150}
-                        />
-                    ) : (
-                        <View
-                            style={[
-                                styles.activityPoster,
-                                { backgroundColor: palette.border },
-                            ]}
-                        />
-                    )}
-                    <View style={styles.activityText}>
-                        <Text
-                            style={[typography.bodyEmphasis, { color: palette.text }]}
-                            numberOfLines={2}
-                        >
-                            {activity.title}
-                        </Text>
-                        {subline && (
-                            <Text
-                                style={[typography.caption, { color: palette.textMuted }]}
-                                numberOfLines={2}
+                    Recs for you
+                </Text>
+                {data.recsForYou.length > 0 ? (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.horizontalRow}
+                    >
+                        {data.recsForYou.map((rec) => (
+                            <Pressable
+                                key={rec.id}
+                                onPress={() =>
+                                    navigateToTitle(rec.mediaType, rec.tmdbId, rec.id)
+                                }
+                                style={({ pressed }) => [
+                                    styles.recCard,
+                                    pressed && { opacity: 0.6 },
+                                ]}
                             >
-                                {subline}
+                                {rec.posterPath ? (
+                                    <Image
+                                        source={{
+                                            uri: imageUrl(rec.posterPath, 'w342'),
+                                        }}
+                                        style={styles.recPoster}
+                                        contentFit="cover"
+                                        transition={150}
+                                    />
+                                ) : (
+                                    <View
+                                        style={[
+                                            styles.recPoster,
+                                            { backgroundColor: palette.surfaceAlt },
+                                        ]}
+                                    />
+                                )}
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.recCardTitle,
+                                        { color: palette.text },
+                                    ]}
+                                    numberOfLines={2}
+                                >
+                                    {rec.title}
+                                </Text>
+                                <View style={styles.recAttribution}>
+                                    <Avatar
+                                        avatarUrl={rec.sender.avatarUrl}
+                                        displayName={rec.sender.displayName}
+                                        size={REC_AVATAR_SIZE}
+                                    />
+                                    <Text
+                                        style={[
+                                            typography.micro,
+                                            { color: palette.textMuted, flex: 1 },
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        From {firstName(rec.sender.displayName)}
+                                    </Text>
+                                </View>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                ) : (
+                    <View style={styles.inlineEmpty}>
+                        <Text style={[typography.body, { color: palette.textMuted }]}>
+                            When friends recommend something, it shows up here.
+                            Share your invite link to get started.
+                        </Text>
+                        <Pressable
+                            onPress={() => router.push({ pathname: '/friends' })}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                styles.emptyLink,
+                                pressed && { opacity: 0.6 },
+                            ]}
+                        >
+                            <Text style={[typography.body, { color: palette.accent }]}>
+                                Invite friends
                             </Text>
-                        )}
+                        </Pressable>
                     </View>
-                </Pressable>
+                )}
             </View>
         );
     }
@@ -465,19 +631,27 @@ export default function HomeScreen() {
     function renderFriendsWatching(data: HomeData) {
         return (
             <View style={styles.section}>
-                <Text style={[typography.bodyEmphasis, styles.sectionHeader, { color: palette.text }]}>
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        styles.sectionHeader,
+                        { color: palette.text },
+                    ]}
+                >
                     Friends are watching
                 </Text>
                 {data.friendCards.length > 0 ? (
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.friendsRow}
+                        contentContainerStyle={styles.horizontalRow}
                     >
                         {data.friendCards.map((card) => (
                             <Pressable
                                 key={`${card.mediaType}-${card.tmdbId}`}
-                                onPress={() => navigateToTitle(card.mediaType, card.tmdbId)}
+                                onPress={() =>
+                                    navigateToTitle(card.mediaType, card.tmdbId)
+                                }
                                 style={({ pressed }) => [
                                     styles.friendCard,
                                     pressed && { opacity: 0.6 },
@@ -524,10 +698,9 @@ export default function HomeScreen() {
                     </ScrollView>
                 ) : (
                     <View style={styles.inlineEmpty}>
-                        <Text
-                            style={[typography.body, { color: palette.textMuted }]}
-                        >
-                            Add friends to see what they&apos;re watching.
+                        <Text style={[typography.body, { color: palette.textMuted }]}>
+                            See what your friends are watching. Add some friends to
+                            fill this up.
                         </Text>
                         <Pressable
                             onPress={() => router.push({ pathname: '/friends' })}
@@ -537,10 +710,8 @@ export default function HomeScreen() {
                                 pressed && { opacity: 0.6 },
                             ]}
                         >
-                            <Text
-                                style={[typography.body, { color: palette.accent }]}
-                            >
-                                Go to Friends
+                            <Text style={[typography.body, { color: palette.accent }]}>
+                                Add friends
                             </Text>
                         </Pressable>
                     </View>
@@ -549,100 +720,134 @@ export default function HomeScreen() {
         );
     }
 
-    function renderRecs(data: HomeData) {
+    function renderCurrentlyWatching(data: HomeData) {
         return (
             <View style={styles.section}>
-                <Text style={[typography.bodyEmphasis, styles.sectionHeader, { color: palette.text }]}>
-                    Recent recommendations
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        styles.sectionHeader,
+                        { color: palette.text },
+                    ]}
+                >
+                    Currently watching
                 </Text>
-                {data.recs.length > 0 ? (
-                    <View style={styles.recList}>
-                        {data.recs.map((rec, i) => {
-                            const pill = STATUS_PILL[rec.status];
-                            const directionLabel =
-                                rec.direction === 'received'
-                                    ? `From ${firstName(rec.other.displayName)}`
-                                    : `To ${firstName(rec.other.displayName)}`;
+                {data.currentlyWatching.length > 0 ? (
+                    <View style={styles.watchingList}>
+                        {data.currentlyWatching.map((item, i) => {
+                            const mediaLabel =
+                                item.mediaType === 'movie' ? 'Movie' : 'TV Show';
+                            const metaLine = [item.year, mediaLabel]
+                                .filter(Boolean)
+                                .join(' · ');
                             return (
-                                <View key={rec.id}>
+                                <View key={`${item.mediaType}-${item.tmdbId}`}>
                                     {i > 0 && (
                                         <View
                                             style={[
-                                                styles.recSeparator,
+                                                styles.watchingSeparator,
                                                 { backgroundColor: palette.border },
                                             ]}
                                         />
                                     )}
-                                    <Pressable
-                                        onPress={() =>
-                                            navigateToTitle(
-                                                rec.mediaType,
-                                                rec.tmdbId,
-                                                rec.direction === 'received' &&
-                                                    rec.status === 'pending'
-                                                    ? rec.id
-                                                    : undefined,
-                                            )
-                                        }
-                                        style={({ pressed }) => [
-                                            styles.recRow,
-                                            pressed && { opacity: 0.6 },
-                                        ]}
-                                    >
-                                        <Avatar
-                                            avatarUrl={rec.other.avatarUrl}
-                                            displayName={rec.other.displayName}
-                                            size={REC_AVATAR_SIZE}
-                                        />
-                                        <View style={styles.recText}>
-                                            <Text
-                                                style={[
-                                                    typography.bodyEmphasis,
-                                                    { color: palette.text },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {rec.title}
-                                            </Text>
-                                            <Text
-                                                style={[
-                                                    typography.caption,
-                                                    { color: palette.textMuted },
-                                                ]}
-                                            >
-                                                {directionLabel}
-                                            </Text>
-                                        </View>
-                                        <View
-                                            style={[
-                                                styles.statusPill,
-                                                { backgroundColor: palette[pill.bg] },
+                                    <View style={styles.watchingRow}>
+                                        <Pressable
+                                            onPress={() =>
+                                                navigateToTitle(
+                                                    item.mediaType,
+                                                    item.tmdbId,
+                                                )
+                                            }
+                                            style={({ pressed }) => [
+                                                styles.watchingRowBody,
+                                                pressed && { opacity: 0.6 },
+                                            ]}
+                                        >
+                                            {item.posterPath ? (
+                                                <Image
+                                                    source={{
+                                                        uri: imageUrl(
+                                                            item.posterPath,
+                                                            'w185',
+                                                        ),
+                                                    }}
+                                                    style={styles.watchingPoster}
+                                                    contentFit="cover"
+                                                    transition={150}
+                                                />
+                                            ) : (
+                                                <View
+                                                    style={[
+                                                        styles.watchingPoster,
+                                                        {
+                                                            backgroundColor:
+                                                                palette.surfaceAlt,
+                                                        },
+                                                    ]}
+                                                />
+                                            )}
+                                            <View style={styles.watchingText}>
+                                                <Text
+                                                    style={[
+                                                        typography.bodyEmphasis,
+                                                        { color: palette.text },
+                                                    ]}
+                                                    numberOfLines={2}
+                                                >
+                                                    {item.title}
+                                                </Text>
+                                                {metaLine ? (
+                                                    <Text
+                                                        style={[
+                                                            typography.caption,
+                                                            {
+                                                                color: palette.textMuted,
+                                                            },
+                                                        ]}
+                                                    >
+                                                        {metaLine}
+                                                    </Text>
+                                                ) : null}
+                                            </View>
+                                        </Pressable>
+                                        <Pressable
+                                            onPress={() => handleMarkWatched(item)}
+                                            disabled={ratingBusy || !!ratingTarget}
+                                            style={({ pressed }) => [
+                                                styles.markWatchedButton,
+                                                {
+                                                    borderColor: palette.accent,
+                                                    opacity:
+                                                        pressed ||
+                                                        ratingBusy ||
+                                                        ratingTarget
+                                                            ? 0.6
+                                                            : 1,
+                                                },
                                             ]}
                                         >
                                             <Text
                                                 style={[
-                                                    typography.micro,
+                                                    typography.caption,
                                                     {
-                                                        color: palette[pill.fg],
+                                                        color: palette.accent,
                                                         fontWeight: '600',
                                                     },
                                                 ]}
                                             >
-                                                {pill.label}
+                                                Mark watched
                                             </Text>
-                                        </View>
-                                    </Pressable>
+                                        </Pressable>
+                                    </View>
                                 </View>
                             );
                         })}
                     </View>
                 ) : (
                     <View style={styles.inlineEmpty}>
-                        <Text
-                            style={[typography.body, { color: palette.textMuted }]}
-                        >
-                            No recommendations yet. Send one or wait for friends to
-                            recommend.
+                        <Text style={[typography.body, { color: palette.textMuted }]}>
+                            Things you&apos;re in the middle of watching live here. Add
+                            something to currently watching to start tracking.
                         </Text>
                     </View>
                 )}
@@ -674,7 +879,7 @@ export default function HomeScreen() {
                 </Text>
                 <View style={styles.globalEmptyActions}>
                     <Pressable
-                        onPress={() => router.push({ pathname: '/library' })}
+                        onPress={() => router.push({ pathname: '/library/add' })}
                         style={({ pressed }) => [
                             styles.primaryButton,
                             {
@@ -737,7 +942,7 @@ export default function HomeScreen() {
         const globalEmpty =
             !data.hasLibraryItems &&
             !data.hasFriends &&
-            data.recs.length === 0;
+            data.recsForYou.length === 0;
         body = (
             <ScrollView
                 contentContainerStyle={styles.scrollContent}
@@ -749,13 +954,14 @@ export default function HomeScreen() {
                     />
                 }
             >
+                {renderSearchBar()}
                 {globalEmpty ? (
                     renderGlobalEmpty()
                 ) : (
                     <>
-                        {data.activity && renderActivity(data.activity)}
+                        {renderRecsForYou(data)}
                         {renderFriendsWatching(data)}
-                        {renderRecs(data)}
+                        {renderCurrentlyWatching(data)}
                     </>
                 )}
             </ScrollView>
@@ -766,8 +972,13 @@ export default function HomeScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Seen" unreadCount={unreadCount} />
+            {renderHeader()}
             {body}
+            <RatingSheet
+                visible={!!ratingTarget}
+                busy={ratingBusy}
+                onSubmit={handleRatingSubmit}
+            />
         </View>
     );
 }
@@ -780,8 +991,41 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
     },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.md,
+    },
+    badge: {
+        position: 'absolute',
+        top: -4,
+        right: -6,
+        minWidth: 16,
+        height: 16,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 3,
+    },
+    badgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+    },
     scrollContent: {
         paddingBottom: spacing.xxl,
+    },
+    searchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        marginHorizontal: spacing.base,
+        marginTop: spacing.sm,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        borderWidth: 1,
     },
     section: {
         paddingTop: spacing.lg,
@@ -790,29 +1034,29 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         marginBottom: spacing.md,
     },
-    // Activity (Section 1)
-    activityCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginHorizontal: spacing.base,
-        padding: spacing.md,
-        borderRadius: radius.md,
-        gap: spacing.md,
-    },
-    activityPoster: {
-        width: ACTIVITY_POSTER_W,
-        height: ACTIVITY_POSTER_H,
-        borderRadius: radius.sm,
-    },
-    activityText: {
-        flex: 1,
-        gap: spacing.xs,
-    },
-    // Friends (Section 2)
-    friendsRow: {
+    horizontalRow: {
         paddingHorizontal: spacing.base,
         gap: spacing.md,
     },
+    // Recs for you
+    recCard: {
+        width: REC_CARD_W,
+        gap: spacing.xs,
+    },
+    recPoster: {
+        width: REC_CARD_W,
+        height: REC_CARD_H,
+        borderRadius: radius.sm,
+    },
+    recCardTitle: {
+        marginTop: spacing.xs,
+    },
+    recAttribution: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    // Friends are watching
     friendCard: {
         width: FRIEND_POSTER_W,
         gap: spacing.xs,
@@ -825,28 +1069,40 @@ const styles = StyleSheet.create({
     friendTitle: {
         marginTop: spacing.xs,
     },
-    // Recs (Section 3)
-    recList: {
+    // Currently watching
+    watchingList: {
         paddingHorizontal: spacing.base,
     },
-    recRow: {
+    watchingRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: spacing.md,
         gap: spacing.md,
     },
-    recText: {
+    watchingRowBody: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    watchingPoster: {
+        width: WATCHING_POSTER_W,
+        height: WATCHING_POSTER_H,
+        borderRadius: radius.sm,
+    },
+    watchingText: {
         flex: 1,
         gap: spacing.xs,
     },
-    recSeparator: {
+    watchingSeparator: {
         height: StyleSheet.hairlineWidth,
-        marginLeft: REC_AVATAR_SIZE + spacing.md,
+        marginLeft: WATCHING_POSTER_W + spacing.md,
     },
-    statusPill: {
-        paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs,
-        borderRadius: radius.full,
+    markWatchedButton: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.sm,
+        borderWidth: 1.5,
     },
     // Inline empty states (per-section)
     inlineEmpty: {

@@ -34,6 +34,26 @@ interface LibraryRow {
     posterPath: string | null;
     year: string;
     metaLoaded: boolean;
+    // Populated when one or more friends have recommended this title.
+    // Senders are deduped; totalCount === senders.length today but kept
+    // separate so we can later cap the displayed list.
+    recAttribution: {
+        senders: { handle: string; displayName: string }[];
+        totalCount: number;
+    } | null;
+}
+
+function firstName(displayName: string): string {
+    const trimmed = displayName.trim();
+    const first = trimmed.split(/\s+/)[0];
+    return first || trimmed || 'A friend';
+}
+
+function formatRecAttribution(attr: NonNullable<LibraryRow['recAttribution']>): string {
+    const names = attr.senders.map((s) => firstName(s.displayName));
+    if (attr.totalCount === 1) return `Rec'd by ${names[0]}`;
+    if (attr.totalCount === 2) return `Rec'd by ${names[0]} & ${names[1]}`;
+    return `Rec'd by ${names[0]} +${attr.totalCount - 1} others`;
 }
 
 const TABS: readonly ItemStatus[] = ['watchlist', 'watching', 'watched'] as const;
@@ -95,18 +115,79 @@ export default function LibraryScreen() {
                 setLoading(true);
                 setError(null);
                 try {
-                    const { data: items, error: itemsError } = await supabase
-                        .from('items')
-                        .select(
-                            'id, tmdb_id, media_type, rating, watched_at, updated_at',
-                        )
-                        .eq('status', activeTab)
-                        .order('updated_at', { ascending: false });
+                    const {
+                        data: { session },
+                    } = await supabase.auth.getSession();
+                    const userId = session?.user.id;
+                    if (!userId) throw new Error('Not authenticated');
 
-                    if (itemsError) throw itemsError;
+                    // Items for the current tab + every accepted/watched rec
+                    // sent to this user run in parallel. The rec set covers
+                    // the whole library (not just this tab) because joining
+                    // by (tmdb_id, media_type) per item is cheaper than
+                    // re-querying on tab switches.
+                    const [itemsResult, recsResult] = await Promise.all([
+                        supabase
+                            .from('items')
+                            .select(
+                                'id, tmdb_id, media_type, rating, watched_at, updated_at',
+                            )
+                            .eq('status', activeTab)
+                            .order('updated_at', { ascending: false }),
+                        supabase
+                            .from('recommendations')
+                            .select('from_user_id, tmdb_id, media_type, sent_at')
+                            .eq('to_user_id', userId)
+                            .in('status', ['accepted', 'watched'])
+                            .order('sent_at', { ascending: false }),
+                    ]);
+
+                    if (itemsResult.error) throw itemsResult.error;
+                    if (recsResult.error) throw recsResult.error;
                     if (!active) return;
 
-                    const itemList = items ?? [];
+                    const itemList = itemsResult.data ?? [];
+                    const recList = recsResult.data ?? [];
+
+                    // Group senders by (media_type, tmdb_id) and collect the
+                    // distinct sender ids we'll need profiles for. Senders
+                    // are kept in most-recent-rec-first order via the SQL
+                    // sort above, and deduped within each item group (a
+                    // sender could appear twice if they re-sent after a
+                    // dismiss — rare but cheap to guard).
+                    const senderIdsByItem = new Map<string, string[]>();
+                    const allSenderIds = new Set<string>();
+                    for (const rec of recList) {
+                        if (!rec.from_user_id) continue;
+                        const key = `${rec.media_type}:${rec.tmdb_id}`;
+                        const list = senderIdsByItem.get(key) ?? [];
+                        if (!list.includes(rec.from_user_id)) {
+                            list.push(rec.from_user_id);
+                            senderIdsByItem.set(key, list);
+                        }
+                        allSenderIds.add(rec.from_user_id);
+                    }
+
+                    const profilesResult =
+                        allSenderIds.size > 0
+                            ? await supabase
+                                  .from('profiles')
+                                  .select('id, handle, display_name')
+                                  .in('id', Array.from(allSenderIds))
+                            : { data: [], error: null };
+
+                    if (profilesResult.error) throw profilesResult.error;
+                    if (!active) return;
+
+                    const senderById = new Map<
+                        string,
+                        { handle: string; displayName: string }
+                    >(
+                        (profilesResult.data ?? []).map((p) => [
+                            p.id,
+                            { handle: p.handle, displayName: p.display_name },
+                        ]),
+                    );
 
                     const metaResults = await Promise.allSettled(
                         itemList.map((row) =>
@@ -125,6 +206,16 @@ export default function LibraryScreen() {
                                       posterPath: null,
                                       year: '',
                                   };
+                        const senderIds =
+                            senderIdsByItem.get(`${row.media_type}:${row.tmdb_id}`) ??
+                            [];
+                        const senders = senderIds
+                            .map((id) => senderById.get(id))
+                            .filter(
+                                (
+                                    s,
+                                ): s is { handle: string; displayName: string } => !!s,
+                            );
                         return {
                             id: row.id,
                             tmdb_id: row.tmdb_id,
@@ -134,6 +225,10 @@ export default function LibraryScreen() {
                             updated_at: row.updated_at,
                             ...meta,
                             metaLoaded: result.status === 'fulfilled',
+                            recAttribution:
+                                senders.length > 0
+                                    ? { senders, totalCount: senders.length }
+                                    : null,
                         };
                     });
 
@@ -224,6 +319,14 @@ export default function LibraryScreen() {
                     {metaLine ? (
                         <Text style={[typography.caption, { color: palette.textMuted }]}>
                             {metaLine}
+                        </Text>
+                    ) : null}
+                    {item.recAttribution ? (
+                        <Text
+                            style={[typography.caption, { color: palette.textMuted }]}
+                            numberOfLines={1}
+                        >
+                            {formatRecAttribution(item.recAttribution)}
                         </Text>
                     ) : null}
                     {showWatchedLine ? (
