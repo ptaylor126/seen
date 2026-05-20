@@ -1,8 +1,9 @@
 import * as Haptics from 'expo-haptics';
 import { Star } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     Modal,
+    PanResponder,
     Pressable,
     StyleSheet,
     Text,
@@ -25,6 +26,25 @@ interface RatingSheetProps {
     onSubmit: (rating: number | null) => void;
 }
 
+const STAR_COUNT = 5;
+// Distance (in px) the finger must travel before the row-level
+// PanResponder claims the gesture from the per-star Pressables.
+// Below the threshold: a tap, the Pressable handles it normally.
+// Above: a drag, the PanResponder takes over and selection follows
+// the finger across the row.
+const DRAG_THRESHOLD_PX = 5;
+
+// Map a row-relative X coordinate to a star value (1-5). Out-of-range
+// values clamp to the nearest end — drag past the rightmost star pins
+// to 5, drag left of the first star pins to 1. (Deselect-to-null lives
+// on the tap-toggle path; drag never produces 0.)
+function valueFromRowX(localX: number, rowWidth: number): number {
+    if (rowWidth <= 0) return 1;
+    const perStar = rowWidth / STAR_COUNT;
+    const idx = Math.floor(localX / perStar);
+    return Math.max(1, Math.min(STAR_COUNT, idx + 1));
+}
+
 // Bottom-sheet star rating prompt used after a Watched transition.
 // Caller controls visible / busy / initialRating; the sheet owns
 // (a) the tentative selection the user is building toward Done and
@@ -45,6 +65,29 @@ export function RatingSheet({
     // Press-in preview — lights stars while the user holds. Clears on
     // press-out so the display falls back to `selected`.
     const [pressedRating, setPressedRating] = useState<number | null>(null);
+    // Measured row width — set via onLayout. Drives the X→star mapping
+    // for drag gestures.
+    const [rowWidth, setRowWidth] = useState(0);
+
+    // Refs mirror state for the PanResponder closures: the responder is
+    // created once via useRef, so its handlers can't close over the
+    // latest state values. setSelected/setPressedRating are stable so
+    // they don't need ref mirroring, but rowWidth and pressedRating
+    // (which we *read* during handlers) do.
+    const rowRef = useRef<View>(null);
+    const rowWidthRef = useRef(0);
+    const rowPageXRef = useRef(0);
+    const pressedRatingRef = useRef<number | null>(null);
+    // Which star last triggered a haptic. Drag haptics fire once per
+    // transition into a new star rather than on every move event.
+    const lastHapticStarRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        rowWidthRef.current = rowWidth;
+    }, [rowWidth]);
+    useEffect(() => {
+        pressedRatingRef.current = pressedRating;
+    }, [pressedRating]);
 
     // Resync internal state to the prop each time the sheet opens, so
     // re-rate flows show the existing rating and first-rate flows
@@ -53,11 +96,72 @@ export function RatingSheet({
         if (visible) {
             setSelected(initialRating);
             setPressedRating(null);
+            lastHapticStarRef.current = null;
         }
     }, [visible, initialRating]);
 
+    // Captures both the row's width and its absolute page-X position
+    // (via measure()). pageX is required to translate the gesture's
+    // moveX (screen coords) into row-relative coordinates — onLayout
+    // alone only gives parent-relative offsets.
+    function handleRowLayout() {
+        rowRef.current?.measure((_x, _y, w, _h, pageX) => {
+            setRowWidth(w);
+            rowPageXRef.current = pageX;
+        });
+    }
+
+    // Row-level drag gesture. Quick taps still go through the per-star
+    // Pressables (onStartShouldSet returns false); only crossing the
+    // DRAG_THRESHOLD_PX claims the responder for drag-to-rate. Once
+    // PanResponder owns the gesture, selection follows the finger and
+    // commits on release with SET semantics (no toggle — dragging to
+    // "3" means "I want 3", not "deselect if already 3").
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onMoveShouldSetPanResponder: (_, g) =>
+                Math.abs(g.dx) > DRAG_THRESHOLD_PX ||
+                Math.abs(g.dy) > DRAG_THRESHOLD_PX,
+            onPanResponderGrant: (_, g) => {
+                const localX = g.x0 - rowPageXRef.current;
+                const value = valueFromRowX(localX, rowWidthRef.current);
+                setPressedRating(value);
+                // Skip haptic if the per-star Pressable just fired one
+                // for this same star — avoids the double-haptic when
+                // the gesture transitions from Pressable to PanResponder.
+                if (lastHapticStarRef.current !== value) {
+                    lastHapticStarRef.current = value;
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+            },
+            onPanResponderMove: (_, g) => {
+                const localX = g.moveX - rowPageXRef.current;
+                const value = valueFromRowX(localX, rowWidthRef.current);
+                setPressedRating(value);
+                if (lastHapticStarRef.current !== value) {
+                    lastHapticStarRef.current = value;
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+            },
+            onPanResponderRelease: () => {
+                const committed = pressedRatingRef.current;
+                setPressedRating(null);
+                lastHapticStarRef.current = null;
+                if (committed !== null) setSelected(committed);
+            },
+            onPanResponderTerminate: () => {
+                setPressedRating(null);
+                lastHapticStarRef.current = null;
+            },
+        }),
+    ).current;
+
     function handleStarPressIn(value: number) {
         setPressedRating(value);
+        // Share the haptic-tracker with the PanResponder so its
+        // onPanResponderGrant doesn't re-fire a haptic for this star.
+        lastHapticStarRef.current = value;
         // Letterboxd-style light impact as the finger lands. Fire and
         // forget — failures (unsupported device, etc.) are silent.
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -111,7 +215,12 @@ export function RatingSheet({
                     >
                         How was it?
                     </Text>
-                    <View style={styles.starsRow}>
+                    <View
+                        ref={rowRef}
+                        onLayout={handleRowLayout}
+                        style={styles.starsRow}
+                        {...panResponder.panHandlers}
+                    >
                         {[1, 2, 3, 4, 5].map((value) => {
                             const filled =
                                 effectiveRating !== null && value <= effectiveRating;
@@ -199,7 +308,10 @@ const styles = StyleSheet.create({
     starsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
+        // alignSelf shrinks the row to content width so onLayout reports
+        // just the stars+gaps span — required for the drag-gesture
+        // value mapping to line up with the visible stars.
+        alignSelf: 'center',
         gap: spacing.xs,
         paddingVertical: spacing.sm,
     },
