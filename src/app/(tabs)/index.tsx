@@ -208,16 +208,28 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         (activityResult.data ?? []).find((i) => i.status === 'watching') ??
         (activityResult.data ?? []).find((i) => i.status === 'watched');
 
-    const activityTitlePromise = activityChoice
-        ? activityChoice.media_type === 'movie'
-            ? getMovie(activityChoice.tmdb_id).then((m) => ({
-                  title: m.title,
-                  posterPath: m.poster_path,
-              }))
-            : getTV(activityChoice.tmdb_id).then((t) => ({
-                  title: t.name,
-                  posterPath: t.poster_path,
-              }))
+    // Wrap the activity TMDB fetch so a single TMDB hiccup doesn't take
+    // down the whole Home screen — friend cards and recs already swallow
+    // per-item failures via Promise.allSettled; the activity title is the
+    // last unconditional await in this chain and was the cascade source.
+    // On failure: log + return null, the section just won't render.
+    const activityTitlePromise: Promise<{
+        title: string;
+        posterPath: string | null;
+    } | null> = activityChoice
+        ? (activityChoice.media_type === 'movie'
+              ? getMovie(activityChoice.tmdb_id).then((m) => ({
+                    title: m.title,
+                    posterPath: m.poster_path,
+                }))
+              : getTV(activityChoice.tmdb_id).then((t) => ({
+                    title: t.name,
+                    posterPath: t.poster_path,
+                }))
+          ).catch((err) => {
+              console.warn('home activity title fetch failed:', err);
+              return null;
+          })
         : Promise.resolve(null);
 
     const friendTitleResults = await Promise.allSettled(
