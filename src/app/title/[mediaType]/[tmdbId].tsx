@@ -104,6 +104,9 @@ export default function TitleDetailScreen() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [currentStatus, setCurrentStatus] = useState<ItemStatus | null>(null);
+    // Existing items.rating, if any. Drives the RatingSheet's
+    // initialRating so re-rates land on the user's previous pick.
+    const [currentRating, setCurrentRating] = useState<number | null>(null);
     const [updating, setUpdating] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [ratingBusy, setRatingBusy] = useState(false);
@@ -140,7 +143,7 @@ export default function TitleDetailScreen() {
                 if (userId) {
                     const { data: item } = await supabase
                         .from('items')
-                        .select('status')
+                        .select('status, rating')
                         .eq('user_id', userId)
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
@@ -148,6 +151,9 @@ export default function TitleDetailScreen() {
                     if (!active) return;
                     if (item && STATUSES.includes(item.status as ItemStatus)) {
                         setCurrentStatus(item.status as ItemStatus);
+                    }
+                    if (item && typeof item.rating === 'number') {
+                        setCurrentRating(item.rating);
                     }
                 }
 
@@ -316,6 +322,10 @@ export default function TitleDetailScreen() {
             if (!userId) throw new Error('Not authenticated');
 
             await applyWatchedRating({ userId, tmdbId, mediaType, rating });
+            // Track locally so a subsequent re-rate pre-fills the sheet.
+            // Skip (rating === null) leaves the previous value alone —
+            // applyWatchedRating doesn't clear it on the items row.
+            if (rating !== null) setCurrentRating(rating);
         } catch (err) {
             console.error('rating update failed:', err);
             surfaceUpdateError(err);
@@ -603,6 +613,7 @@ export default function TitleDetailScreen() {
             <RatingSheet
                 visible={showRatingSheet}
                 busy={ratingBusy}
+                initialRating={currentRating}
                 onSubmit={handleRate}
             />
         </View>

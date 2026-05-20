@@ -64,6 +64,9 @@ interface FriendCard {
 interface WatchingItem {
     tmdbId: number;
     mediaType: MediaType;
+    // Existing items.rating, if any — passed through to the
+    // RatingSheet so re-rates pre-fill the previous pick.
+    rating: number | null;
     title: string;
     posterPath: string | null;
     year: string;
@@ -116,7 +119,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`),
         supabase
             .from('items')
-            .select('tmdb_id, media_type, updated_at')
+            .select('tmdb_id, media_type, rating, updated_at')
             .eq('user_id', userId)
             .eq('status', 'watching')
             .order('updated_at', { ascending: false })
@@ -307,6 +310,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         currentlyWatching.push({
             tmdbId: w.tmdb_id,
             mediaType: w.media_type as MediaType,
+            rating: typeof w.rating === 'number' ? w.rating : null,
             title: titleResult.value.title,
             posterPath: titleResult.value.posterPath,
             year: titleResult.value.year,
@@ -337,10 +341,13 @@ export default function HomeScreen() {
     // Rating sheet target: when present, the sheet is shown for this
     // (mediaType, tmdbId) pair. handleMarkWatched sets it after the
     // 'watching' → 'watched' transition succeeds; submission/dismiss
-    // clears it.
+    // clears it. `rating` carries the existing items.rating so the
+    // sheet can pre-fill (rare for watching items, but possible if
+    // the user moved a watched item back to watching).
     const [ratingTarget, setRatingTarget] = useState<{
         tmdbId: number;
         mediaType: MediaType;
+        rating: number | null;
     } | null>(null);
     const [ratingBusy, setRatingBusy] = useState(false);
 
@@ -516,7 +523,11 @@ export default function HomeScreen() {
                 .eq('media_type', item.mediaType);
             if (updateError) throw updateError;
 
-            setRatingTarget({ tmdbId: item.tmdbId, mediaType: item.mediaType });
+            setRatingTarget({
+                tmdbId: item.tmdbId,
+                mediaType: item.mediaType,
+                rating: item.rating,
+            });
         } catch (err) {
             console.error('mark watched failed:', err);
             surfaceUpdateError(err);
@@ -1136,6 +1147,7 @@ export default function HomeScreen() {
             <RatingSheet
                 visible={!!ratingTarget}
                 busy={ratingBusy}
+                initialRating={ratingTarget?.rating ?? null}
                 onSubmit={handleRatingSubmit}
             />
             {searchModalVisible && (

@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { Star } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
@@ -15,38 +16,81 @@ import { getPalette, radius, spacing, typography } from '@/theme/theme';
 interface RatingSheetProps {
     visible: boolean;
     busy: boolean;
-    // Called with the chosen 1-5 rating, or null when the user dismissed
-    // without picking (Skip button, backdrop tap, hardware back).
+    // Pre-fill the stars with an existing rating (e.g. re-rating a
+    // previously-watched title). Null = no pre-selection.
+    initialRating: number | null;
+    // Called with the chosen 1-5 rating when the user taps Done, or
+    // null when they dismissed without committing (Skip, backdrop tap,
+    // hardware back).
     onSubmit: (rating: number | null) => void;
 }
 
 // Bottom-sheet star rating prompt used after a Watched transition.
-// Stateless from the caller's perspective: caller controls `visible` and
-// the busy flag; this component owns only the press-fill preview.
-export function RatingSheet({ visible, busy, onSubmit }: RatingSheetProps) {
+// Caller controls visible / busy / initialRating; the sheet owns
+// (a) the tentative selection the user is building toward Done and
+// (b) the press-in fill preview that lights stars while the finger
+// is down.
+export function RatingSheet({
+    visible,
+    busy,
+    initialRating,
+    onSubmit,
+}: RatingSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
-    // Drives the press-in fill: while the user holds the 4th star,
-    // stars 1-4 light up before commit fires on release.
+    // Tentative selection — committed only when Done is pressed.
+    // Tapping the same star a second time deselects it (back to null).
+    const [selected, setSelected] = useState<number | null>(initialRating);
+    // Press-in preview — lights stars while the user holds. Clears on
+    // press-out so the display falls back to `selected`.
     const [pressedRating, setPressedRating] = useState<number | null>(null);
 
-    // Reset the press-fill preview each open so a previous press doesn't
-    // bleed into the next session (e.g. when the user re-taps Watched).
+    // Resync internal state to the prop each time the sheet opens, so
+    // re-rate flows show the existing rating and first-rate flows
+    // start unselected.
     useEffect(() => {
-        if (visible) setPressedRating(null);
-    }, [visible]);
+        if (visible) {
+            setSelected(initialRating);
+            setPressedRating(null);
+        }
+    }, [visible, initialRating]);
+
+    function handleStarPressIn(value: number) {
+        setPressedRating(value);
+        // Letterboxd-style light impact as the finger lands. Fire and
+        // forget — failures (unsupported device, etc.) are silent.
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    function handleStarPress(value: number) {
+        // Tap-toggle: same star a second time clears the selection.
+        setSelected((curr) => (curr === value ? null : value));
+    }
+
+    function handleDone() {
+        onSubmit(selected);
+    }
+
+    function handleSkip() {
+        onSubmit(null);
+    }
+
+    // Stars fill from the pressed preview first; when not pressing,
+    // fall back to the committed selection.
+    const effectiveRating = pressedRating ?? selected;
+    const doneDisabled = busy || selected === null;
 
     return (
         <Modal
             visible={visible}
             transparent
             animationType="slide"
-            onRequestClose={() => onSubmit(null)}
+            onRequestClose={handleSkip}
         >
             <Pressable
                 style={[styles.backdrop, { backgroundColor: palette.overlay }]}
-                onPress={() => onSubmit(null)}
+                onPress={handleSkip}
             >
                 <Pressable
                     style={[
@@ -70,14 +114,14 @@ export function RatingSheet({ visible, busy, onSubmit }: RatingSheetProps) {
                     <View style={styles.starsRow}>
                         {[1, 2, 3, 4, 5].map((value) => {
                             const filled =
-                                pressedRating !== null && value <= pressedRating;
+                                effectiveRating !== null && value <= effectiveRating;
                             const color = filled ? palette.accent : palette.textMuted;
                             return (
                                 <Pressable
                                     key={value}
-                                    onPressIn={() => setPressedRating(value)}
+                                    onPressIn={() => handleStarPressIn(value)}
                                     onPressOut={() => setPressedRating(null)}
-                                    onPress={() => onSubmit(value)}
+                                    onPress={() => handleStarPress(value)}
                                     disabled={busy}
                                     hitSlop={spacing.xs}
                                     style={({ pressed }) => [
@@ -95,7 +139,27 @@ export function RatingSheet({ visible, busy, onSubmit }: RatingSheetProps) {
                         })}
                     </View>
                     <Pressable
-                        onPress={() => onSubmit(null)}
+                        onPress={handleDone}
+                        disabled={doneDisabled}
+                        style={({ pressed }) => [
+                            styles.doneButton,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: doneDisabled ? 0.4 : pressed ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.textInverse },
+                            ]}
+                        >
+                            Done
+                        </Text>
+                    </Pressable>
+                    <Pressable
+                        onPress={handleSkip}
                         disabled={busy}
                         style={({ pressed }) => [
                             styles.skipButton,
@@ -136,7 +200,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: spacing.sm,
+        gap: spacing.xs,
         paddingVertical: spacing.sm,
     },
     starButton: {
@@ -144,6 +208,13 @@ const styles = StyleSheet.create({
         height: 44,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    doneButton: {
+        alignSelf: 'center',
+        marginTop: spacing.md,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
     },
     skipButton: {
         alignSelf: 'center',
