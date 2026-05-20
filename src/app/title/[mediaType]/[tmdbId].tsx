@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Send, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { Send, Star, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -25,11 +25,14 @@ type MediaType = 'movie' | 'tv';
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
 type RatingThumb = 'up' | 'down';
 
-// Thumbs-up / thumbs-down map onto the legacy 5-star items.rating column
-// (the only rating storage we have). Up = 4 (positive), down = 2 (negative),
-// null = skipped (no rating recorded). Matching open recs also get their
-// rating_thumb field set in the same flow when applicable.
-const RATING_FROM_THUMB: Record<RatingThumb, number> = { up: 4, down: 2 };
+// items.rating stores the 1-5 value directly. The recommendations table
+// still carries a coarser rating_thumb (up | down) as the credibility
+// signal between friends — derived from the star value: 1-2 = down,
+// 3-5 = up. Skipping (rating === null) leaves both untouched on items
+// but still marks any matching open recs as watched.
+function thumbFromRating(rating: number): RatingThumb {
+    return rating <= 2 ? 'down' : 'up';
+}
 
 // Discriminated union so render code can narrow on `type` and access the
 // right shape (TMDBMovie.title vs TMDBTV.name etc.).
@@ -84,6 +87,9 @@ export default function TitleDetailScreen() {
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
+    // Drives the fill-on-press preview: when the user is mid-press on the
+    // 4th star, stars 1-4 fill. Cleared on press-out and after dismiss.
+    const [pressedRating, setPressedRating] = useState<number | null>(null);
 
     // Load title detail (TMDB) and the current library status (Supabase) in
     // parallel. The detail fetch picks getMovie or getTV based on mediaType
@@ -176,7 +182,7 @@ export default function TitleDetailScreen() {
         if (updating || ratingBusy || showRatingSheet || !mediaType) return;
 
         // Re-tapping Watched while already watched is meaningful — it
-        // reopens the rating sheet so the user can change their thumb.
+        // reopens the rating sheet so the user can change their stars.
         // Skip the redundant upsert in that case.
         const watchedReTap = newStatus === 'watched' && currentStatus === 'watched';
         if (currentStatus === newStatus && !watchedReTap) return;
@@ -225,19 +231,21 @@ export default function TitleDetailScreen() {
         }
     }
 
-    // Apply a thumbs-up/down rating (or skip with `null`) after a watched
-    // transition. Updates items.rating when a thumb was chosen, and always
+    // Apply a 1-5 star rating (or skip with `null`) after a watched
+    // transition. Updates items.rating when a value was chosen, and always
     // transitions any matching open recommendations (pending | accepted)
     // into `watched` — which fires the rec_watched notification trigger
-    // for the sender. rating_thumb on the rec only gets set when the user
-    // chose up/down; skipping leaves it null.
-    async function handleRate(thumb: RatingThumb | null) {
+    // for the sender. rating_thumb on the rec is derived from the star
+    // value (1-2 = down, 3-5 = up) only when the user chose a rating;
+    // skipping leaves it null.
+    async function handleRate(rating: number | null) {
         if (ratingBusy || !mediaType) return;
         setRatingBusy(true);
         // Close the sheet immediately so the UI doesn't trap the user
         // behind a spinner if the network is slow. Errors surface via
         // Alert; success is silent.
         setShowRatingSheet(false);
+        setPressedRating(null);
         try {
             const {
                 data: { session },
@@ -245,10 +253,10 @@ export default function TitleDetailScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            if (thumb !== null) {
+            if (rating !== null) {
                 const { error: itemError } = await supabase
                     .from('items')
-                    .update({ rating: RATING_FROM_THUMB[thumb] })
+                    .update({ rating })
                     .eq('user_id', userId)
                     .eq('tmdb_id', tmdbId)
                     .eq('media_type', mediaType);
@@ -273,7 +281,7 @@ export default function TitleDetailScreen() {
                     status: 'watched',
                     watched_via_rec: true,
                 };
-                if (thumb !== null) update.rating_thumb = thumb;
+                if (rating !== null) update.rating_thumb = thumbFromRating(rating);
 
                 const { error: recError } = await supabase
                     .from('recommendations')
@@ -606,51 +614,32 @@ export default function TitleDetailScreen() {
                         >
                             How was it?
                         </Text>
-                        <View style={styles.sheetActions}>
-                            <Pressable
-                                onPress={() => handleRate('up')}
-                                disabled={ratingBusy}
-                                style={({ pressed }) => [
-                                    styles.thumbButton,
-                                    {
-                                        backgroundColor: palette.surfaceAlt,
-                                        opacity: pressed || ratingBusy ? 0.6 : 1,
-                                    },
+                        <StarRow
+                            pressedRating={pressedRating}
+                            onPressIn={setPressedRating}
+                            onPressOut={() => setPressedRating(null)}
+                            onPress={handleRate}
+                            disabled={ratingBusy}
+                            fillColor={palette.accent}
+                            outlineColor={palette.textMuted}
+                        />
+                        <Pressable
+                            onPress={() => handleRate(null)}
+                            disabled={ratingBusy}
+                            style={({ pressed }) => [
+                                styles.skipButton,
+                                { opacity: pressed || ratingBusy ? 0.6 : 1 },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.textMuted },
                                 ]}
                             >
-                                <ThumbsUp color={palette.text} size={32} />
-                            </Pressable>
-                            <Pressable
-                                onPress={() => handleRate(null)}
-                                disabled={ratingBusy}
-                                style={({ pressed }) => [
-                                    styles.skipButton,
-                                    { opacity: pressed || ratingBusy ? 0.6 : 1 },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    Skip
-                                </Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={() => handleRate('down')}
-                                disabled={ratingBusy}
-                                style={({ pressed }) => [
-                                    styles.thumbButton,
-                                    {
-                                        backgroundColor: palette.surfaceAlt,
-                                        opacity: pressed || ratingBusy ? 0.6 : 1,
-                                    },
-                                ]}
-                            >
-                                <ThumbsDown color={palette.text} size={32} />
-                            </Pressable>
-                        </View>
+                                Skip
+                            </Text>
+                        </Pressable>
                     </Pressable>
                 </Pressable>
             </Modal>
@@ -677,6 +666,56 @@ function CloseButton({
         >
             <X color={fg} size={20} />
         </Pressable>
+    );
+}
+
+// Row of 5 tappable stars. Press-in/press-out preview the fill so the
+// user sees their selection before lifting off; commit fires on release
+// via onPress.
+function StarRow({
+    pressedRating,
+    onPressIn,
+    onPressOut,
+    onPress,
+    disabled,
+    fillColor,
+    outlineColor,
+}: {
+    pressedRating: number | null;
+    onPressIn: (rating: number) => void;
+    onPressOut: () => void;
+    onPress: (rating: number) => void;
+    disabled: boolean;
+    fillColor: string;
+    outlineColor: string;
+}) {
+    return (
+        <View style={styles.starsRow}>
+            {[1, 2, 3, 4, 5].map((value) => {
+                const filled = pressedRating !== null && value <= pressedRating;
+                const color = filled ? fillColor : outlineColor;
+                return (
+                    <Pressable
+                        key={value}
+                        onPressIn={() => onPressIn(value)}
+                        onPressOut={onPressOut}
+                        onPress={() => onPress(value)}
+                        disabled={disabled}
+                        hitSlop={spacing.xs}
+                        style={({ pressed }) => [
+                            styles.starButton,
+                            { opacity: pressed || disabled ? 0.6 : 1 },
+                        ]}
+                    >
+                        <Star
+                            color={color}
+                            fill={filled ? fillColor : 'transparent'}
+                            size={36}
+                        />
+                    </Pressable>
+                );
+            })}
+        </View>
     );
 }
 
@@ -803,21 +842,23 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         marginBottom: spacing.lg,
     },
-    sheetActions: {
+    starsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-evenly',
+        justifyContent: 'center',
+        gap: spacing.sm,
         paddingVertical: spacing.sm,
     },
-    thumbButton: {
-        width: 64,
-        height: 64,
-        borderRadius: radius.full,
+    starButton: {
+        width: 44,
+        height: 44,
         alignItems: 'center',
         justifyContent: 'center',
     },
     skipButton: {
+        alignSelf: 'center',
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.md,
+        marginTop: spacing.sm,
     },
 });
