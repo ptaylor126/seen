@@ -3,8 +3,14 @@
  *
  * Every call goes through the `tmdb-proxy` Edge Function — the TMDB v4
  * read-access token is held server-side and never reaches the client
- * bundle. The Supabase client attaches the current user's access token to
- * `functions.invoke` automatically, so callers don't manage auth headers.
+ * bundle. `callProxy` reads the current session explicitly and attaches
+ * `Authorization: Bearer <access_token>` to `functions.invoke`: while
+ * supabase-js v2 *does* propagate session JWTs to the FunctionsClient
+ * via an internal listener, that propagation is event-driven and racy
+ * just after `signInWithIdToken` — the onboarding screens were hitting
+ * the proxy before the cached header had been updated and getting back
+ * 401s. Attaching the header explicitly closes that race for every
+ * call site, not just onboarding.
  *
  * Image URLs are NOT proxied: posters and backdrops come straight from the
  * TMDB CDN via `imageUrl()` (per TECHNICAL §3 and DESIGN's image-forward
@@ -134,8 +140,19 @@ export interface TMDBConfiguration {
 type ProxyParams = Record<string, string | number | boolean>;
 
 async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> {
+    // Read the session and attach Authorization explicitly. See the
+    // file header for why — the auto-attach in functions.invoke is
+    // racy right after sign-in.
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    const headers = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : undefined;
+
     const { data, error } = await supabase.functions.invoke<T>('tmdb-proxy', {
         body: { path, ...params },
+        headers,
     });
 
     if (error) {

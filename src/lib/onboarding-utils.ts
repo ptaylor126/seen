@@ -43,17 +43,15 @@ export const RANDOM_NAMES: readonly string[] = [
     'Yawning Yak',
 ];
 
-// Tiny profanity list — kept here intentionally short and focused on
-// slurs. Case-insensitive substring match means false positives are
-// possible ("scunthorpe problem"); we accept that trade-off for MVP
-// because the alternative is shipping a 300-word block list and we'd
-// rather under-block than over-block.
+// Profanity list — common English swears plus slurs. Matched with
+// whole-word boundaries (\b...\b), case-insensitive, so "shit" blocks
+// "shit" but lets "shitake" through (avoids the Scunthorpe problem
+// the previous substring-match design suffered from).
 //
-// IMPORTANT: Keep this list small and only include unambiguous slurs.
-// Generic profanity (swear words) is not what this guards — it guards
-// against handles/display names that would be hostile in someone
-// else's notification feed.
+// Add liberally; the regex compiled in containsProfanity() is rebuilt
+// per call, but the cost is negligible for handles/display names.
 export const PROFANITY_WORDS: readonly string[] = [
+    // slurs
     'nigger',
     'nigga',
     'faggot',
@@ -64,6 +62,19 @@ export const PROFANITY_WORDS: readonly string[] = [
     'kike',
     'wetback',
     'gook',
+    // common english swears
+    'fuck',
+    'shit',
+    'cunt',
+    'dick',
+    'pussy',
+    'asshole',
+    'bitch',
+    'bastard',
+    'cock',
+    'twat',
+    'wanker',
+    'piss',
 ];
 
 export function randomDisplayName(): string {
@@ -72,8 +83,10 @@ export function randomDisplayName(): string {
 }
 
 export function containsProfanity(text: string): boolean {
-    const lower = text.toLowerCase();
-    return PROFANITY_WORDS.some((word) => lower.includes(word));
+    // Whole-word match: \b boundaries ensure "shit" matches "shit" but
+    // not "shitake mushroom". Case-insensitive via the `i` flag.
+    const pattern = new RegExp(`\\b(${PROFANITY_WORDS.join('|')})\\b`, 'i');
+    return pattern.test(text);
 }
 
 export interface HandleValidationResult {
