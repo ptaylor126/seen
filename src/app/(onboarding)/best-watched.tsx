@@ -5,13 +5,15 @@ import { useState } from 'react';
 import {
     Alert,
     Keyboard,
+    KeyboardAvoidingView,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingDots } from '@/components/onboarding-dots';
 import {
@@ -20,7 +22,6 @@ import {
 } from '@/components/onboarding-search';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
-import { thumbFromRating } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
@@ -36,6 +37,7 @@ export default function BestWatchedScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const { refresh: refreshProfile } = useProfile();
 
     const [picked, setPicked] = useState<PickedItem | null>(null);
@@ -122,6 +124,11 @@ export default function BestWatchedScreen() {
     const canContinue = picked !== null && rating !== null && !busy;
 
     return (
+        <KeyboardAvoidingView
+            style={{ flex: 1, backgroundColor: palette.bg }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
+        >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
@@ -140,8 +147,7 @@ export default function BestWatchedScreen() {
                     What&apos;s the best thing you&apos;ve watched recently?
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Rate it — your friends can see your taste, and we&apos;ll
-                    suggest things you might love.
+                    Friends will see your favourites.
                 </Text>
                 {picked ? (
                     <View
@@ -181,17 +187,6 @@ export default function BestWatchedScreen() {
                                 );
                             })}
                         </View>
-                        {rating !== null ? (
-                            <Text style={[typography.caption, { color: palette.textMuted }]}>
-                                {thumbFromRating(rating) === 'up'
-                                    ? "Friends will see this as a recommendation."
-                                    : "Friends will see this as a pass."}
-                            </Text>
-                        ) : (
-                            <Text style={[typography.caption, { color: palette.textMuted }]}>
-                                Tap a star.
-                            </Text>
-                        )}
                         <Pressable
                             onPress={() => {
                                 setPicked(null);
@@ -250,6 +245,7 @@ export default function BestWatchedScreen() {
                 <OnboardingDots currentStep={5} totalSteps={6} />
             </View>
         </SafeAreaView>
+        </KeyboardAvoidingView>
     );
 }
 

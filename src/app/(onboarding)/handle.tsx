@@ -4,6 +4,8 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    KeyboardAvoidingView,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -11,7 +13,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingDots } from '@/components/onboarding-dots';
 import { validateHandle } from '@/lib/onboarding-utils';
@@ -22,6 +24,7 @@ export default function HandleScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     const [handle, setHandle] = useState('');
     const [busy, setBusy] = useState(false);
@@ -75,6 +78,11 @@ export default function HandleScreen() {
     const showReason = handle.length > 0 && validation.reason;
 
     return (
+        <KeyboardAvoidingView
+            style={{ flex: 1, backgroundColor: palette.bg }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
+        >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
@@ -164,6 +172,7 @@ export default function HandleScreen() {
                 <OnboardingDots currentStep={2} totalSteps={6} />
             </View>
         </SafeAreaView>
+        </KeyboardAvoidingView>
     );
 }
 

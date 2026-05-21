@@ -4,6 +4,8 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    KeyboardAvoidingView,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -11,7 +13,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingDots } from '@/components/onboarding-dots';
 import { containsProfanity, randomDisplayName } from '@/lib/onboarding-utils';
@@ -24,6 +26,7 @@ export default function DisplayNameScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     // Seed with a random name on first render so the dice button has
     // somewhere to roll from; the user can clear and type their own.
@@ -82,6 +85,11 @@ export default function DisplayNameScreen() {
     }
 
     return (
+        <KeyboardAvoidingView
+            style={{ flex: 1, backgroundColor: palette.bg }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
+        >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
@@ -184,6 +192,7 @@ export default function DisplayNameScreen() {
                 <OnboardingDots currentStep={3} totalSteps={6} />
             </View>
         </SafeAreaView>
+        </KeyboardAvoidingView>
     );
 }
 

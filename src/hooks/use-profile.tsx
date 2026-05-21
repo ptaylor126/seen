@@ -3,6 +3,7 @@ import {
     useCallback,
     useContext,
     useEffect,
+    useRef,
     useState,
     type ReactNode,
 } from 'react';
@@ -18,9 +19,8 @@ export interface Profile {
 }
 
 interface ProfileContextValue {
-    status: 'loading' | 'ready' | 'error';
+    status: 'loading' | 'ready';
     profile: Profile | null;
-    error: string | null;
     refresh: () => Promise<void>;
 }
 
@@ -31,58 +31,89 @@ const ProfileContext = createContext<ProfileContextValue | null>(null);
 // flow, where the screen-level completion handler updates the DB and
 // calls refresh(), causing the root layout's routing effect to re-run
 // with onboarded: true and redirect into /(tabs) without a race.
+//
+// Errors during fetch are intentionally suppressed at the state level:
+// instead of transitioning to an `error` status (which would leave the
+// user staring at a non-routed loading overlay), refresh() retries
+// indefinitely with capped exponential backoff. Transient network
+// blips self-heal; persistent failure keeps the loading spinner up
+// rather than dumping the user into a broken state. A generation
+// counter cancels the retry loop when refresh() is called again or
+// when the user signs out, so superseded retries don't overwrite the
+// latest state.
 export function ProfileProvider({ children }: { children: ReactNode }) {
     const [state, setState] = useState<{
-        status: 'loading' | 'ready' | 'error';
+        status: 'loading' | 'ready';
         profile: Profile | null;
-        error: string | null;
     }>({
         status: 'loading',
         profile: null,
-        error: null,
     });
 
+    const generationRef = useRef(0);
+
     const refresh = useCallback(async () => {
-        try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const userId = session?.user.id;
-            if (!userId) {
-                setState({ status: 'ready', profile: null, error: null });
+        const gen = ++generationRef.current;
+        let attempt = 0;
+
+        // Loop until: (a) success, (b) we're superseded by a newer
+        // refresh() call, or (c) the user signs out (detected via the
+        // no-session branch). Stays in 'loading' state during the
+        // retry chain — the loading overlay in the root layout is a
+        // fine "we're still trying" indicator.
+        while (generationRef.current === gen) {
+            attempt += 1;
+            try {
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+                if (generationRef.current !== gen) return;
+
+                const userId = session?.user.id;
+                if (!userId) {
+                    setState({ status: 'ready', profile: null });
+                    return;
+                }
+
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('id, handle, display_name, avatar_url, onboarded')
+                    .eq('id', userId)
+                    .maybeSingle();
+                if (generationRef.current !== gen) return;
+                if (error) throw error;
+
+                if (!data) {
+                    // Trigger normally creates a profile row on signup;
+                    // missing row here is unusual but recoverable —
+                    // treat as not-onboarded so the user can complete
+                    // the flow.
+                    setState({ status: 'ready', profile: null });
+                    return;
+                }
+
+                setState({
+                    status: 'ready',
+                    profile: {
+                        id: data.id,
+                        handle: data.handle,
+                        displayName: data.display_name,
+                        avatarUrl: data.avatar_url,
+                        onboarded: data.onboarded,
+                    },
+                });
                 return;
+            } catch (err) {
+                console.warn(
+                    `useProfile: refresh attempt ${attempt} failed, retrying`,
+                    err,
+                );
+                const delayMs = Math.min(
+                    1500 * Math.pow(2, attempt - 1),
+                    30000,
+                );
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
             }
-            const { data, error } = await supabase
-                .from('profiles')
-                .select('id, handle, display_name, avatar_url, onboarded')
-                .eq('id', userId)
-                .maybeSingle();
-            if (error) throw error;
-            if (!data) {
-                // Trigger normally creates a profile row on signup;
-                // missing row here is unusual but recoverable — treat
-                // as not-onboarded so the user can complete the flow.
-                setState({ status: 'ready', profile: null, error: null });
-                return;
-            }
-            setState({
-                status: 'ready',
-                profile: {
-                    id: data.id,
-                    handle: data.handle,
-                    displayName: data.display_name,
-                    avatarUrl: data.avatar_url,
-                    onboarded: data.onboarded,
-                },
-                error: null,
-            });
-        } catch (err) {
-            console.error('useProfile: refresh failed', err);
-            setState({
-                status: 'error',
-                profile: null,
-                error: err instanceof Error ? err.message : 'Failed to load profile',
-            });
         }
     }, []);
 
@@ -99,7 +130,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
             if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
                 void refresh();
             } else if (event === 'SIGNED_OUT') {
-                setState({ status: 'ready', profile: null, error: null });
+                // Bump the generation so any in-flight retry bails.
+                generationRef.current += 1;
+                setState({ status: 'ready', profile: null });
             }
         });
 
@@ -114,7 +147,6 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
             value={{
                 status: state.status,
                 profile: state.profile,
-                error: state.error,
                 refresh,
             }}
         >

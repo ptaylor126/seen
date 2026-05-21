@@ -4,13 +4,15 @@ import { useState } from 'react';
 import {
     Alert,
     Keyboard,
+    KeyboardAvoidingView,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingDots } from '@/components/onboarding-dots';
 import {
@@ -32,6 +34,7 @@ export default function CurrentlyWatchingScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const { refresh: refreshProfile } = useProfile();
 
     const [added, setAdded] = useState<AddedItem | null>(null);
@@ -91,6 +94,11 @@ export default function CurrentlyWatchingScreen() {
     }
 
     return (
+        <KeyboardAvoidingView
+            style={{ flex: 1, backgroundColor: palette.bg }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
+        >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
@@ -173,6 +181,7 @@ export default function CurrentlyWatchingScreen() {
                 <OnboardingDots currentStep={6} totalSteps={6} />
             </View>
         </SafeAreaView>
+        </KeyboardAvoidingView>
     );
 }
 
