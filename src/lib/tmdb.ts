@@ -149,12 +149,13 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
     const headers = session?.access_token
         ? { Authorization: `Bearer ${session.access_token}` }
         : undefined;
-    // TEMP diagnostic for the onboarding-search 401 bug. Remove once the
-    // root cause is confirmed.
-    console.log('callProxy auth:', {
+    // TEMP diagnostic for the onboarding-search 401 bug. Remove once
+    // the root cause is confirmed. tokenStart helps tell apart the
+    // anon key vs a real user JWT (both start with "ey...").
+    console.log('[tmdb-proxy] auth state:', {
         hasSession: !!session,
         hasToken: !!session?.access_token,
-        path,
+        tokenStart: session?.access_token?.slice(0, 20),
     });
 
     const { data, error } = await supabase.functions.invoke<T>('tmdb-proxy', {

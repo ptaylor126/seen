@@ -199,6 +199,10 @@ const styles = StyleSheet.create({
     atPrefix: { fontWeight: '600' },
     input: { flex: 1, height: '100%' },
     footer: {
+        // marginTop:auto explicitly anchors the footer to the bottom
+        // of the flex column, so Continue + Skip sit just above the
+        // keyboard whenever it's open.
+        marginTop: 'auto',
         gap: spacing.sm,
         paddingBottom: spacing.md,
     },

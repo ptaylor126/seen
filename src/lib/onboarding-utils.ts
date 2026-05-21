@@ -118,21 +118,23 @@ export function validateHandle(handle: string): HandleValidationResult {
     return { valid: true };
 }
 
-// Shared "complete onboarding now" handler called by the Skip button
-// on steps 4-6 and the final Continue on step 6. Flips the profile
-// flag, refreshes the shared profile context so the root layout's
-// routing effect sees onboarded: true, then invokes onComplete which
-// each screen wires to a typed router.replace('/(tabs)'). The
-// explicit replace inside onComplete avoids a one-frame flash of
-// the onboarding screen while React schedules the layout effect.
+// Shared "complete onboarding now" handler — called only from the
+// final step (currently-watching) via Continue + Skip. Flips the
+// profile flag and refreshes the shared profile context; the root
+// layout's routing effect sees onboarded: true while we're still in
+// /(onboarding) and redirects to /(tabs) automatically.
 //
-// onComplete is a callback (not a router) so the helper can stay
-// outside Expo Router's typed-route generic surface.
+// We intentionally do NOT navigate explicitly here. Earlier versions
+// invoked an onComplete callback that called router.replace('/(tabs)')
+// alongside refreshProfile(), but that lost the race: the navigation
+// could fire before the profile state propagated, the layout's
+// effect would then run with stale onboarded=false + segments=(tabs),
+// and bounce the user back to /(onboarding)/welcome. Letting the
+// layout effect own forward navigation removes that race entirely.
 export async function finishOnboarding(args: {
-    onComplete: () => void;
     refreshProfile: () => Promise<void>;
 }): Promise<void> {
-    const { onComplete, refreshProfile } = args;
+    const { refreshProfile } = args;
     try {
         const {
             data: { session },
@@ -145,7 +147,6 @@ export async function finishOnboarding(args: {
             .eq('id', userId);
         if (error) throw error;
         await refreshProfile();
-        onComplete();
     } catch (err) {
         console.error('finishOnboarding failed:', err);
         Alert.alert(

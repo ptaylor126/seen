@@ -67,6 +67,12 @@ const styles = StyleSheet.create({
         // Slightly larger line spacing for legibility on the lead text.
     },
     footer: {
+        // marginTop:auto explicitly anchors the footer to the bottom
+        // of the flex column, independent of whether the body has
+        // flex:1 or its content is shorter than the available space.
+        // KeyboardAvoidingView's padding-bottom then puts the whole
+        // footer just above the keyboard when one appears.
+        marginTop: 'auto',
         gap: spacing.sm,
         paddingBottom: spacing.md,
     },

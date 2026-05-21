@@ -80,17 +80,11 @@ export default function CurrentlyWatchingScreen() {
 
     async function handleContinue() {
         if (!added || busy) return;
-        await finishOnboarding({
-            onComplete: () => router.replace('/(tabs)'),
-            refreshProfile,
-        });
+        await finishOnboarding({ refreshProfile });
     }
 
     async function handleSkip() {
-        await finishOnboarding({
-            onComplete: () => router.replace('/(tabs)'),
-            refreshProfile,
-        });
+        await finishOnboarding({ refreshProfile });
     }
 
     return (
@@ -208,6 +202,10 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     footer: {
+        // marginTop:auto explicitly anchors the footer to the bottom
+        // of the flex column, so Continue + Skip sit just above the
+        // keyboard whenever it's open.
+        marginTop: 'auto',
         gap: spacing.sm,
         paddingBottom: spacing.md,
     },

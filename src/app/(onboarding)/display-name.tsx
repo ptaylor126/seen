@@ -219,6 +219,10 @@ const styles = StyleSheet.create({
         padding: spacing.xs,
     },
     footer: {
+        // marginTop:auto explicitly anchors the footer to the bottom
+        // of the flex column, so Continue + Skip sit just above the
+        // keyboard whenever it's open.
+        marginTop: 'auto',
         gap: spacing.sm,
         paddingBottom: spacing.md,
         alignItems: 'stretch',

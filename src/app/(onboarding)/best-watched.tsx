@@ -20,8 +20,6 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
-import { useProfile } from '@/hooks/use-profile';
-import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
@@ -38,7 +36,6 @@ export default function BestWatchedScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { refresh: refreshProfile } = useProfile();
 
     const [picked, setPicked] = useState<PickedItem | null>(null);
     const [rating, setRating] = useState<number | null>(null);
@@ -114,11 +111,10 @@ export default function BestWatchedScreen() {
         router.push('/(onboarding)/currently-watching');
     }
 
-    async function handleSkip() {
-        await finishOnboarding({
-            onComplete: () => router.replace('/(tabs)'),
-            refreshProfile,
-        });
+    function handleSkip() {
+        // Advance to the next step, not finish onboarding. Only the
+        // final step (currently-watching) flips the onboarded flag.
+        router.push('/(onboarding)/currently-watching');
     }
 
     const canContinue = picked !== null && rating !== null && !busy;
@@ -285,6 +281,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     footer: {
+        // marginTop:auto explicitly anchors the footer to the bottom
+        // of the flex column, so Continue + Skip sit just above the
+        // keyboard whenever it's open.
+        marginTop: 'auto',
         gap: spacing.sm,
         paddingBottom: spacing.md,
     },
