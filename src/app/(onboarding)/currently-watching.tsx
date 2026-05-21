@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
     Alert,
     Keyboard,
@@ -41,7 +41,12 @@ export default function CurrentlyWatchingScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const keyboardOpen = useKeyboardOpen();
+    const scrollRef = useRef<ScrollView | null>(null);
     const { refresh: refreshProfile } = useProfile();
+
+    function handleResultsRendered() {
+        scrollRef.current?.scrollToEnd({ animated: true });
+    }
 
     const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
@@ -118,6 +123,7 @@ export default function CurrentlyWatchingScreen() {
                 </Pressable>
             </View>
             <ScrollView
+                ref={scrollRef}
                 style={styles.body}
                 contentContainerStyle={styles.bodyContent}
                 keyboardShouldPersistTaps="handled"
@@ -167,6 +173,7 @@ export default function CurrentlyWatchingScreen() {
                     <OnboardingSearch
                         placeholder="Search films and TV shows"
                         onPick={handlePick}
+                        onResultsRendered={handleResultsRendered}
                     />
                 )}
             </ScrollView>
@@ -227,7 +234,8 @@ const styles = StyleSheet.create({
     bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-        paddingBottom: spacing.lg,
+        // Generous bottom padding — see last-watched.tsx for rationale.
+        paddingBottom: spacing.xxl,
     },
     confirmation: {
         padding: spacing.lg,

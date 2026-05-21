@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
     Alert,
     Keyboard,
@@ -39,9 +39,17 @@ export default function LastWatchedScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const keyboardOpen = useKeyboardOpen();
+    const scrollRef = useRef<ScrollView | null>(null);
 
     const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
+
+    function handleResultsRendered() {
+        // Scroll the body to the end so a newly-rendered search result
+        // is fully visible, with the bodyContent's paddingBottom
+        // keeping it clear of the footer.
+        scrollRef.current?.scrollToEnd({ animated: true });
+    }
 
     async function handlePick(item: SearchableItem) {
         if (busy) return;
@@ -114,6 +122,7 @@ export default function LastWatchedScreen() {
                 </Pressable>
             </View>
             <ScrollView
+                ref={scrollRef}
                 style={styles.body}
                 contentContainerStyle={styles.bodyContent}
                 keyboardShouldPersistTaps="handled"
@@ -165,6 +174,7 @@ export default function LastWatchedScreen() {
                     <OnboardingSearch
                         placeholder="Search films and TV shows"
                         onPick={handlePick}
+                        onResultsRendered={handleResultsRendered}
                     />
                 )}
             </ScrollView>
@@ -225,7 +235,10 @@ const styles = StyleSheet.create({
     bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-        paddingBottom: spacing.lg,
+        // Generous bottom padding so the last result row in the list
+        // has visible breathing room above the Continue button rather
+        // than butting against it.
+        paddingBottom: spacing.xxl,
     },
     confirmation: {
         padding: spacing.lg,

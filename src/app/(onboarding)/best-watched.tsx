@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Star } from 'lucide-react-native';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
     Alert,
     Keyboard,
@@ -42,6 +42,11 @@ export default function BestWatchedScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const keyboardOpen = useKeyboardOpen();
+    const scrollRef = useRef<ScrollView | null>(null);
+
+    function handleResultsRendered() {
+        scrollRef.current?.scrollToEnd({ animated: true });
+    }
 
     const [picked, setPicked] = useState<PickedItem | null>(null);
     const [rating, setRating] = useState<number | null>(null);
@@ -150,6 +155,7 @@ export default function BestWatchedScreen() {
                 </Pressable>
             </View>
             <ScrollView
+                ref={scrollRef}
                 style={styles.body}
                 contentContainerStyle={styles.bodyContent}
                 keyboardShouldPersistTaps="handled"
@@ -226,6 +232,7 @@ export default function BestWatchedScreen() {
                     <OnboardingSearch
                         placeholder="Search films and TV shows"
                         onPick={handlePick}
+                        onResultsRendered={handleResultsRendered}
                     />
                 )}
             </ScrollView>
@@ -286,7 +293,8 @@ const styles = StyleSheet.create({
     bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-        paddingBottom: spacing.lg,
+        // Generous bottom padding — see last-watched.tsx for rationale.
+        paddingBottom: spacing.xxl,
     },
     pickedCard: {
         padding: spacing.lg,

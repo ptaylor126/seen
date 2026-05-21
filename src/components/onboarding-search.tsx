@@ -33,6 +33,11 @@ interface OnboardingSearchProps {
     // user already added them). Used in the watchlist step to prevent
     // duplicate picks. Pass an empty array to disable.
     pickedKeys?: readonly string[];
+    // Fires whenever the results list transitions to a non-empty
+    // state. The owning screen uses this to scroll its ScrollView so
+    // the newly-rendered result row is brought into view instead of
+    // hiding below the footer on shorter screens.
+    onResultsRendered?: () => void;
 }
 
 // Shared TMDB search input + results list used by the three add-an-item
@@ -49,6 +54,7 @@ export function OnboardingSearch({
     onPick,
     autoFocus = true,
     pickedKeys = [],
+    onResultsRendered,
 }: OnboardingSearchProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -57,6 +63,16 @@ export function OnboardingSearch({
     const [results, setResults] = useState<SearchableItem[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Fire onResultsRendered after a state update that produced a
+    // non-empty results list — lets the parent ScrollView scroll to
+    // the new content. Skipped for empty arrays (no results) and null
+    // (initial / cleared).
+    useEffect(() => {
+        if (results && results.length > 0) {
+            onResultsRendered?.();
+        }
+    }, [results, onResultsRendered]);
 
     useEffect(() => {
         const trimmed = query.trim();
