@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Star } from 'lucide-react-native';
 import { useState } from 'react';
@@ -22,12 +23,14 @@ import {
 } from '@/components/onboarding-search';
 import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
+import { imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface PickedItem {
     tmdbId: number;
     mediaType: 'movie' | 'tv';
     title: string;
+    posterPath: string;
 }
 
 const STAR_SIZE = 40;
@@ -68,7 +71,12 @@ export default function BestWatchedScreen() {
                 { onConflict: 'user_id,tmdb_id,media_type' },
             );
             if (error) throw error;
-            setPicked({ tmdbId: item.id, mediaType: item.media_type, title });
+            setPicked({
+                tmdbId: item.id,
+                mediaType: item.media_type,
+                title,
+                posterPath: item.poster_path,
+            });
             setRating(null);
         } catch (err) {
             console.error('best-watched add failed:', err);
@@ -157,6 +165,12 @@ export default function BestWatchedScreen() {
                         <Text style={[typography.caption, { color: palette.textMuted }]}>
                             Added
                         </Text>
+                        <Image
+                            source={{ uri: imageUrl(picked.posterPath, 'w185') }}
+                            style={styles.poster}
+                            contentFit="cover"
+                            transition={150}
+                        />
                         <Text
                             style={[typography.bodyEmphasis, { color: palette.text }]}
                             numberOfLines={2}
@@ -281,6 +295,11 @@ const styles = StyleSheet.create({
         gap: spacing.md,
         marginTop: spacing.md,
         alignItems: 'center',
+    },
+    poster: {
+        width: 100,
+        height: 150,
+        borderRadius: radius.sm,
     },
     starsRow: {
         flexDirection: 'row',

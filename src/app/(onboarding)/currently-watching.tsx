@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useState } from 'react';
@@ -23,12 +24,14 @@ import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
+import { imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface AddedItem {
     tmdbId: number;
     mediaType: 'movie' | 'tv';
     title: string;
+    posterPath: string;
 }
 
 export default function CurrentlyWatchingScreen() {
@@ -68,7 +71,12 @@ export default function CurrentlyWatchingScreen() {
                 { onConflict: 'user_id,tmdb_id,media_type' },
             );
             if (error) throw error;
-            setAdded({ tmdbId: item.id, mediaType: item.media_type, title });
+            setAdded({
+                tmdbId: item.id,
+                mediaType: item.media_type,
+                title,
+                posterPath: item.poster_path,
+            });
         } catch (err) {
             console.error('currently-watching add failed:', err);
             Alert.alert(
@@ -126,6 +134,12 @@ export default function CurrentlyWatchingScreen() {
                         <Text style={[typography.caption, { color: palette.textMuted }]}>
                             Added
                         </Text>
+                        <Image
+                            source={{ uri: imageUrl(added.posterPath, 'w185') }}
+                            style={styles.poster}
+                            contentFit="cover"
+                            transition={150}
+                        />
                         <Text
                             style={[typography.bodyEmphasis, { color: palette.text }]}
                             numberOfLines={2}
@@ -222,6 +236,11 @@ const styles = StyleSheet.create({
         gap: spacing.md,
         marginTop: spacing.md,
         alignItems: 'center',
+    },
+    poster: {
+        width: 100,
+        height: 150,
+        borderRadius: radius.sm,
     },
     footer: {
         // paddingBottom is set inline based on keyboard state — see

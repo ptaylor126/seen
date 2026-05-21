@@ -15,9 +15,21 @@
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { LogBox } from 'react-native';
 
 import type { Database } from './database.types';
 import { env } from './env';
+
+// supabase-js logs background refresh failures as console.error, which
+// RN's LogBox surfaces as a red dev toast. The cases we see here are
+// recoverable — supabase-js clears the bad session and emits SIGNED_OUT,
+// our root layout routes the user to /(auth)/sign-in. The visible
+// error is dev noise; ignore it so it doesn't shout over the actual UI.
+LogBox.ignoreLogs([
+    'Invalid Refresh Token',
+    'Refresh Token Not Found',
+    'AuthApiError',
+]);
 
 const supabase = createClient<Database>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
     auth: {

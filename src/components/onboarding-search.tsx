@@ -226,6 +226,12 @@ const styles = StyleSheet.create({
     },
     list: {
         flex: 1,
+        // Without minHeight:0 here, a single result row taller than
+        // the searchWrap's allotted height (common when the keyboard
+        // is up and the heading wraps) overflows the FlatList and
+        // pushes the Continue button up into the result row. Matches
+        // the minHeight:0 on the container.
+        minHeight: 0,
     },
     input: {
         height: 44,
