@@ -8,6 +8,7 @@ import {
     KeyboardAvoidingView,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     useColorScheme,
@@ -20,6 +21,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
+import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -36,6 +38,7 @@ export default function LastWatchedScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const keyboardOpen = useKeyboardOpen();
 
     const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
@@ -95,11 +98,10 @@ export default function LastWatchedScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top', 'bottom']}
+            edges={['top']}
         >
             <OnboardingProgress currentStep={4} totalSteps={6} />
             <View style={styles.header}>
@@ -111,7 +113,13 @@ export default function LastWatchedScreen() {
                     <ChevronLeft color={palette.accent} size={28} />
                 </Pressable>
             </View>
-            <View style={styles.body}>
+            <ScrollView
+                style={styles.body}
+                contentContainerStyle={styles.bodyContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+            >
                 <Text style={[typography.display, { color: palette.text }]}>
                     What did you last watch?
                 </Text>
@@ -154,15 +162,22 @@ export default function LastWatchedScreen() {
                         </Pressable>
                     </View>
                 ) : (
-                    <View style={styles.searchWrap}>
-                        <OnboardingSearch
-                            placeholder="Search films and TV shows"
-                            onPick={handlePick}
-                        />
-                    </View>
+                    <OnboardingSearch
+                        placeholder="Search films and TV shows"
+                        onPick={handlePick}
+                    />
                 )}
-            </View>
-            <View style={styles.footer}>
+            </ScrollView>
+            <View
+                style={[
+                    styles.footer,
+                    {
+                        paddingBottom: keyboardOpen
+                            ? spacing.md
+                            : insets.bottom + spacing.md,
+                    },
+                ]}
+            >
                 <Pressable
                     onPress={handleContinue}
                     disabled={!added || busy}
@@ -206,17 +221,11 @@ const styles = StyleSheet.create({
     header: { paddingVertical: spacing.sm },
     body: {
         flex: 1,
-        // minHeight:0 propagates the shrink-when-pushed behaviour from
-        // OnboardingSearch up through this column — without it, the
-        // body grows to its content height and overlaps the footer.
-        minHeight: 0,
+    },
+    bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-    },
-    searchWrap: {
-        flex: 1,
-        minHeight: 0,
-        marginTop: spacing.md,
+        paddingBottom: spacing.lg,
     },
     confirmation: {
         padding: spacing.lg,
@@ -231,8 +240,11 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     footer: {
+        // paddingBottom is set inline: spacing.md when keyboard is open
+        // (footer hugs the keyboard top); insets.bottom + spacing.md
+        // when closed (footer clears the home indicator). The change
+        // animates via LayoutAnimation in useKeyboardOpen.
         gap: spacing.sm,
-        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,

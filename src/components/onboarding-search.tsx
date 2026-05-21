@@ -1,8 +1,7 @@
 import { Image } from 'expo-image';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
-    FlatList,
     Keyboard,
     Pressable,
     StyleSheet,
@@ -37,10 +36,14 @@ interface OnboardingSearchProps {
 }
 
 // Shared TMDB search input + results list used by the three add-an-item
-// onboarding steps (last-watched, best-watched, watchlist). Owns the
-// debounce + stale-guard internally; the owning screen handles what to
-// do with each picked item via onPick. Auto-clears the query on pick
-// so the user can search for the next title (relevant on watchlist).
+// onboarding steps (last-watched, best-watched, currently-watching).
+// Owns the debounce + stale-guard internally; the owning screen handles
+// what to do with each picked item via onPick. Results render as a
+// plain flex column (NOT a FlatList) because each owning screen wraps
+// its body in a ScrollView, and nesting a vertical FlatList inside a
+// ScrollView produces broken scroll behaviour. At onboarding scale
+// (max ~20 search results), mapping into Views is fine — no
+// virtualization needed.
 export function OnboardingSearch({
     placeholder,
     onPick,
@@ -101,7 +104,7 @@ export function OnboardingSearch({
 
     const pickedSet = new Set(pickedKeys);
 
-    function renderRow({ item }: { item: SearchableItem }) {
+    function renderRow(item: SearchableItem) {
         const titleText = item.media_type === 'movie' ? item.title : item.name;
         const dateField =
             item.media_type === 'movie' ? item.release_date : item.first_air_date;
@@ -112,6 +115,7 @@ export function OnboardingSearch({
         const alreadyPicked = pickedSet.has(key);
         return (
             <Pressable
+                key={key}
                 onPress={() => !alreadyPicked && handlePick(item)}
                 disabled={alreadyPicked}
                 style={({ pressed }) => [
@@ -187,28 +191,21 @@ export function OnboardingSearch({
                     </Text>
                 </View>
             ) : (
-                <FlatList
-                    data={results}
-                    keyExtractor={(item) => `${item.media_type}-${item.id}`}
-                    renderItem={renderRow}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    // flex + minHeight:0 lets the list shrink inside a
-                    // flex column when the keyboard pushes things up —
-                    // without minHeight:0, results overflow past the
-                    // footer because the default minHeight is `auto`
-                    // (= content height) in RN.
-                    style={styles.list}
-                    contentContainerStyle={styles.listContent}
-                    ItemSeparatorComponent={() => (
-                        <View
-                            style={[
-                                styles.separator,
-                                { backgroundColor: palette.border },
-                            ]}
-                        />
-                    )}
-                />
+                <View style={styles.resultList}>
+                    {results.map((item, i) => (
+                        <Fragment key={`${item.media_type}-${item.id}`}>
+                            {i > 0 && (
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            )}
+                            {renderRow(item)}
+                        </Fragment>
+                    ))}
+                </View>
             )}
         </View>
     );
@@ -216,22 +213,9 @@ export function OnboardingSearch({
 
 const styles = StyleSheet.create({
     container: {
-        flex: 1,
-        // RN flex children default to minHeight: 'auto' (= content
-        // height), meaning a flex:1 column won't actually shrink below
-        // its content's natural height. Setting minHeight: 0 lets the
-        // results list bound to the parent's allotted space instead
-        // of overflowing into the footer.
-        minHeight: 0,
-    },
-    list: {
-        flex: 1,
-        // Without minHeight:0 here, a single result row taller than
-        // the searchWrap's allotted height (common when the keyboard
-        // is up and the heading wraps) overflows the FlatList and
-        // pushes the Continue button up into the result row. Matches
-        // the minHeight:0 on the container.
-        minHeight: 0,
+        // No flex:1 — the owning screen wraps the body in a ScrollView,
+        // so the search lays out at its natural content height and the
+        // ScrollView handles overflow.
     },
     input: {
         height: 44,
@@ -246,7 +230,7 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.xl,
         paddingHorizontal: spacing.xl,
     },
-    listContent: {
+    resultList: {
         paddingBottom: spacing.lg,
     },
     row: {

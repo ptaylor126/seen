@@ -8,6 +8,7 @@ import {
     KeyboardAvoidingView,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     useColorScheme,
@@ -20,6 +21,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
+import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
@@ -38,6 +40,7 @@ export default function CurrentlyWatchingScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const keyboardOpen = useKeyboardOpen();
     const { refresh: refreshProfile } = useProfile();
 
     const [added, setAdded] = useState<AddedItem | null>(null);
@@ -99,11 +102,10 @@ export default function CurrentlyWatchingScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top', 'bottom']}
+            edges={['top']}
         >
             <OnboardingProgress currentStep={6} totalSteps={6} />
             <View style={styles.header}>
@@ -115,7 +117,13 @@ export default function CurrentlyWatchingScreen() {
                     <ChevronLeft color={palette.accent} size={28} />
                 </Pressable>
             </View>
-            <View style={styles.body}>
+            <ScrollView
+                style={styles.body}
+                contentContainerStyle={styles.bodyContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+            >
                 <Text style={[typography.display, { color: palette.text }]}>
                     What are you watching right now?
                 </Text>
@@ -156,15 +164,22 @@ export default function CurrentlyWatchingScreen() {
                         </Pressable>
                     </View>
                 ) : (
-                    <View style={styles.searchWrap}>
-                        <OnboardingSearch
-                            placeholder="Search films and TV shows"
-                            onPick={handlePick}
-                        />
-                    </View>
+                    <OnboardingSearch
+                        placeholder="Search films and TV shows"
+                        onPick={handlePick}
+                    />
                 )}
-            </View>
-            <View style={styles.footer}>
+            </ScrollView>
+            <View
+                style={[
+                    styles.footer,
+                    {
+                        paddingBottom: keyboardOpen
+                            ? spacing.md
+                            : insets.bottom + spacing.md,
+                    },
+                ]}
+            >
                 <Pressable
                     onPress={handleContinue}
                     disabled={!added || busy}
@@ -208,17 +223,11 @@ const styles = StyleSheet.create({
     header: { paddingVertical: spacing.sm },
     body: {
         flex: 1,
-        // minHeight:0 — see last-watched.tsx for the rationale; lets
-        // the OnboardingSearch's FlatList shrink instead of overflowing
-        // the footer when the keyboard pushes things up.
-        minHeight: 0,
+    },
+    bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-    },
-    searchWrap: {
-        flex: 1,
-        minHeight: 0,
-        marginTop: spacing.md,
+        paddingBottom: spacing.lg,
     },
     confirmation: {
         padding: spacing.lg,
@@ -233,8 +242,10 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     footer: {
+        // paddingBottom is set inline — see last-watched.tsx for
+        // rationale (LayoutAnimation drives the open/closed transition
+        // in sync with the keyboard slide).
         gap: spacing.sm,
-        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,

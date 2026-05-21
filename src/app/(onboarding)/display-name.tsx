@@ -16,6 +16,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
+import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import { containsProfanity, randomDisplayName } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -27,6 +28,7 @@ export default function DisplayNameScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const keyboardOpen = useKeyboardOpen();
 
     // Seed with a random name on first render so the dice button has
     // somewhere to roll from; the user can clear and type their own.
@@ -88,11 +90,10 @@ export default function DisplayNameScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top', 'bottom']}
+            edges={['top']}
         >
             <OnboardingProgress currentStep={3} totalSteps={6} />
             <View style={styles.header}>
@@ -154,7 +155,16 @@ export default function DisplayNameScreen() {
                     </Text>
                 ) : null}
             </View>
-            <View style={styles.footer}>
+            <View
+                style={[
+                    styles.footer,
+                    {
+                        paddingBottom: keyboardOpen
+                            ? spacing.md
+                            : insets.bottom + spacing.md,
+                    },
+                ]}
+            >
                 <Pressable
                     onPress={handleContinue}
                     disabled={!canSubmit}
@@ -221,8 +231,10 @@ const styles = StyleSheet.create({
         padding: spacing.xs,
     },
     footer: {
+        // paddingBottom set inline — see last-watched.tsx for the
+        // pattern (LayoutAnimation in useKeyboardOpen animates the
+        // value change in sync with the keyboard slide).
         gap: spacing.sm,
-        paddingBottom: spacing.md,
         alignItems: 'stretch',
     },
     primaryButton: {
