@@ -161,6 +161,7 @@ export function OnboardingSearch({
                 autoFocus={autoFocus}
                 returnKeyType="search"
                 onSubmitEditing={() => Keyboard.dismiss()}
+                keyboardAppearance={scheme === 'dark' ? 'dark' : 'light'}
                 style={[
                     styles.input,
                     typography.body,

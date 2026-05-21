@@ -60,10 +60,20 @@ Deno.serve(async (req: Request) => {
         }
 
         // ---- 1. Authenticate the caller via their Supabase JWT.
+        //
+        // We pass the JWT to auth.getUser(jwt) EXPLICITLY rather than
+        // relying on global.headers + auth.getUser(). The latter looks
+        // fine on paper but in practice the GoTrue client uses its
+        // OWN session (empty in this fresh server-side client), not
+        // the global Authorization header — so it returns no user
+        // even when a valid user JWT is present in the request.
+        // Passing the JWT directly to getUser() validates it against
+        // the auth server unambiguously.
         const authHeader = req.headers.get('Authorization');
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return jsonResponse({ error: 'unauthorized' }, 401);
         }
+        const jwt = authHeader.slice('Bearer '.length);
 
         const supabaseUrl = Deno.env.get('SUPABASE_URL');
         const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -71,15 +81,17 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ error: 'misconfigured' }, 500);
         }
 
-        const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-            global: { headers: { Authorization: authHeader } },
-        });
+        const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
 
         const {
             data: { user },
             error: authError,
-        } = await supabaseClient.auth.getUser();
+        } = await supabaseClient.auth.getUser(jwt);
         if (authError || !user) {
+            console.warn('tmdb-proxy auth.getUser rejected jwt:', {
+                error: authError?.message,
+                jwtStart: jwt.slice(0, 20),
+            });
             return jsonResponse({ error: 'unauthorized' }, 401);
         }
 

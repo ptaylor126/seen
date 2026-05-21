@@ -19,6 +19,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
+import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
@@ -33,6 +34,7 @@ export default function LastWatchedScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const keyboardOpen = useKeyboardOpen();
 
     const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
@@ -87,11 +89,10 @@ export default function LastWatchedScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top', 'bottom']}
+            edges={['top']}
         >
             <OnboardingProgress currentStep={4} totalSteps={6} />
             <View style={styles.header}>
@@ -135,7 +136,16 @@ export default function LastWatchedScreen() {
                     </View>
                 ) : null}
             </View>
-            <View style={styles.footer}>
+            <View
+                style={[
+                    styles.footer,
+                    {
+                        paddingBottom: keyboardOpen
+                            ? spacing.md
+                            : insets.bottom + spacing.md,
+                    },
+                ]}
+            >
                 <Pressable
                     onPress={handleContinue}
                     disabled={!added || busy}
@@ -197,12 +207,9 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     footer: {
-        // marginTop:auto explicitly anchors the footer to the bottom
-        // of the flex column, so Continue + Skip sit just above the
-        // keyboard whenever it's open.
-        marginTop: 'auto',
+        // paddingBottom is set inline based on keyboard state — see
+        // handle.tsx for the rationale.
         gap: spacing.sm,
-        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,
