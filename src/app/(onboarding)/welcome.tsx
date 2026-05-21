@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { OnboardingDots } from '@/components/onboarding-dots';
+import { OnboardingProgress } from '@/components/onboarding-progress';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 export default function WelcomeScreen() {
@@ -15,6 +15,7 @@ export default function WelcomeScreen() {
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
         >
+            <OnboardingProgress currentStep={1} totalSteps={6} />
             <View style={styles.body}>
                 <Text style={[typography.display, { color: palette.text }]}>
                     Welcome to Seen
@@ -50,7 +51,6 @@ export default function WelcomeScreen() {
                         Get started
                     </Text>
                 </Pressable>
-                <OnboardingDots currentStep={1} totalSteps={6} />
             </View>
         </SafeAreaView>
     );

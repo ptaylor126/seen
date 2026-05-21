@@ -149,6 +149,13 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
     const headers = session?.access_token
         ? { Authorization: `Bearer ${session.access_token}` }
         : undefined;
+    // TEMP diagnostic for the onboarding-search 401 bug. Remove once the
+    // root cause is confirmed.
+    console.log('callProxy auth:', {
+        hasSession: !!session,
+        hasToken: !!session?.access_token,
+        path,
+    });
 
     const { data, error } = await supabase.functions.invoke<T>('tmdb-proxy', {
         body: { path, ...params },

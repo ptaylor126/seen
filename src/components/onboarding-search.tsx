@@ -191,6 +191,12 @@ export function OnboardingSearch({
                     renderItem={renderRow}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
+                    // flex + minHeight:0 lets the list shrink inside a
+                    // flex column when the keyboard pushes things up —
+                    // without minHeight:0, results overflow past the
+                    // footer because the default minHeight is `auto`
+                    // (= content height) in RN.
+                    style={styles.list}
                     contentContainerStyle={styles.listContent}
                     ItemSeparatorComponent={() => (
                         <View
@@ -208,6 +214,15 @@ export function OnboardingSearch({
 
 const styles = StyleSheet.create({
     container: {
+        flex: 1,
+        // RN flex children default to minHeight: 'auto' (= content
+        // height), meaning a flex:1 column won't actually shrink below
+        // its content's natural height. Setting minHeight: 0 lets the
+        // results list bound to the parent's allotted space instead
+        // of overflowing into the footer.
+        minHeight: 0,
+    },
+    list: {
         flex: 1,
     },
     input: {

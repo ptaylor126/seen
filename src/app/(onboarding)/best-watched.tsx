@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { OnboardingDots } from '@/components/onboarding-dots';
+import { OnboardingProgress } from '@/components/onboarding-progress';
 import {
     OnboardingSearch,
     type SearchableItem,
@@ -133,6 +133,7 @@ export default function BestWatchedScreen() {
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
         >
+            <OnboardingProgress currentStep={5} totalSteps={6} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -242,7 +243,6 @@ export default function BestWatchedScreen() {
                         Skip
                     </Text>
                 </Pressable>
-                <OnboardingDots currentStep={5} totalSteps={6} />
             </View>
         </SafeAreaView>
         </KeyboardAvoidingView>
@@ -254,11 +254,16 @@ const styles = StyleSheet.create({
     header: { paddingVertical: spacing.sm },
     body: {
         flex: 1,
+        // minHeight:0 — see last-watched.tsx for the rationale; lets
+        // the OnboardingSearch's FlatList shrink instead of overflowing
+        // the footer when the keyboard pushes things up.
+        minHeight: 0,
         gap: spacing.md,
         paddingTop: spacing.lg,
     },
     searchWrap: {
         flex: 1,
+        minHeight: 0,
         marginTop: spacing.md,
     },
     pickedCard: {

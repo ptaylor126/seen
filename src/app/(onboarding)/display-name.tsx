@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { OnboardingDots } from '@/components/onboarding-dots';
+import { OnboardingProgress } from '@/components/onboarding-progress';
 import { containsProfanity, randomDisplayName } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -94,6 +94,7 @@ export default function DisplayNameScreen() {
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
         >
+            <OnboardingProgress currentStep={3} totalSteps={6} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -189,7 +190,6 @@ export default function DisplayNameScreen() {
                         Skip
                     </Text>
                 </Pressable>
-                <OnboardingDots currentStep={3} totalSteps={6} />
             </View>
         </SafeAreaView>
         </KeyboardAvoidingView>

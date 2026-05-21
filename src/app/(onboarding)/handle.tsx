@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { OnboardingDots } from '@/components/onboarding-dots';
+import { OnboardingProgress } from '@/components/onboarding-progress';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -87,6 +87,7 @@ export default function HandleScreen() {
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
         >
+            <OnboardingProgress currentStep={2} totalSteps={6} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -169,7 +170,6 @@ export default function HandleScreen() {
                         </Text>
                     )}
                 </Pressable>
-                <OnboardingDots currentStep={2} totalSteps={6} />
             </View>
         </SafeAreaView>
         </KeyboardAvoidingView>
