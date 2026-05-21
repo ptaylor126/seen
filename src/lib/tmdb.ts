@@ -178,6 +178,17 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
                 /* response body already consumed or unreadable */
             }
         }
+        // 401 from the proxy means the JWT we just sent was rejected
+        // by auth.getUser — most commonly because the user it refers
+        // to has been deleted (server-side, by an admin or the
+        // delete_account flow). Sign out so the root layout's routing
+        // effect picks up the now-empty session and routes the user
+        // back to /(auth)/sign-in. Re-signing in with Apple mints a
+        // fresh session against the current (live) user.
+        if (status === 401) {
+            console.warn('[tmdb-proxy] 401 — signing out stale session');
+            await supabase.auth.signOut();
+        }
         const prefix = status ? `tmdb-proxy ${status}` : 'tmdb-proxy';
         throw new Error(`${prefix}: ${detail || error.message}`);
     }
