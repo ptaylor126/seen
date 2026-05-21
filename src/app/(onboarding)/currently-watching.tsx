@@ -116,12 +116,6 @@ export default function CurrentlyWatchingScreen() {
                     Anything you&apos;re in the middle of? Add it —
                     we&apos;ll keep track.
                 </Text>
-                <View style={styles.searchWrap}>
-                    <OnboardingSearch
-                        placeholder="Search films and TV shows"
-                        onPick={handlePick}
-                    />
-                </View>
                 {added ? (
                     <View
                         style={[
@@ -130,7 +124,7 @@ export default function CurrentlyWatchingScreen() {
                         ]}
                     >
                         <Text style={[typography.caption, { color: palette.textMuted }]}>
-                            Added to currently watching
+                            Added
                         </Text>
                         <Text
                             style={[typography.bodyEmphasis, { color: palette.text }]}
@@ -138,8 +132,24 @@ export default function CurrentlyWatchingScreen() {
                         >
                             {added.title}
                         </Text>
+                        <Pressable
+                            onPress={() => setAdded(null)}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                        >
+                            <Text style={[typography.caption, { color: palette.accent }]}>
+                                Pick something else
+                            </Text>
+                        </Pressable>
                     </View>
-                ) : null}
+                ) : (
+                    <View style={styles.searchWrap}>
+                        <OnboardingSearch
+                            placeholder="Search films and TV shows"
+                            onPick={handlePick}
+                        />
+                    </View>
+                )}
             </View>
             <View
                 style={[
@@ -207,9 +217,11 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
     },
     confirmation: {
-        padding: spacing.md,
-        borderRadius: radius.sm,
-        gap: spacing.xs,
+        padding: spacing.lg,
+        borderRadius: radius.md,
+        gap: spacing.md,
+        marginTop: spacing.md,
+        alignItems: 'center',
     },
     footer: {
         // paddingBottom is set inline based on keyboard state — see

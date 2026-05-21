@@ -154,6 +154,9 @@ export default function BestWatchedScreen() {
                             { backgroundColor: palette.surfaceAlt },
                         ]}
                     >
+                        <Text style={[typography.caption, { color: palette.textMuted }]}>
+                            Added
+                        </Text>
                         <Text
                             style={[typography.bodyEmphasis, { color: palette.text }]}
                             numberOfLines={2}

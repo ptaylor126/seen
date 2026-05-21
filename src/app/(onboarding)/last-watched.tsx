@@ -111,12 +111,6 @@ export default function LastWatchedScreen() {
                 <Text style={[typography.body, { color: palette.textMuted }]}>
                     Just one thing to get started. Search and tap to add it.
                 </Text>
-                <View style={styles.searchWrap}>
-                    <OnboardingSearch
-                        placeholder="Search films and TV shows"
-                        onPick={handlePick}
-                    />
-                </View>
                 {added ? (
                     <View
                         style={[
@@ -133,8 +127,24 @@ export default function LastWatchedScreen() {
                         >
                             {added.title}
                         </Text>
+                        <Pressable
+                            onPress={() => setAdded(null)}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                        >
+                            <Text style={[typography.caption, { color: palette.accent }]}>
+                                Pick something else
+                            </Text>
+                        </Pressable>
                     </View>
-                ) : null}
+                ) : (
+                    <View style={styles.searchWrap}>
+                        <OnboardingSearch
+                            placeholder="Search films and TV shows"
+                            onPick={handlePick}
+                        />
+                    </View>
+                )}
             </View>
             <View
                 style={[
@@ -202,9 +212,11 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
     },
     confirmation: {
-        padding: spacing.md,
-        borderRadius: radius.sm,
-        gap: spacing.xs,
+        padding: spacing.lg,
+        borderRadius: radius.md,
+        gap: spacing.md,
+        marginTop: spacing.md,
+        alignItems: 'center',
     },
     footer: {
         // paddingBottom is set inline based on keyboard state — see
