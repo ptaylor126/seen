@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -9,12 +9,11 @@ export default function WelcomeScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
-    const insets = useSafeAreaInsets();
 
     return (
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
+            edges={['top', 'bottom']}
         >
             <OnboardingProgress currentStep={1} totalSteps={6} />
             <View style={styles.body}>
@@ -32,12 +31,7 @@ export default function WelcomeScreen() {
                     Let&apos;s get you set up.
                 </Text>
             </View>
-            <View
-                style={[
-                    styles.footer,
-                    { paddingBottom: insets.bottom + spacing.md },
-                ]}
-            >
+            <View style={styles.footer}>
                 <Pressable
                     onPress={() => router.push('/(onboarding)/handle')}
                     style={({ pressed }) => [
@@ -73,10 +67,8 @@ const styles = StyleSheet.create({
         // Slightly larger line spacing for legibility on the lead text.
     },
     footer: {
-        // paddingBottom is set inline (insets.bottom + spacing.md) so
-        // the button clears the home indicator. No keyboard on this
-        // screen, so no dynamic state needed.
         gap: spacing.sm,
+        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,

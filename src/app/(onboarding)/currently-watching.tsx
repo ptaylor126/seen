@@ -20,7 +20,6 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
-import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
@@ -39,7 +38,6 @@ export default function CurrentlyWatchingScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const keyboardOpen = useKeyboardOpen();
     const { refresh: refreshProfile } = useProfile();
 
     const [added, setAdded] = useState<AddedItem | null>(null);
@@ -101,10 +99,11 @@ export default function CurrentlyWatchingScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
+            edges={['top', 'bottom']}
         >
             <OnboardingProgress currentStep={6} totalSteps={6} />
             <View style={styles.header}>
@@ -165,16 +164,7 @@ export default function CurrentlyWatchingScreen() {
                     </View>
                 )}
             </View>
-            <View
-                style={[
-                    styles.footer,
-                    {
-                        paddingBottom: keyboardOpen
-                            ? spacing.md
-                            : insets.bottom + spacing.md,
-                    },
-                ]}
-            >
+            <View style={styles.footer}>
                 <Pressable
                     onPress={handleContinue}
                     disabled={!added || busy}
@@ -243,9 +233,8 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     footer: {
-        // paddingBottom is set inline based on keyboard state — see
-        // handle.tsx for the rationale.
         gap: spacing.sm,
+        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,

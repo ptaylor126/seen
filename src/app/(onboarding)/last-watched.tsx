@@ -20,7 +20,6 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
-import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -37,7 +36,6 @@ export default function LastWatchedScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const keyboardOpen = useKeyboardOpen();
 
     const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
@@ -97,10 +95,11 @@ export default function LastWatchedScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
+            edges={['top', 'bottom']}
         >
             <OnboardingProgress currentStep={4} totalSteps={6} />
             <View style={styles.header}>
@@ -163,16 +162,7 @@ export default function LastWatchedScreen() {
                     </View>
                 )}
             </View>
-            <View
-                style={[
-                    styles.footer,
-                    {
-                        paddingBottom: keyboardOpen
-                            ? spacing.md
-                            : insets.bottom + spacing.md,
-                    },
-                ]}
-            >
+            <View style={styles.footer}>
                 <Pressable
                     onPress={handleContinue}
                     disabled={!added || busy}
@@ -241,9 +231,8 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     footer: {
-        // paddingBottom is set inline based on keyboard state — see
-        // handle.tsx for the rationale.
         gap: spacing.sm,
+        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,

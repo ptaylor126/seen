@@ -16,7 +16,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -26,7 +25,6 @@ export default function HandleScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const keyboardOpen = useKeyboardOpen();
 
     const [handle, setHandle] = useState('');
     const [busy, setBusy] = useState(false);
@@ -83,10 +81,11 @@ export default function HandleScreen() {
         <KeyboardAvoidingView
             style={{ flex: 1, backgroundColor: palette.bg }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
         >
         <SafeAreaView
             style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
+            edges={['top', 'bottom']}
         >
             <OnboardingProgress currentStep={2} totalSteps={6} />
             <View style={styles.header}>
@@ -151,16 +150,7 @@ export default function HandleScreen() {
                     </Text>
                 ) : null}
             </View>
-            <View
-                style={[
-                    styles.footer,
-                    {
-                        paddingBottom: keyboardOpen
-                            ? spacing.md
-                            : insets.bottom + spacing.md,
-                    },
-                ]}
-            >
+            <View style={styles.footer}>
                 <Pressable
                     onPress={handleContinue}
                     disabled={!canSubmit}
@@ -214,11 +204,8 @@ const styles = StyleSheet.create({
     atPrefix: { fontWeight: '600' },
     input: { flex: 1, height: '100%' },
     footer: {
-        // paddingBottom is set inline based on keyboard state — when
-        // open it's just spacing.md (so the button hugs the keyboard
-        // top); when closed we add the safe-area bottom inset so the
-        // button clears the home indicator.
         gap: spacing.sm,
+        paddingBottom: spacing.md,
     },
     primaryButton: {
         paddingVertical: spacing.md,
