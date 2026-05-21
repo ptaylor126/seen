@@ -137,7 +137,11 @@ export default function HandleScreen() {
                         editable={!busy}
                         returnKeyType="next"
                         onSubmitEditing={handleContinue}
-                        keyboardAppearance={scheme === 'dark' ? 'dark' : 'light'}
+                        // Hardcoded so the keyboard never flashes dark
+                        // during the welcome → handle transition, even
+                        // if useColorScheme() momentarily returns 'dark'
+                        // while iOS finishes setting up the new view.
+                        keyboardAppearance="light"
                         style={[styles.input, typography.body, { color: palette.text }]}
                     />
                 </View>

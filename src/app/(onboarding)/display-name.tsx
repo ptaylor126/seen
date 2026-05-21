@@ -133,7 +133,8 @@ export default function DisplayNameScreen() {
                         editable={!busy}
                         returnKeyType="done"
                         onSubmitEditing={handleContinue}
-                        keyboardAppearance={scheme === 'dark' ? 'dark' : 'light'}
+                        // Hardcoded — see handle.tsx for rationale.
+                        keyboardAppearance="light"
                         style={[styles.input, typography.body, { color: palette.text }]}
                     />
                     <Pressable
