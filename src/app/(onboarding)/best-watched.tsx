@@ -150,7 +150,7 @@ export default function BestWatchedScreen() {
             </View>
             <View style={styles.body}>
                 <Text style={[typography.display, { color: palette.text }]}>
-                    What&apos;s the best thing you&apos;ve watched recently?
+                    Watched anything good lately?
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
                     Friends will see your favourites.
