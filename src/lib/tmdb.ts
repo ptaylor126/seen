@@ -149,6 +149,15 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
     const headers = session?.access_token
         ? { Authorization: `Bearer ${session.access_token}` }
         : undefined;
+    // TEMP diagnostic for the persistent 401 — correlate this client
+    // log with the Edge Function logs in the Supabase dashboard.
+    console.log('[tmdb-proxy] callProxy:', {
+        path,
+        hasSession: !!session,
+        hasToken: !!session?.access_token,
+        tokenStart: session?.access_token?.slice(0, 30),
+        expiresAt: session?.expires_at,
+    });
 
     const { data, error } = await supabase.functions.invoke<T>('tmdb-proxy', {
         body: { path, ...params },

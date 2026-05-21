@@ -117,7 +117,10 @@ export default function LastWatchedScreen() {
                     What did you last watch?
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Just one thing to get started. Search and tap to add it.
+                    {/* \u00a0 (NBSP) joins "add" with "it." so
+                        the period doesn't orphan on a narrow line. */}
+                    Just one thing to get started. Search and tap
+                    to add{'\u00a0'}it.
                 </Text>
                 {added ? (
                     <View
