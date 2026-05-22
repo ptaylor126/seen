@@ -40,15 +40,21 @@ export default function LastWatchedScreen() {
     const insets = useSafeAreaInsets();
     const keyboardOpen = useKeyboardOpen();
     const scrollRef = useRef<ScrollView | null>(null);
+    // y-offset of the OnboardingSearch container inside the ScrollView's
+    // contentContainer. Captured once on layout, then used to scroll the
+    // input + first result to the top of the visible area when results
+    // appear (rather than scrolling to the bottom of the list).
+    const searchYRef = useRef(0);
 
     const [added, setAdded] = useState<AddedItem | null>(null);
     const [busy, setBusy] = useState(false);
 
+    function handleSearchLayout(y: number) {
+        searchYRef.current = y;
+    }
+
     function handleResultsRendered() {
-        // Scroll the body to the end so a newly-rendered search result
-        // is fully visible, with the bodyContent's paddingBottom
-        // keeping it clear of the footer.
-        scrollRef.current?.scrollToEnd({ animated: true });
+        scrollRef.current?.scrollTo({ y: searchYRef.current, animated: true });
     }
 
     async function handlePick(item: SearchableItem) {
@@ -175,6 +181,7 @@ export default function LastWatchedScreen() {
                         placeholder="Search films and TV shows"
                         onPick={handlePick}
                         onResultsRendered={handleResultsRendered}
+                        onContainerLayout={handleSearchLayout}
                     />
                 )}
             </ScrollView>

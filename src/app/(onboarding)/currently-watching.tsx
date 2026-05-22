@@ -42,10 +42,16 @@ export default function CurrentlyWatchingScreen() {
     const insets = useSafeAreaInsets();
     const keyboardOpen = useKeyboardOpen();
     const scrollRef = useRef<ScrollView | null>(null);
+    // y-offset of the OnboardingSearch container — see last-watched.tsx.
+    const searchYRef = useRef(0);
     const { refresh: refreshProfile } = useProfile();
 
+    function handleSearchLayout(y: number) {
+        searchYRef.current = y;
+    }
+
     function handleResultsRendered() {
-        scrollRef.current?.scrollToEnd({ animated: true });
+        scrollRef.current?.scrollTo({ y: searchYRef.current, animated: true });
     }
 
     const [added, setAdded] = useState<AddedItem | null>(null);
@@ -67,12 +73,20 @@ export default function CurrentlyWatchingScreen() {
             // unique constraint — last pick wins, matching the visible
             // confirmation. The user can re-pick freely without leaving
             // a trail of half-committed rows.
+            //
+            // rating + watched_at are explicitly nulled: if the same show
+            // was added in a prior onboarding step as 'watched' with a
+            // rating, the items_rating_only_when_watched_check constraint
+            // would fail on the status='watching' transition unless we
+            // clear them here.
             const { error } = await supabase.from('items').upsert(
                 {
                     user_id: userId,
                     tmdb_id: item.id,
                     media_type: item.media_type,
                     status: 'watching',
+                    rating: null,
+                    watched_at: null,
                 },
                 { onConflict: 'user_id,tmdb_id,media_type' },
             );
@@ -174,6 +188,7 @@ export default function CurrentlyWatchingScreen() {
                         placeholder="Search films and TV shows"
                         onPick={handlePick}
                         onResultsRendered={handleResultsRendered}
+                        onContainerLayout={handleSearchLayout}
                     />
                 )}
             </ScrollView>

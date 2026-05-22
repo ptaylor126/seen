@@ -35,9 +35,14 @@ interface OnboardingSearchProps {
     pickedKeys?: readonly string[];
     // Fires whenever the results list transitions to a non-empty
     // state. The owning screen uses this to scroll its ScrollView so
-    // the newly-rendered result row is brought into view instead of
-    // hiding below the footer on shorter screens.
+    // the search input + first result land at the top of the visible
+    // area.
     onResultsRendered?: () => void;
+    // Fires once after the outer container is laid out, with the
+    // container's y position inside its parent (the screen's
+    // ScrollView contentContainer). The owning screen stores this
+    // and scrolls to it on onResultsRendered.
+    onContainerLayout?: (y: number) => void;
 }
 
 // Shared TMDB search input + results list used by the three add-an-item
@@ -55,6 +60,7 @@ export function OnboardingSearch({
     autoFocus = true,
     pickedKeys = [],
     onResultsRendered,
+    onContainerLayout,
 }: OnboardingSearchProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -170,7 +176,10 @@ export function OnboardingSearch({
     }
 
     return (
-        <View style={styles.container}>
+        <View
+            style={styles.container}
+            onLayout={(e) => onContainerLayout?.(e.nativeEvent.layout.y)}
+        >
             <TextInput
                 value={query}
                 onChangeText={setQuery}

@@ -43,9 +43,15 @@ export default function BestWatchedScreen() {
     const insets = useSafeAreaInsets();
     const keyboardOpen = useKeyboardOpen();
     const scrollRef = useRef<ScrollView | null>(null);
+    // y-offset of the OnboardingSearch container — see last-watched.tsx.
+    const searchYRef = useRef(0);
+
+    function handleSearchLayout(y: number) {
+        searchYRef.current = y;
+    }
 
     function handleResultsRendered() {
-        scrollRef.current?.scrollToEnd({ animated: true });
+        scrollRef.current?.scrollTo({ y: searchYRef.current, animated: true });
     }
 
     const [picked, setPicked] = useState<PickedItem | null>(null);
@@ -233,6 +239,7 @@ export default function BestWatchedScreen() {
                         placeholder="Search films and TV shows"
                         onPick={handlePick}
                         onResultsRendered={handleResultsRendered}
+                        onContainerLayout={handleSearchLayout}
                     />
                 )}
             </ScrollView>
