@@ -126,15 +126,24 @@ export default function HandleScreen() {
                         },
                     ]}
                 >
-                    <Text
-                        style={[
-                            typography.body,
-                            styles.atPrefix,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        @
-                    </Text>
+                    {/* @ is rendered as an absolutely-positioned overlay
+                        rather than a flex sibling. Sitting it beside
+                        the TextInput in flex layout produced (a)
+                        baseline mismatch between Text and TextInput
+                        and (b) a visible gap that made "@" and the
+                        typed handle read as two elements. The overlay
+                        approach + paddingLeft on the input lets them
+                        read as one unit. */}
+                    <View style={styles.atContainer}>
+                        <Text
+                            style={[
+                                typography.body,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            @
+                        </Text>
+                    </View>
                     <TextInput
                         value={handle}
                         onChangeText={(t) => setHandle(t.toLowerCase())}
@@ -220,11 +229,37 @@ const styles = StyleSheet.create({
         height: 48,
         borderRadius: radius.sm,
         borderWidth: 1,
-        gap: spacing.xs,
         marginTop: spacing.md,
     },
-    atPrefix: { fontWeight: '600' },
-    input: { flex: 1, height: '100%' },
+    atContainer: {
+        // Full-height absolute overlay. justifyContent: 'center'
+        // vertically centres the @ glyph regardless of the input's
+        // internal padding quirks (which were causing the baseline
+        // mismatch when @ was a flex sibling).
+        position: 'absolute',
+        left: spacing.md,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        // Taps fall through to the TextInput so the user can tap
+        // anywhere in the input area, including on top of the @.
+        pointerEvents: 'none',
+    },
+    input: {
+        flex: 1,
+        height: '100%',
+        // Reserve space for the @ overlay. At fontSize 16 the @ glyph
+        // is ~12px wide; 14 gives a ~2px gap that matches natural
+        // inter-character spacing so "@paul" reads as one unit.
+        paddingLeft: 14,
+        // iOS TextInput's default vertical text placement sits slightly
+        // below the @ overlay's optical centre. paddingBottom adds
+        // space *below* the rendered text, biasing it upward inside
+        // the 48-tall row so the typed glyph baselines line up with
+        // the @ baseline. Tune this value if the seam still reads off
+        // — higher = more upward shift.
+        paddingBottom: 4,
+    },
     footer: {
         // Absolutely positioned so the Continue button snaps to the
         // top edge of the keyboard the moment keyboardWillShow fires,
