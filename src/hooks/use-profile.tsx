@@ -84,10 +84,42 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
                 if (error) throw error;
 
                 if (!data) {
-                    // Trigger normally creates a profile row on signup;
-                    // missing row here is unusual but recoverable —
-                    // treat as not-onboarded so the user can complete
-                    // the flow.
+                    // No profile row for this session's user. Two
+                    // possibilities:
+                    //   (a) freshly signed-up and the on_signup
+                    //       trigger hasn't materialised the row yet
+                    //       (rare race, since the trigger runs in
+                    //       the same transaction as the auth.users
+                    //       insert);
+                    //   (b) the user was deleted server-side (e.g.
+                    //       from the Supabase dashboard during dev),
+                    //       which cascade-deleted the profile row,
+                    //       but the cached JWT is still locally
+                    //       valid and getSession() returns it on
+                    //       cold start.
+                    // Distinguish by calling auth.getUser(): in case
+                    // (b) the server confirms the user is gone and
+                    // returns 401/403/404, so we sign out before
+                    // routing the user into a doomed onboarding
+                    // flow. Network errors fall through to the
+                    // "no profile, proceed as not-onboarded" path
+                    // so transient failures don't spuriously kick
+                    // people out.
+                    const { error: userError } = await supabase.auth.getUser();
+                    if (generationRef.current !== gen) return;
+                    if (userError) {
+                        const status =
+                            'status' in userError
+                                ? (userError as { status?: number }).status
+                                : undefined;
+                        if (status === 401 || status === 403 || status === 404) {
+                            console.warn(
+                                'useProfile: session JWT references a deleted user, signing out',
+                            );
+                            await supabase.auth.signOut();
+                            return;
+                        }
+                    }
                     setState({ status: 'ready', profile: null });
                     return;
                 }

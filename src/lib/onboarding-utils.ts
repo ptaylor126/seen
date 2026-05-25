@@ -6,10 +6,10 @@ import { Alert } from 'react-native';
 
 import supabase from '@/lib/supabase';
 
-// Two-word "playful animal" names used for the Skip path on the
-// display-name step and the dice-randomize button. List is intentionally
-// short — variety matters less than every option being readable. Add
-// liberally; nothing here depends on the order.
+// Two-word "playful animal" names — retained for potential future use
+// (e.g. a dice-randomize on a profile-edit screen). Not currently
+// referenced by the onboarding flow; the display_name field is
+// auto-derived from the handle at handle-submit time.
 export const RANDOM_NAMES: readonly string[] = [
     'Curious Fox',
     'Quiet Owl',
@@ -76,11 +76,6 @@ export const PROFANITY_WORDS: readonly string[] = [
     'wanker',
     'piss',
 ];
-
-export function randomDisplayName(): string {
-    const i = Math.floor(Math.random() * RANDOM_NAMES.length);
-    return RANDOM_NAMES[i];
-}
 
 export function containsProfanity(text: string): boolean {
     // Whole-word match: \b boundaries ensure "shit" matches "shit" but

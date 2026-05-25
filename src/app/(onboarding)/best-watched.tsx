@@ -22,7 +22,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
-import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
+import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -41,9 +41,13 @@ export default function BestWatchedScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const keyboardOpen = useKeyboardOpen();
+    const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
     const scrollRef = useRef<ScrollView | null>(null);
-    // y-offset of the OnboardingSearch container — see last-watched.tsx.
+    // y-offset of the OnboardingSearch container inside the
+    // ScrollView's contentContainer. Captured once on layout, then
+    // used to scroll the input + first result to the top of the
+    // visible area when results appear (rather than scrolling to the
+    // bottom of the list).
     const searchYRef = useRef(0);
 
     function handleSearchLayout(y: number) {
@@ -142,15 +146,29 @@ export default function BestWatchedScreen() {
     const canContinue = picked !== null && rating !== null && !busy;
 
     return (
+        <View style={{ flex: 1, backgroundColor: palette.bg }}>
         <KeyboardAvoidingView
-            style={{ flex: 1, backgroundColor: palette.bg }}
+            style={{ flex: 1 }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
         <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
+            style={[
+                styles.root,
+                {
+                    // Reserves space at the bottom of SAV so the
+                    // ScrollView's visible viewport ends ABOVE the
+                    // absolutely-positioned footer (instead of running
+                    // under it). 120 = approximate footer height
+                    // (Continue 44 + gap 8 + Skip 36 + ~32 breathing
+                    // room) + spacing.md gap to keyboard/inset.
+                    paddingBottom: keyboardOpen
+                        ? 120
+                        : insets.bottom + 120,
+                },
+            ]}
             edges={['top']}
         >
-            <OnboardingProgress currentStep={5} totalSteps={6} />
+            <OnboardingProgress currentStep={3} totalSteps={4} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -243,51 +261,52 @@ export default function BestWatchedScreen() {
                     />
                 )}
             </ScrollView>
-            <View
-                style={[
-                    styles.footer,
+        </SafeAreaView>
+        </KeyboardAvoidingView>
+        <View
+            style={[
+                styles.footer,
+                {
+                    bottom: keyboardOpen
+                        ? keyboardHeight + spacing.md
+                        : insets.bottom + spacing.md,
+                },
+            ]}
+        >
+            <Pressable
+                onPress={handleContinue}
+                disabled={!canContinue}
+                style={({ pressed }) => [
+                    styles.primaryButton,
                     {
-                        paddingBottom: keyboardOpen
-                            ? spacing.md
-                            : insets.bottom + spacing.md,
+                        backgroundColor: palette.accent,
+                        opacity: !canContinue ? 0.4 : pressed ? 0.6 : 1,
                     },
                 ]}
             >
-                <Pressable
-                    onPress={handleContinue}
-                    disabled={!canContinue}
-                    style={({ pressed }) => [
-                        styles.primaryButton,
-                        {
-                            backgroundColor: palette.accent,
-                            opacity: !canContinue ? 0.4 : pressed ? 0.6 : 1,
-                        },
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        { color: palette.textInverse },
                     ]}
                 >
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            { color: palette.textInverse },
-                        ]}
-                    >
-                        Continue
-                    </Text>
-                </Pressable>
-                <Pressable
-                    onPress={handleSkip}
-                    hitSlop={spacing.sm}
-                    style={({ pressed }) => [
-                        styles.skipButton,
-                        { opacity: pressed ? 0.6 : 1 },
-                    ]}
-                >
-                    <Text style={[typography.body, { color: palette.textMuted }]}>
-                        Skip
-                    </Text>
-                </Pressable>
-            </View>
-        </SafeAreaView>
-        </KeyboardAvoidingView>
+                    Continue
+                </Text>
+            </Pressable>
+            <Pressable
+                onPress={handleSkip}
+                hitSlop={spacing.sm}
+                style={({ pressed }) => [
+                    styles.skipButton,
+                    { opacity: pressed ? 0.6 : 1 },
+                ]}
+            >
+                <Text style={[typography.body, { color: palette.textMuted }]}>
+                    Skip
+                </Text>
+            </Pressable>
+        </View>
+        </View>
     );
 }
 
@@ -300,8 +319,9 @@ const styles = StyleSheet.create({
     bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-        // Generous bottom padding — see last-watched.tsx for rationale.
-        paddingBottom: spacing.xxl,
+        // Trailing breathing room inside the scroll content; footer
+        // clearance is provided by the SafeAreaView's paddingBottom.
+        paddingBottom: spacing.lg,
     },
     pickedCard: {
         padding: spacing.lg,
@@ -327,9 +347,15 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     footer: {
-        // paddingBottom is set inline — see last-watched.tsx for
-        // rationale (LayoutAnimation drives the open/closed transition
-        // in sync with the keyboard slide).
+        // Absolutely positioned so the Continue + Skip buttons snap to
+        // the top edge of the keyboard the moment keyboardWillShow
+        // fires, instead of sliding up alongside the keyboard. `bottom`
+        // is set inline: keyboardHeight + spacing.md when open,
+        // insets.bottom + spacing.md when closed (clears home
+        // indicator).
+        position: 'absolute',
+        left: spacing.base,
+        right: spacing.base,
         gap: spacing.sm,
     },
     primaryButton: {

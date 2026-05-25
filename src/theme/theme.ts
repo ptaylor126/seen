@@ -48,6 +48,15 @@ export const palette = {
 } as const;
 
 export const typography = {
+    // hero: reserved for marquee moments (onboarding welcome, splash).
+    // Tight letter-spacing reads as confident headline copy rather
+    // than generic large body text.
+    hero: {
+        fontSize: 44,
+        fontWeight: '700' as const,
+        lineHeight: 50,
+        letterSpacing: -0.5,
+    },
     display: { fontSize: 32, fontWeight: '700' as const, lineHeight: 38 },
     heading: { fontSize: 22, fontWeight: '600' as const, lineHeight: 28 },
     body: { fontSize: 16, fontWeight: '400' as const, lineHeight: 22 },

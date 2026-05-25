@@ -590,12 +590,12 @@ export default function HomeScreen() {
         return (
             <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
                 <View style={styles.header}>
-                    <Text
-                        style={[typography.display, { color: palette.text }]}
-                        numberOfLines={1}
-                    >
-                        Seen
-                    </Text>
+                    <Image
+                        source={require('../../../assets/logo.png')}
+                        style={styles.headerLogo}
+                        contentFit="contain"
+                        accessibilityLabel="Seen"
+                    />
                     <Pressable
                         onPress={() => router.push({ pathname: '/inbox' })}
                         hitSlop={spacing.sm}
@@ -1230,6 +1230,14 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.md,
+    },
+    headerLogo: {
+        // Source asset is 500 × 147 (≈ 3.4:1). Sized to roughly match
+        // the previous typography.display ("Seen" wordmark) visual
+        // weight — height matches the display lineHeight (38), width
+        // follows aspect ratio.
+        width: 130,
+        height: 38,
     },
     badge: {
         position: 'absolute',

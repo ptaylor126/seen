@@ -21,7 +21,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
-import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
+import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
@@ -40,9 +40,11 @@ export default function CurrentlyWatchingScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const keyboardOpen = useKeyboardOpen();
+    const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
     const scrollRef = useRef<ScrollView | null>(null);
-    // y-offset of the OnboardingSearch container — see last-watched.tsx.
+    // y-offset of the OnboardingSearch container inside the
+    // ScrollView's contentContainer — see best-watched.tsx for the
+    // pattern.
     const searchYRef = useRef(0);
     const { refresh: refreshProfile } = useProfile();
 
@@ -118,15 +120,29 @@ export default function CurrentlyWatchingScreen() {
     }
 
     return (
+        <View style={{ flex: 1, backgroundColor: palette.bg }}>
         <KeyboardAvoidingView
-            style={{ flex: 1, backgroundColor: palette.bg }}
+            style={{ flex: 1 }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
         <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
+            style={[
+                styles.root,
+                {
+                    // Reserves space at the bottom of SAV so the
+                    // ScrollView's visible viewport ends ABOVE the
+                    // absolutely-positioned footer (instead of running
+                    // under it). 120 = approximate footer height
+                    // (Continue 44 + gap 8 + Skip 36 + ~32 breathing
+                    // room) + spacing.md gap to keyboard/inset.
+                    paddingBottom: keyboardOpen
+                        ? 120
+                        : insets.bottom + 120,
+                },
+            ]}
             edges={['top']}
         >
-            <OnboardingProgress currentStep={6} totalSteps={6} />
+            <OnboardingProgress currentStep={4} totalSteps={4} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -192,51 +208,52 @@ export default function CurrentlyWatchingScreen() {
                     />
                 )}
             </ScrollView>
-            <View
-                style={[
-                    styles.footer,
+        </SafeAreaView>
+        </KeyboardAvoidingView>
+        <View
+            style={[
+                styles.footer,
+                {
+                    bottom: keyboardOpen
+                        ? keyboardHeight + spacing.md
+                        : insets.bottom + spacing.md,
+                },
+            ]}
+        >
+            <Pressable
+                onPress={handleContinue}
+                disabled={!added || busy}
+                style={({ pressed }) => [
+                    styles.primaryButton,
                     {
-                        paddingBottom: keyboardOpen
-                            ? spacing.md
-                            : insets.bottom + spacing.md,
+                        backgroundColor: palette.accent,
+                        opacity: !added || busy ? 0.4 : pressed ? 0.6 : 1,
                     },
                 ]}
             >
-                <Pressable
-                    onPress={handleContinue}
-                    disabled={!added || busy}
-                    style={({ pressed }) => [
-                        styles.primaryButton,
-                        {
-                            backgroundColor: palette.accent,
-                            opacity: !added || busy ? 0.4 : pressed ? 0.6 : 1,
-                        },
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        { color: palette.textInverse },
                     ]}
                 >
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            { color: palette.textInverse },
-                        ]}
-                    >
-                        Continue
-                    </Text>
-                </Pressable>
-                <Pressable
-                    onPress={handleSkip}
-                    hitSlop={spacing.sm}
-                    style={({ pressed }) => [
-                        styles.skipButton,
-                        { opacity: pressed ? 0.6 : 1 },
-                    ]}
-                >
-                    <Text style={[typography.body, { color: palette.textMuted }]}>
-                        Skip
-                    </Text>
-                </Pressable>
-            </View>
-        </SafeAreaView>
-        </KeyboardAvoidingView>
+                    Continue
+                </Text>
+            </Pressable>
+            <Pressable
+                onPress={handleSkip}
+                hitSlop={spacing.sm}
+                style={({ pressed }) => [
+                    styles.skipButton,
+                    { opacity: pressed ? 0.6 : 1 },
+                ]}
+            >
+                <Text style={[typography.body, { color: palette.textMuted }]}>
+                    Skip
+                </Text>
+            </Pressable>
+        </View>
+        </View>
     );
 }
 
@@ -249,8 +266,10 @@ const styles = StyleSheet.create({
     bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-        // Generous bottom padding — see last-watched.tsx for rationale.
-        paddingBottom: spacing.xxl,
+        // Footer clearance is provided by the SafeAreaView's
+        // paddingBottom — this is just trailing breathing room inside
+        // the scroll content.
+        paddingBottom: spacing.lg,
     },
     confirmation: {
         padding: spacing.lg,
@@ -265,9 +284,11 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     footer: {
-        // paddingBottom is set inline — see last-watched.tsx for
-        // rationale (LayoutAnimation drives the open/closed transition
-        // in sync with the keyboard slide).
+        // Absolutely positioned — see best-watched.tsx footer for the
+        // rationale (snap to keyboard top, not slide).
+        position: 'absolute',
+        left: spacing.base,
+        right: spacing.base,
         gap: spacing.sm,
     },
     primaryButton: {

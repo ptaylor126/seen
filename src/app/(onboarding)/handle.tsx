@@ -16,7 +16,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { useKeyboardOpen } from '@/hooks/use-keyboard-open';
+import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -26,7 +26,7 @@ export default function HandleScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const keyboardOpen = useKeyboardOpen();
+    const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
 
     const [handle, setHandle] = useState('');
     const [busy, setBusy] = useState(false);
@@ -43,11 +43,21 @@ export default function HandleScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            // Uniqueness is enforced by the unique index on profiles.handle.
-            // We surface a friendlier error on conflict (Postgres 23505).
+            const trimmed = handle.trim();
+            // display_name is auto-derived from the handle (capitalize
+            // the first letter; rest preserved — e.g. "paul" → "Paul",
+            // "paul_t" → "Paul_t"). We write both fields in the same
+            // UPDATE so onboarding doesn't need a dedicated display-name
+            // step. Users can edit display_name later from
+            // /(tabs)/profile if they want something different.
+            const displayName =
+                trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+            // Uniqueness on handle is enforced by the unique index on
+            // profiles.handle. We surface a friendlier error on
+            // conflict (Postgres 23505).
             const { error } = await supabase
                 .from('profiles')
-                .update({ handle: handle.trim() })
+                .update({ handle: trimmed, display_name: displayName })
                 .eq('id', userId);
             if (error) {
                 if (
@@ -62,7 +72,7 @@ export default function HandleScreen() {
                 throw error;
             }
 
-            router.push('/(onboarding)/display-name');
+            router.push('/(onboarding)/best-watched');
         } catch (err) {
             console.error('handle save failed:', err);
             Alert.alert(
@@ -80,15 +90,16 @@ export default function HandleScreen() {
     const showReason = handle.length > 0 && validation.reason;
 
     return (
+        <View style={{ flex: 1, backgroundColor: palette.bg }}>
         <KeyboardAvoidingView
-            style={{ flex: 1, backgroundColor: palette.bg }}
+            style={{ flex: 1 }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
         <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
+            style={styles.root}
             edges={['top']}
         >
-            <OnboardingProgress currentStep={2} totalSteps={6} />
+            <OnboardingProgress currentStep={2} totalSteps={4} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -151,43 +162,44 @@ export default function HandleScreen() {
                     </Text>
                 ) : null}
             </View>
-            <View
-                style={[
-                    styles.footer,
+        </SafeAreaView>
+        </KeyboardAvoidingView>
+        <View
+            style={[
+                styles.footer,
+                {
+                    bottom: keyboardOpen
+                        ? keyboardHeight + spacing.md
+                        : insets.bottom + spacing.md,
+                },
+            ]}
+        >
+            <Pressable
+                onPress={handleContinue}
+                disabled={!canSubmit}
+                style={({ pressed }) => [
+                    styles.primaryButton,
                     {
-                        paddingBottom: keyboardOpen
-                            ? spacing.md
-                            : insets.bottom + spacing.md,
+                        backgroundColor: palette.accent,
+                        opacity: !canSubmit ? 0.4 : pressed ? 0.6 : 1,
                     },
                 ]}
             >
-                <Pressable
-                    onPress={handleContinue}
-                    disabled={!canSubmit}
-                    style={({ pressed }) => [
-                        styles.primaryButton,
-                        {
-                            backgroundColor: palette.accent,
-                            opacity: !canSubmit ? 0.4 : pressed ? 0.6 : 1,
-                        },
-                    ]}
-                >
-                    {busy ? (
-                        <ActivityIndicator color={palette.textInverse} />
-                    ) : (
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.textInverse },
-                            ]}
-                        >
-                            Continue
-                        </Text>
-                    )}
-                </Pressable>
-            </View>
-        </SafeAreaView>
-        </KeyboardAvoidingView>
+                {busy ? (
+                    <ActivityIndicator color={palette.textInverse} />
+                ) : (
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.textInverse },
+                        ]}
+                    >
+                        Continue
+                    </Text>
+                )}
+            </Pressable>
+        </View>
+        </View>
     );
 }
 
@@ -214,9 +226,14 @@ const styles = StyleSheet.create({
     atPrefix: { fontWeight: '600' },
     input: { flex: 1, height: '100%' },
     footer: {
-        // paddingBottom set inline — see last-watched.tsx for the
-        // pattern (LayoutAnimation in useKeyboardOpen animates the
-        // value change in sync with the keyboard slide).
+        // Absolutely positioned so the Continue button snaps to the
+        // top edge of the keyboard the moment keyboardWillShow fires,
+        // instead of sliding up alongside it. `bottom` is set inline:
+        // keyboardHeight + spacing.md when open, insets.bottom + md
+        // when closed.
+        position: 'absolute',
+        left: spacing.base,
+        right: spacing.base,
         gap: spacing.sm,
     },
     primaryButton: {
