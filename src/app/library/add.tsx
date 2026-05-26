@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import supabase from '@/lib/supabase';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
     getPalette,
@@ -39,6 +40,57 @@ export default function LibraryAddScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    // Optional recommend-flow context. When the user enters this screen
+    // from a friend profile's "Recommend something" button, the friend's
+    // user id is passed in as `recommendTo`. We forward it as `preselect`
+    // to the recommend modal so the recipient is pre-checked, and fetch
+    // the handle from profiles to tailor the heading. Fetching (rather
+    // than passing the handle in the URL) keeps the DB as the single
+    // source of truth for what handle to display.
+    const { recommendTo } = useLocalSearchParams<{ recommendTo?: string }>();
+    const recommendToId =
+        typeof recommendTo === 'string' && recommendTo.length > 0
+            ? recommendTo
+            : null;
+
+    const [recipientHandle, setRecipientHandle] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!recommendToId) return;
+        let active = true;
+        (async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('handle')
+                    .eq('id', recommendToId)
+                    .maybeSingle();
+                if (!active) return;
+                if (error) throw error;
+                if (data) setRecipientHandle(data.handle);
+            } catch (err) {
+                // Header gracefully falls back to the handle-less
+                // variant; not worth surfacing this in the UI.
+                console.warn('library/add: recipient handle fetch failed', err);
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [recommendToId]);
+
+    // Header copy adapts to the flow:
+    //   - default                     "Add to your library"
+    //   - recommend mode, handle loaded  "Pick something to recommend to @paul"
+    //   - recommend mode, handle pending "Pick something to recommend"
+    // The pending variant avoids briefly mis-labelling the recommend
+    // flow as the library-add flow while the profile lookup is in
+    // flight.
+    const headerTitle = recommendToId
+        ? recipientHandle
+            ? `Pick something to recommend to @${recipientHandle}`
+            : 'Pick something to recommend'
+        : 'Add to your library';
 
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchableItem[] | null>(null);
@@ -94,17 +146,33 @@ export default function LibraryAddScreen() {
         const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
         const metaLine = [year, mediaLabel].filter(Boolean).join(' · ');
 
+        // When in "recommend to friend" mode we skip the title detail
+        // and drop the user straight into the recommend modal with the
+        // friend pre-selected. Otherwise behaves like the standard
+        // library-add picker (lands on the detail screen).
+        const handlePress = () => {
+            if (recommendToId) {
+                router.push({
+                    pathname: '/title/[mediaType]/[tmdbId]/recommend',
+                    params: {
+                        mediaType: item.media_type,
+                        tmdbId: String(item.id),
+                        preselect: recommendToId,
+                    },
+                });
+                return;
+            }
+            router.push({
+                pathname: '/title/[mediaType]/[tmdbId]',
+                params: {
+                    mediaType: item.media_type,
+                    tmdbId: String(item.id),
+                },
+            });
+        };
         return (
             <Pressable
-                onPress={() =>
-                    router.push({
-                        pathname: '/title/[mediaType]/[tmdbId]',
-                        params: {
-                            mediaType: item.media_type,
-                            tmdbId: String(item.id),
-                        },
-                    })
-                }
+                onPress={handlePress}
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
                 <Image
@@ -154,7 +222,7 @@ export default function LibraryAddScreen() {
                         ]}
                         numberOfLines={1}
                     >
-                        Add to your library
+                        {headerTitle}
                     </Text>
                     {/* Spacer so the title stays visually centred */}
                     <View style={styles.headerSide} />
