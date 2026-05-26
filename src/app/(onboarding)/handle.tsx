@@ -19,7 +19,13 @@ import { OnboardingProgress } from '@/components/onboarding-progress';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 export default function HandleScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -106,7 +112,11 @@ export default function HandleScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft color={palette.accent} size={28} />
+                    <ChevronLeft
+                        color={palette.accent}
+                        size={28}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                 </Pressable>
             </View>
             <View style={styles.body}>
@@ -227,7 +237,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: spacing.md,
         height: 48,
-        borderRadius: radius.sm,
+        // Content input — clearly rounded but not a pill (search bars
+        // use radius.full to read as their own object class).
+        borderRadius: radius.md,
         borderWidth: 1,
         marginTop: spacing.md,
     },

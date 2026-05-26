@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     FlatList,
     Keyboard,
     Pressable,
@@ -24,7 +25,13 @@ import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 // Same shape as the /library/add modal: surface only movies and TV
 // with a poster — TMDB returns plenty of poster-less rows that don't
@@ -50,6 +57,7 @@ interface RecForYou {
     mediaType: MediaType;
     title: string;
     posterPath: string | null;
+    note: string | null;
     sender: { handle: string; displayName: string; avatarUrl: string | null };
 }
 
@@ -58,6 +66,9 @@ interface FriendCard {
     mediaType: MediaType;
     title: string;
     posterPath: string | null;
+    // Kept on the interface so the section's older attribution-line
+    // variant remains buildable if we ever revert; the new grid
+    // layout doesn't render this.
     attribution: string;
 }
 
@@ -70,6 +81,7 @@ interface WatchingItem {
     title: string;
     posterPath: string | null;
     year: string;
+    addedAt: string;
 }
 
 interface HomeData {
@@ -78,20 +90,69 @@ interface HomeData {
     currentlyWatching: WatchingItem[];
     hasLibraryItems: boolean;
     hasFriends: boolean;
+    // Short freshness line surfaced under the search bar. Built from
+    // the most timely activity in the last 24h; null when nothing
+    // fresh is worth saying.
+    activityHint: string | null;
 }
 
-const REC_CARD_W = 120;
-const REC_CARD_H = 180;
-const FRIEND_POSTER_W = 100;
-const FRIEND_POSTER_H = 150;
-const REC_AVATAR_SIZE = 18;
-const WATCHING_POSTER_W = 56;
-const WATCHING_POSTER_H = 84;
+// Recs for you — HERO cards. One card mostly visible at a time with
+// the next card peeking on the right edge to invite swipe.
+const HERO_SCREEN_W = Dimensions.get('window').width;
+const REC_CARD_W = Math.round(HERO_SCREEN_W * 0.85);
+const REC_CARD_H = 200;
+const REC_POSTER_W = 120;
+const REC_POSTER_H = 180;
+const REC_AVATAR_SIZE = 40;
+
+// Friends grid — 4 posters per row, square crop. Pure visual scan;
+// no labels. 8 items (2 rows of 4). justify-content: 'space-between'
+// in the grid style distributes them evenly regardless of device width.
+const FRIENDS_GRID_POSTER_W = 80;
+const FRIENDS_GRID_POSTER_H = 80;
+const FRIENDS_GRID_LIMIT = 8;
+
+// Currently watching — compact list row. Smaller poster than the
+// previous layout (40 × 60 instead of 56 × 84), denser vertical
+// padding, single-line title + inline relative-time secondary.
+const WATCHING_POSTER_W = 40;
+const WATCHING_POSTER_H = 60;
+
+// 24-hour window for the activity hint. Computed once per render of
+// fetchHomeData; the SQL `gte` filter is applied client-side against
+// already-fetched rows so we don't multiply round trips.
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
     const first = trimmed.split(/\s+/)[0];
     return first || trimmed || 'A friend';
+}
+
+// "Added 3 days ago"-style relative formatter. Inline (rather than
+// pulling in date-fns) because the Home dashboard is currently the
+// only consumer; reach for a library if a second screen needs the
+// same shape.
+function formatAdded(iso: string): string {
+    const now = Date.now();
+    const then = new Date(iso).getTime();
+    const seconds = Math.max(0, Math.floor((now - then) / 1000));
+    if (seconds < 60) return 'Added just now';
+    if (seconds < 90) return 'Added a minute ago';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `Added ${minutes} minutes ago`;
+    if (minutes < 90) return 'Added an hour ago';
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `Added ${hours} hours ago`;
+    if (hours < 36) return 'Added a day ago';
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `Added ${days} days ago`;
+    const months = Math.floor(days / 30);
+    if (months < 12) {
+        return months === 1 ? 'Added a month ago' : `Added ${months} months ago`;
+    }
+    const years = Math.floor(days / 365);
+    return years === 1 ? 'Added a year ago' : `Added ${years} years ago`;
 }
 
 // Fetch everything for the Home screen. Three waves: source queries,
@@ -108,7 +169,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     ] = await Promise.all([
         supabase
             .from('recommendations')
-            .select('id, from_user_id, tmdb_id, media_type, sent_at')
+            .select('id, from_user_id, tmdb_id, media_type, sent_at, status, note')
             .eq('to_user_id', userId)
             .in('status', ['pending', 'accepted'])
             .order('sent_at', { ascending: false })
@@ -119,7 +180,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`),
         supabase
             .from('items')
-            .select('tmdb_id, media_type, rating, updated_at')
+            .select('tmdb_id, media_type, rating, updated_at, created_at')
             .eq('user_id', userId)
             .eq('status', 'watching')
             .order('updated_at', { ascending: false })
@@ -151,11 +212,13 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         friendIds.length > 0
             ? supabase
                   .from('items')
-                  .select('user_id, tmdb_id, media_type, status, updated_at')
+                  .select(
+                      'user_id, tmdb_id, media_type, status, updated_at, created_at, rating',
+                  )
                   .in('user_id', friendIds)
                   .in('status', ['watching', 'watched'])
                   .order('updated_at', { ascending: false })
-                  .limit(15)
+                  .limit(40)
             : Promise.resolve({ data: [], error: null }),
         senderIds.size > 0
             ? supabase
@@ -177,6 +240,8 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         media_type: string;
         status: string;
         updated_at: string;
+        created_at: string;
+        rating: number | null;
     }
     const friendItems = (friendItemsResult.data ?? []) as FriendItemRow[];
     const seenTitleKeys = new Set<string>();
@@ -280,6 +345,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             mediaType: r.media_type as MediaType,
             title: titleResult.value.title,
             posterPath: titleResult.value.posterPath,
+            note: typeof r.note === 'string' && r.note.length > 0 ? r.note : null,
             sender: {
                 handle: senderProfile?.handle ?? 'unknown',
                 displayName: senderProfile?.display_name ?? 'Former user',
@@ -314,8 +380,80 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             title: titleResult.value.title,
             posterPath: titleResult.value.posterPath,
             year: titleResult.value.year,
+            addedAt: typeof w.created_at === 'string' ? w.created_at : '',
         });
     });
+
+    // ---- Activity hint
+    //
+    // Pick at most one freshness line for the area under the search
+    // bar. Priority is:
+    //   1. A specific friend rating in the last 24 h — most personal
+    //   2. Pending recs count — direct call to action
+    //   3. Friend additions today count — group activity, vaguest
+    // Null if nothing in any category. We work from already-fetched
+    // rows so this doesn't cost an extra round trip; the rated
+    // friend item's TMDB title is reused from friendTitleResults
+    // when available, otherwise the rating line is skipped to avoid
+    // an extra lookup on cold paths.
+    const twentyFourHoursAgoIso = new Date(
+        Date.now() - TWENTY_FOUR_HOURS_MS,
+    ).toISOString();
+    let activityHint: string | null = null;
+
+    const recentRated = friendItems.find(
+        (item) =>
+            item.rating !== null &&
+            item.status === 'watched' &&
+            item.updated_at >= twentyFourHoursAgoIso,
+    );
+    if (recentRated) {
+        const ratedTitleIdx = uniqueFriendItems.findIndex(
+            (u) =>
+                u.user_id === recentRated.user_id &&
+                u.tmdb_id === recentRated.tmdb_id &&
+                u.media_type === recentRated.media_type,
+        );
+        const ratedTitleResult =
+            ratedTitleIdx >= 0 ? friendTitleResults[ratedTitleIdx] : null;
+        const ratedTitle =
+            ratedTitleResult && ratedTitleResult.status === 'fulfilled'
+                ? ratedTitleResult.value.title
+                : null;
+        const ratedFriendName = friendDisplayNameById.get(recentRated.user_id);
+        if (ratedTitle && ratedFriendName && recentRated.rating !== null) {
+            const stars = recentRated.rating === 1 ? 'star' : 'stars';
+            activityHint = `${firstName(ratedFriendName)} just rated ${ratedTitle} ${recentRated.rating} ${stars}`;
+        }
+    }
+
+    if (!activityHint) {
+        const pendingCount = recs.filter(
+            (r) => (r as { status?: string }).status === 'pending',
+        ).length;
+        if (pendingCount > 0) {
+            activityHint =
+                pendingCount === 1
+                    ? '1 rec waiting for you'
+                    : `${pendingCount} recs waiting for you`;
+        }
+    }
+
+    if (!activityHint) {
+        const recentAdders = new Set<string>();
+        for (const item of friendItems) {
+            if (item.created_at && item.created_at >= twentyFourHoursAgoIso) {
+                recentAdders.add(item.user_id);
+            }
+        }
+        const count = recentAdders.size;
+        if (count > 0) {
+            activityHint =
+                count === 1
+                    ? '1 friend added titles today'
+                    : `${count} friends added titles today`;
+        }
+    }
 
     return {
         recsForYou,
@@ -323,6 +461,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         currentlyWatching,
         hasLibraryItems: (itemsCountResult.count ?? 0) > 0,
         hasFriends: friendIds.length > 0,
+        activityHint,
     };
 }
 
@@ -591,7 +730,10 @@ export default function HomeScreen() {
             <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
                 <View style={styles.header}>
                     <Image
-                        source={require('../../../assets/logo.png')}
+                        // Black variant on the home header — coral is
+                        // reserved for the onboarding welcome
+                        // marquee.
+                        source={require('../../../assets/logo-black.png')}
                         style={styles.headerLogo}
                         contentFit="contain"
                         accessibilityLabel="Seen"
@@ -602,7 +744,11 @@ export default function HomeScreen() {
                         style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                     >
                         <View>
-                            <Mail color={palette.text} size={24} />
+                            <Mail
+                                color={palette.text}
+                                size={24}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
                             {unreadCount > 0 && (
                                 <View
                                     style={[
@@ -638,7 +784,11 @@ export default function HomeScreen() {
                     },
                 ]}
             >
-                <Search color={palette.textMuted} size={20} />
+                <Search
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
                 <TextInput
                     ref={homeInputRef}
                     value={homeSearchQuery}
@@ -693,6 +843,17 @@ export default function HomeScreen() {
         );
     }
 
+    function renderActivityHint(hint: string) {
+        return (
+            <Text
+                style={[styles.activityHint, { color: palette.textMuted }]}
+                numberOfLines={1}
+            >
+                {hint}
+            </Text>
+        );
+    }
+
     function renderRecsForYou(data: HomeData) {
         return (
             <View style={styles.section}>
@@ -709,7 +870,15 @@ export default function HomeScreen() {
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.horizontalRow}
+                        // The card width (85% of screen) plus the
+                        // contentContainerStyle's right padding leaves
+                        // the next card's edge visible — that "peek"
+                        // is the swipe affordance.
+                        contentContainerStyle={styles.recCardsRow}
+                        // Snap each swipe to a card so the user always
+                        // lands on a full hero, not a partial one.
+                        snapToInterval={REC_CARD_W + spacing.md}
+                        decelerationRate="fast"
                     >
                         {data.recsForYou.map((rec) => (
                             <Pressable
@@ -718,8 +887,12 @@ export default function HomeScreen() {
                                     navigateToTitle(rec.mediaType, rec.tmdbId, rec.id)
                                 }
                                 style={({ pressed }) => [
-                                    styles.recCard,
-                                    pressed && { opacity: 0.6 },
+                                    styles.recHeroCard,
+                                    {
+                                        backgroundColor: palette.surfaceAlt,
+                                        borderColor: palette.border,
+                                    },
+                                    pressed && { opacity: 0.85 },
                                 ]}
                             >
                                 {rec.posterPath ? (
@@ -727,43 +900,65 @@ export default function HomeScreen() {
                                         source={{
                                             uri: imageUrl(rec.posterPath, 'w342'),
                                         }}
-                                        style={styles.recPoster}
+                                        style={styles.recHeroPoster}
                                         contentFit="cover"
                                         transition={150}
                                     />
                                 ) : (
                                     <View
                                         style={[
-                                            styles.recPoster,
-                                            { backgroundColor: palette.surfaceAlt },
+                                            styles.recHeroPoster,
+                                            { backgroundColor: palette.surface },
                                         ]}
                                     />
                                 )}
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        styles.recCardTitle,
-                                        { color: palette.text },
-                                    ]}
-                                    numberOfLines={2}
-                                >
-                                    {rec.title}
-                                </Text>
-                                <View style={styles.recAttribution}>
-                                    <Avatar
-                                        avatarUrl={rec.sender.avatarUrl}
-                                        displayName={rec.sender.displayName}
-                                        size={REC_AVATAR_SIZE}
-                                    />
+                                <View style={styles.recHeroContent}>
+                                    <View style={styles.recHeroSenderRow}>
+                                        <Avatar
+                                            avatarUrl={rec.sender.avatarUrl}
+                                            displayName={rec.sender.displayName}
+                                            size={REC_AVATAR_SIZE}
+                                        />
+                                        <View style={styles.recHeroSenderText}>
+                                            <Text
+                                                style={[
+                                                    typography.bodyEmphasis,
+                                                    { color: palette.accent },
+                                                ]}
+                                                numberOfLines={1}
+                                            >
+                                                {firstName(rec.sender.displayName)}
+                                            </Text>
+                                            <Text
+                                                style={[
+                                                    typography.caption,
+                                                    { color: palette.textMuted },
+                                                ]}
+                                            >
+                                                recommends
+                                            </Text>
+                                        </View>
+                                    </View>
                                     <Text
                                         style={[
-                                            typography.micro,
-                                            { color: palette.textMuted, flex: 1 },
+                                            typography.heading,
+                                            { color: palette.text },
                                         ]}
-                                        numberOfLines={1}
+                                        numberOfLines={2}
                                     >
-                                        From {firstName(rec.sender.displayName)}
+                                        {rec.title}
                                     </Text>
+                                    {rec.note ? (
+                                        <Text
+                                            style={[
+                                                styles.recNote,
+                                                { color: palette.textMuted },
+                                            ]}
+                                            numberOfLines={2}
+                                        >
+                                            “{rec.note}”
+                                        </Text>
+                                    ) : null}
                                 </View>
                             </Pressable>
                         ))}
@@ -789,6 +984,7 @@ export default function HomeScreen() {
     }
 
     function renderFriendsWatching(data: HomeData) {
+        const gridItems = data.friendCards.slice(0, FRIENDS_GRID_LIMIT);
         return (
             <View style={styles.section}>
                 <Text
@@ -800,62 +996,39 @@ export default function HomeScreen() {
                 >
                     Friends are watching
                 </Text>
-                {data.friendCards.length > 0 ? (
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.horizontalRow}
-                    >
-                        {data.friendCards.map((card) => (
+                {gridItems.length > 0 ? (
+                    <View style={styles.friendsGrid}>
+                        {gridItems.map((card) => (
                             <Pressable
                                 key={`${card.mediaType}-${card.tmdbId}`}
                                 onPress={() =>
                                     navigateToTitle(card.mediaType, card.tmdbId)
                                 }
                                 style={({ pressed }) => [
-                                    styles.friendCard,
                                     pressed && { opacity: 0.6 },
                                 ]}
+                                accessibilityLabel={card.title}
                             >
                                 {card.posterPath ? (
                                     <Image
                                         source={{
                                             uri: imageUrl(card.posterPath, 'w185'),
                                         }}
-                                        style={styles.friendPoster}
+                                        style={styles.friendsGridPoster}
                                         contentFit="cover"
                                         transition={150}
                                     />
                                 ) : (
                                     <View
                                         style={[
-                                            styles.friendPoster,
+                                            styles.friendsGridPoster,
                                             { backgroundColor: palette.surfaceAlt },
                                         ]}
                                     />
                                 )}
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        styles.friendTitle,
-                                        { color: palette.text },
-                                    ]}
-                                    numberOfLines={2}
-                                >
-                                    {card.title}
-                                </Text>
-                                <Text
-                                    style={[
-                                        typography.micro,
-                                        { color: palette.textMuted },
-                                    ]}
-                                    numberOfLines={1}
-                                >
-                                    {card.attribution}
-                                </Text>
                             </Pressable>
                         ))}
-                    </ScrollView>
+                    </View>
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
@@ -891,11 +1064,10 @@ export default function HomeScreen() {
                 {data.currentlyWatching.length > 0 ? (
                     <View style={styles.watchingList}>
                         {data.currentlyWatching.map((item, i) => {
-                            const mediaLabel =
-                                item.mediaType === 'movie' ? 'Movie' : 'TV Show';
-                            const metaLine = [item.year, mediaLabel]
-                                .filter(Boolean)
-                                .join(' · ');
+                            const addedLine = item.addedAt
+                                ? formatAdded(item.addedAt)
+                                : '';
+                            const disabled = ratingBusy || !!ratingTarget;
                             return (
                                 <View key={`${item.mediaType}-${item.tmdbId}`}>
                                     {i > 0 && (
@@ -942,17 +1114,26 @@ export default function HomeScreen() {
                                                     ]}
                                                 />
                                             )}
+                                            {/* Title above, time below.
+                                                Stacked rather than
+                                                inline because long
+                                                titles + the "Added X
+                                                ago" tag don't fit on
+                                                one line in the row's
+                                                available width and the
+                                                title was getting
+                                                truncated to 4-5 chars. */}
                                             <View style={styles.watchingText}>
                                                 <Text
                                                     style={[
                                                         typography.bodyEmphasis,
                                                         { color: palette.text },
                                                     ]}
-                                                    numberOfLines={2}
+                                                    numberOfLines={1}
                                                 >
                                                     {item.title}
                                                 </Text>
-                                                {metaLine ? (
+                                                {addedLine ? (
                                                     <Text
                                                         style={[
                                                             typography.caption,
@@ -960,23 +1141,22 @@ export default function HomeScreen() {
                                                                 color: palette.textMuted,
                                                             },
                                                         ]}
+                                                        numberOfLines={1}
                                                     >
-                                                        {metaLine}
+                                                        {addedLine}
                                                     </Text>
                                                 ) : null}
                                             </View>
                                         </Pressable>
                                         <Pressable
                                             onPress={() => handleMarkWatched(item)}
-                                            disabled={ratingBusy || !!ratingTarget}
+                                            disabled={disabled}
                                             style={({ pressed }) => [
-                                                styles.markWatchedButton,
+                                                styles.markWatchedPill,
                                                 {
-                                                    borderColor: palette.accent,
+                                                    backgroundColor: palette.accent,
                                                     opacity:
-                                                        pressed ||
-                                                        ratingBusy ||
-                                                        ratingTarget
+                                                        pressed || disabled
                                                             ? 0.6
                                                             : 1,
                                                 },
@@ -986,7 +1166,7 @@ export default function HomeScreen() {
                                                 style={[
                                                     typography.caption,
                                                     {
-                                                        color: palette.accent,
+                                                        color: palette.textInverse,
                                                         fontWeight: '600',
                                                     },
                                                 ]}
@@ -1121,6 +1301,9 @@ export default function HomeScreen() {
                     renderGlobalEmpty()
                 ) : (
                     <>
+                        {data.activityHint
+                            ? renderActivityHint(data.activityHint)
+                            : null}
                         {renderRecsForYou(data)}
                         {renderFriendsWatching(data)}
                         {renderCurrentlyWatching(data)}
@@ -1169,18 +1352,23 @@ export default function HomeScreen() {
                             pressed && { opacity: 0.6 },
                         ]}
                     >
-                        <X color={palette.textMuted} size={20} />
+                        <X
+                            color={palette.textMuted}
+                            size={20}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
                     </Pressable>
                     {searchLoading ? (
                         <View style={styles.searchStatusBlock}>
                             <ActivityIndicator color={palette.accent} />
                         </View>
                     ) : searchResults === null ? (
-                        <View style={styles.searchStatusBlock}>
-                            <Text style={[typography.body, { color: palette.textMuted }]}>
-                                Type to search
-                            </Text>
-                        </View>
+                        // Empty overlay before the user types — the
+                        // search input's placeholder already states
+                        // the action, so a "Type to search" hint here
+                        // is redundant and gets cut off behind the
+                        // keyboard on shorter devices.
+                        <View style={styles.searchStatusBlock} />
                     ) : searchResults.length === 0 ? (
                         <View style={styles.searchStatusBlock}>
                             <Text
@@ -1264,7 +1452,9 @@ const styles = StyleSheet.create({
         marginHorizontal: spacing.base,
         marginTop: spacing.sm,
         paddingHorizontal: spacing.md,
-        borderRadius: radius.sm,
+        // Fully pill-shaped — search inputs read as their own object
+        // class (vs. content inputs which use radius.md).
+        borderRadius: radius.full,
         borderWidth: 1,
         height: 44,
     },
@@ -1281,49 +1471,84 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         marginBottom: spacing.md,
     },
-    horizontalRow: {
+    // Activity hint — small italic line under the search bar.
+    activityHint: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontStyle: 'italic',
         paddingHorizontal: spacing.base,
+        paddingTop: spacing.xs,
+    },
+    // Recs for you — HERO cards. Each card is ~85% of screen width
+    // with poster on the left and content on the right; the next card
+    // peeks on the right edge as a swipe affordance.
+    recCardsRow: {
+        paddingLeft: spacing.base,
+        paddingRight: spacing.base,
+        paddingVertical: spacing.xs,
         gap: spacing.md,
     },
-    // Recs for you
-    recCard: {
-        width: REC_CARD_W,
-        gap: spacing.xs,
-    },
-    recPoster: {
+    recHeroCard: {
+        flexDirection: 'row',
         width: REC_CARD_W,
         height: REC_CARD_H,
+        padding: spacing.sm,
+        borderRadius: radius.md,
+        borderWidth: 1,
+        gap: spacing.md,
+    },
+    recHeroPoster: {
+        width: REC_POSTER_W,
+        height: REC_POSTER_H,
         borderRadius: radius.sm,
     },
-    recCardTitle: {
-        marginTop: spacing.xs,
+    recHeroContent: {
+        flex: 1,
+        gap: spacing.sm,
+        // Subtle inset on the right so content doesn't crowd the card
+        // edge; lines up the title with the avatar column above.
+        paddingRight: spacing.xs,
     },
-    recAttribution: {
+    recHeroSenderRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.xs,
+        gap: spacing.sm,
     },
-    // Friends are watching
-    friendCard: {
-        width: FRIEND_POSTER_W,
-        gap: spacing.xs,
+    recHeroSenderText: {
+        // Stack the sender name (accent) over the "recommends" caption
+        // (muted) so the social attribution reads as one identity
+        // block.
+        flex: 1,
     },
-    friendPoster: {
-        width: FRIEND_POSTER_W,
-        height: FRIEND_POSTER_H,
+    recNote: {
+        fontSize: 14,
+        lineHeight: 20,
+        fontStyle: 'italic',
+    },
+    // Friends are watching — 4 square posters per row, no labels.
+    // space-between distributes the row evenly regardless of device
+    // width; rowGap controls vertical space between rows of two.
+    friendsGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        paddingHorizontal: spacing.base,
+        justifyContent: 'space-between',
+        rowGap: spacing.sm,
+    },
+    friendsGridPoster: {
+        width: FRIENDS_GRID_POSTER_W,
+        height: FRIENDS_GRID_POSTER_H,
         borderRadius: radius.sm,
     },
-    friendTitle: {
-        marginTop: spacing.xs,
-    },
-    // Currently watching
+    // Currently watching — compact list rows: small poster + inline
+    // title/relative-time + primary-action pill on the right.
     watchingList: {
         paddingHorizontal: spacing.base,
     },
     watchingRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: spacing.md,
+        paddingVertical: spacing.sm,
         gap: spacing.md,
     },
     watchingRowBody: {
@@ -1338,20 +1563,25 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     watchingText: {
+        // Stacked title + relative-time column. flex: 1 so it fills
+        // the row between the poster and the Mark-watched pill.
         flex: 1,
-        gap: spacing.xs,
+        gap: 2,
     },
     watchingSeparator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: WATCHING_POSTER_W + spacing.md,
     },
-    markWatchedButton: {
+    markWatchedPill: {
+        // Filled accent so the row's primary action reads as primary
+        // on first glance. radius.full keeps the pill rounded even
+        // after the theme-wide radius bump.
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
-        borderRadius: radius.sm,
-        borderWidth: 1.5,
+        borderRadius: radius.full,
     },
-    // Inline empty states (per-section)
+    // Per-section empty states — simple body copy with an inline
+    // accent-colored CTA word (e.g. "Add friends", "Search to add").
     inlineEmpty: {
         marginHorizontal: spacing.base,
         padding: spacing.base,

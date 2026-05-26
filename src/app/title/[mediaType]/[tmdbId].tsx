@@ -20,7 +20,13 @@ import { RatingSheet } from '@/components/rating-sheet';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
 
@@ -596,7 +602,11 @@ export default function TitleDetailScreen() {
                         },
                     ]}
                 >
-                    <Send color={palette.accent} size={18} />
+                    <Send
+                        color={palette.accent}
+                        size={18}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                     <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
                         Recommend to a friend
                     </Text>
@@ -637,7 +647,7 @@ function CloseButton({
             hitSlop={spacing.sm}
             style={[styles.closeButton, { top, backgroundColor: bg }]}
         >
-            <X color={fg} size={20} />
+            <X color={fg} size={20} strokeWidth={ICON_STROKE_WIDTH} />
         </Pressable>
     );
 }

@@ -16,7 +16,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 // Same shape as the old standalone Search screen: surface only movies and
 // TV that have a poster — TMDB returns plenty of poster-less rows we don't
@@ -134,7 +140,11 @@ export default function LibraryAddScreen() {
                             pressed && { opacity: 0.6 },
                         ]}
                     >
-                        <X color={palette.text} size={24} />
+                        <X
+                            color={palette.text}
+                            size={24}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
                     </Pressable>
                     <Text
                         style={[

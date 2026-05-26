@@ -15,7 +15,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import supabase from '@/lib/supabase';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 // `seen.app` is a placeholder domain — we don't own it yet. When a real
 // domain is registered, the Universal Link / App Link plumbing (apple-app-
@@ -144,7 +150,11 @@ export default function InviteLinkScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft color={palette.accent} size={28} />
+                    <ChevronLeft
+                        color={palette.accent}
+                        size={28}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>
                     Your invite link

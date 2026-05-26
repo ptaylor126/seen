@@ -47,22 +47,59 @@ export const palette = {
     },
 } as const;
 
+// Each typography token references a specific Geist variant by its
+// loaded family name. RN's fontWeight prop is unreliable when a font
+// family has multiple weights — naming the exact face is the safest
+// way to render the intended weight on both platforms. fontWeight is
+// kept for accessibility tooling (VoiceOver weight reads) and as
+// fallback if the font hasn't loaded yet.
 export const typography = {
     // hero: reserved for marquee moments (onboarding welcome, splash).
     // Tight letter-spacing reads as confident headline copy rather
     // than generic large body text.
     hero: {
+        fontFamily: 'Geist_700Bold',
         fontSize: 44,
         fontWeight: '700' as const,
         lineHeight: 50,
         letterSpacing: -0.5,
     },
-    display: { fontSize: 32, fontWeight: '700' as const, lineHeight: 38 },
-    heading: { fontSize: 22, fontWeight: '600' as const, lineHeight: 28 },
-    body: { fontSize: 16, fontWeight: '400' as const, lineHeight: 22 },
-    bodyEmphasis: { fontSize: 16, fontWeight: '600' as const, lineHeight: 22 },
-    caption: { fontSize: 14, fontWeight: '400' as const, lineHeight: 18 },
-    micro: { fontSize: 12, fontWeight: '500' as const, lineHeight: 16 },
+    display: {
+        fontFamily: 'Geist_700Bold',
+        fontSize: 32,
+        fontWeight: '700' as const,
+        lineHeight: 38,
+    },
+    heading: {
+        fontFamily: 'Geist_600SemiBold',
+        fontSize: 22,
+        fontWeight: '600' as const,
+        lineHeight: 28,
+    },
+    body: {
+        fontFamily: 'Geist_400Regular',
+        fontSize: 16,
+        fontWeight: '400' as const,
+        lineHeight: 22,
+    },
+    bodyEmphasis: {
+        fontFamily: 'Geist_600SemiBold',
+        fontSize: 16,
+        fontWeight: '600' as const,
+        lineHeight: 22,
+    },
+    caption: {
+        fontFamily: 'Geist_400Regular',
+        fontSize: 14,
+        fontWeight: '400' as const,
+        lineHeight: 18,
+    },
+    micro: {
+        fontFamily: 'Geist_500Medium',
+        fontSize: 12,
+        fontWeight: '500' as const,
+        lineHeight: 16,
+    },
 } as const;
 
 export const spacing = {
@@ -77,10 +114,14 @@ export const spacing = {
 } as const;
 
 export const radius = {
-    sm: 8,
-    md: 12,
-    lg: 16,
-    xl: 24,
+    // Rounder than typical iOS metrics — softens every input, button,
+    // card, and pill in the app to give the brand a friendlier feel.
+    // Touch anything that uses these to verify the larger curve still
+    // reads correctly (e.g. small badges may need radius.full).
+    sm: 12,
+    md: 18,
+    lg: 24,
+    xl: 32,
     full: 9999,
 } as const;
 
@@ -121,15 +162,20 @@ export const elevation = {
     },
 } as const;
 
-// Font family — values come into effect once @expo-google-fonts/dm-sans is
+// Font family — values come into effect once @expo-google-fonts/geist is
 // loaded via expo-font in the root layout. Until then, components fall
 // through to the system font.
 export const fontFamily = {
-    default: 'DMSans_400Regular',
-    medium: 'DMSans_500Medium',
-    semibold: 'DMSans_600SemiBold',
-    bold: 'DMSans_700Bold',
+    default: 'Geist_400Regular',
+    medium: 'Geist_500Medium',
+    semibold: 'Geist_600SemiBold',
+    bold: 'Geist_700Bold',
 } as const;
+
+// Single-source stroke width for every lucide-react-native icon in
+// the app. 1.5 reads as "thin and elegant" against the default 2;
+// keeps icon weight consistent across nav, headers, and inline.
+export const ICON_STROKE_WIDTH = 1.5;
 
 export type ColorScheme = 'light' | 'dark';
 

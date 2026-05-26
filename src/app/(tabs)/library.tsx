@@ -18,7 +18,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
 type MediaType = 'movie' | 'tv';
@@ -394,7 +400,11 @@ export default function LibraryScreen() {
                                     hitSlop={spacing.sm}
                                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                                 >
-                                    <Search color={palette.text} size={24} />
+                                    <Search
+                                        color={palette.text}
+                                        size={24}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
                                 </Pressable>
                                 <Pressable
                                     onPress={() =>
@@ -403,7 +413,11 @@ export default function LibraryScreen() {
                                     hitSlop={spacing.sm}
                                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                                 >
-                                    <Plus color={palette.text} size={24} />
+                                    <Plus
+                                        color={palette.text}
+                                        size={24}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
                                 </Pressable>
                                 <Pressable
                                     onPress={() =>
@@ -413,7 +427,11 @@ export default function LibraryScreen() {
                                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                                 >
                                     <View>
-                                        <Bell color={palette.text} size={24} />
+                                        <Bell
+                                            color={palette.text}
+                                            size={24}
+                                            strokeWidth={ICON_STROKE_WIDTH}
+                                        />
                                         {unreadCount > 0 && (
                                             <View
                                                 style={[
@@ -554,7 +572,8 @@ const styles = StyleSheet.create({
     searchInput: {
         flex: 1,
         height: 40,
-        borderRadius: radius.sm,
+        // Fully pill-shaped — matches the Home search bar treatment.
+        borderRadius: radius.full,
         borderWidth: 1,
         paddingHorizontal: spacing.md,
     },

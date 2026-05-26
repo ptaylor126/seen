@@ -14,7 +14,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import supabase from '@/lib/supabase';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 const MIN_HANDLE_LENGTH = 3;
 
@@ -117,7 +123,11 @@ export default function AddFriendScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft color={palette.accent} size={28} />
+                    <ChevronLeft
+                        color={palette.accent}
+                        size={28}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>
                     Add a friend

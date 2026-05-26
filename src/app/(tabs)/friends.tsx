@@ -15,7 +15,13 @@ import {
 import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 interface FriendRow {
     userId: string;
@@ -156,7 +162,11 @@ export default function FriendsScreen() {
                         @{item.handle}
                     </Text>
                 </View>
-                <ChevronRight color={palette.textMuted} size={20} />
+                <ChevronRight
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
             </Pressable>
         );
     }
@@ -180,7 +190,11 @@ export default function FriendsScreen() {
                 </View>
             ) : showEmptyState ? (
                 <View style={styles.emptyState}>
-                    <Users color={palette.textMuted} size={64} />
+                    <Users
+                        color={palette.textMuted}
+                        size={64}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                     <Text
                         style={[
                             typography.heading,
@@ -270,7 +284,11 @@ export default function FriendsScreen() {
                                     ? '1 pending request'
                                     : `${pendingIncoming} pending requests`}
                             </Text>
-                            <ChevronRight color={palette.textMuted} size={20} />
+                            <ChevronRight
+                                color={palette.textMuted}
+                                size={20}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
                         </Pressable>
                     )}
 

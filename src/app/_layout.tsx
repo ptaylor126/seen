@@ -1,3 +1,10 @@
+import {
+    Geist_400Regular,
+    Geist_500Medium,
+    Geist_600SemiBold,
+    Geist_700Bold,
+    useFonts,
+} from '@expo-google-fonts/geist';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View, useColorScheme } from 'react-native';
@@ -8,6 +15,19 @@ import { useSession } from '@/hooks/use-session';
 import { getPalette } from '@/theme/theme';
 
 export default function RootLayout() {
+    // Load Geist before the rest of the tree mounts. Until the fonts
+    // are resolved, typography.body etc. would render in the system
+    // font, then flash to Geist mid-launch — holding the tree
+    // suppresses the flash. expo-font is a JS-side module, so this
+    // works without an EAS rebuild.
+    const [fontsLoaded] = useFonts({
+        Geist_400Regular,
+        Geist_500Medium,
+        Geist_600SemiBold,
+        Geist_700Bold,
+    });
+    if (!fontsLoaded) return null;
+
     // ProfileProvider sits above RootLayoutInner so useProfile() inside
     // the routing effect reads from the same context the onboarding
     // screens write to via refresh(). Without the shared context, the

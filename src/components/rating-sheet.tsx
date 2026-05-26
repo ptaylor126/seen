@@ -12,7 +12,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 interface RatingSheetProps {
     visible: boolean;
@@ -242,6 +248,7 @@ export function RatingSheet({
                                         color={color}
                                         fill={filled ? palette.accent : 'transparent'}
                                         size={36}
+                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </Pressable>
                             );

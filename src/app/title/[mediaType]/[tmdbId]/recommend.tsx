@@ -19,7 +19,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 type MediaType = 'movie' | 'tv';
 
@@ -233,7 +239,13 @@ export default function RecommendScreen() {
                         },
                     ]}
                 >
-                    {isSelected && <Check color={palette.textInverse} size={16} />}
+                    {isSelected && (
+                        <Check
+                            color={palette.textInverse}
+                            size={16}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    )}
                 </View>
             </Pressable>
         );

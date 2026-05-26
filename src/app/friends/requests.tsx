@@ -16,7 +16,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 interface RequestRow {
     requestId: string;
@@ -319,7 +325,11 @@ export default function FriendRequestsScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft color={palette.accent} size={28} />
+                    <ChevronLeft
+                        color={palette.accent}
+                        size={28}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>
                     Friend requests

@@ -16,7 +16,7 @@ import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
-import { getPalette, spacing, typography } from '@/theme/theme';
+import { getPalette, ICON_STROKE_WIDTH, spacing, typography } from '@/theme/theme';
 
 interface ProfileData {
     handle: string;
@@ -189,7 +189,11 @@ export default function ProfileScreen() {
                             >
                                 {row.label}
                             </Text>
-                            <ChevronRight color={palette.textMuted} size={20} />
+                            <ChevronRight
+                                color={palette.textMuted}
+                                size={20}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
                         </Pressable>
                     </Fragment>
                 ))}
