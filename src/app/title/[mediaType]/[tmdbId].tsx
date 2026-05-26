@@ -554,6 +554,10 @@ export default function TitleDetailScreen() {
                     </Text>
                 ) : null}
 
+                {/* Status pills — a choice. The selected status is
+                    filled accent; the others are outline-only with a
+                    muted border so they read as "available options",
+                    distinct from the primary Recommend action below. */}
                 <View style={styles.actions}>
                     {STATUSES.map((status) => {
                         const isActive = currentStatus === status;
@@ -568,7 +572,9 @@ export default function TitleDetailScreen() {
                                         backgroundColor: isActive
                                             ? palette.accent
                                             : 'transparent',
-                                        borderColor: palette.accent,
+                                        borderColor: isActive
+                                            ? palette.accent
+                                            : palette.border,
                                         opacity: pressed || updating ? 0.6 : 1,
                                     },
                                 ]}
@@ -579,7 +585,7 @@ export default function TitleDetailScreen() {
                                         {
                                             color: isActive
                                                 ? palette.textInverse
-                                                : palette.accent,
+                                                : palette.text,
                                         },
                                     ]}
                                 >
@@ -590,6 +596,10 @@ export default function TitleDetailScreen() {
                     })}
                 </View>
 
+                {/* Recommend — a primary outgoing action. Filled accent
+                    (vs. the outlined status pills above) so the visual
+                    hierarchy reads "pick where this sits in your
+                    library, then send it to a friend". */}
                 <Pressable
                     onPress={() =>
                         router.push(`/title/${mediaType}/${tmdbId}/recommend`)
@@ -597,17 +607,22 @@ export default function TitleDetailScreen() {
                     style={({ pressed }) => [
                         styles.recommendButton,
                         {
-                            borderColor: palette.accent,
+                            backgroundColor: palette.accent,
                             opacity: pressed ? 0.6 : 1,
                         },
                     ]}
                 >
                     <Send
-                        color={palette.accent}
+                        color={palette.textInverse}
                         size={18}
                         strokeWidth={ICON_STROKE_WIDTH}
                     />
-                    <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.textInverse },
+                        ]}
+                    >
                         Recommend to a friend
                     </Text>
                 </Pressable>
@@ -741,6 +756,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     recommendButton: {
+        // Filled accent — the border that lived here when the button
+        // was outlined is gone; the background colour now defines the
+        // edge.
         flexDirection: 'row',
         gap: spacing.sm,
         alignItems: 'center',
@@ -749,7 +767,6 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
-        borderWidth: 1.5,
     },
     closeButton: {
         position: 'absolute',

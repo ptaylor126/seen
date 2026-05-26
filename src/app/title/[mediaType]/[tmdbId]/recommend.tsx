@@ -47,7 +47,13 @@ const POSTER_W = 40;
 const POSTER_H = 60;
 
 export default function RecommendScreen() {
-    const params = useLocalSearchParams<{ mediaType: string; tmdbId: string }>();
+    const params = useLocalSearchParams<{
+        mediaType: string;
+        tmdbId: string;
+        // Pre-selected recipient id, forwarded by /library/add when the
+        // user entered the recommend flow from a friend profile.
+        preselect?: string;
+    }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -58,10 +64,20 @@ export default function RecommendScreen() {
             : null;
     const tmdbIdRaw = typeof params.tmdbId === 'string' ? params.tmdbId : '';
     const tmdbId = Number.parseInt(tmdbIdRaw, 10);
+    const preselectedFriendId =
+        typeof params.preselect === 'string' && params.preselect.length > 0
+            ? params.preselect
+            : null;
 
     const [titleCtx, setTitleCtx] = useState<TitleContext | null>(null);
     const [friends, setFriends] = useState<FriendRow[]>([]);
-    const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
+    // Initial state seeds from the preselect param so the recipient is
+    // pre-checked when arriving from the friend-profile recommend flow.
+    // We never re-apply it after mount — once the user picks, they own
+    // the selection.
+    const [selectedFriendId, setSelectedFriendId] = useState<string | null>(
+        preselectedFriendId,
+    );
     const [note, setNote] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
