@@ -3,15 +3,23 @@ import supabase from '@/lib/supabase';
 export type MediaType = 'movie' | 'tv';
 export type RatingThumb = 'up' | 'down';
 
-// items.rating stores the 1-5 value directly. The recommendations table
+// items.rating stores a 1-10 half-star value (odd = half, even = whole;
+// so 1 = ½★, 2 = 1★, …, 9 = 4½★, 10 = 5★). The recommendations table
 // still carries a coarser rating_thumb (up | down) as the credibility
-// signal between friends — derived from the star value: 1-2 = down,
-// 3-5 = up.
+// signal between friends — derived from the stored value: 1-4 = down
+// (≤ 2★), 5-10 = up (≥ 2½★).
 export function thumbFromRating(rating: number): RatingThumb {
-    return rating <= 2 ? 'down' : 'up';
+    return rating <= 4 ? 'down' : 'up';
 }
 
-// Apply a 1-5 star rating (or skip with `null`) to a watched title.
+// Format a 1-10 stored rating as a human-readable star count: 8 → "4★",
+// 9 → "4.5★", 1 → "0.5★". JS division produces the correct decimal
+// (rating=9 / 2 = 4.5) so no explicit half-star handling needed.
+export function formatRatingStars(rating: number): string {
+    return `${rating / 2}★`;
+}
+
+// Apply a 1-10 star rating (or skip with `null`) to a watched title.
 // Updates items.rating when a value was chosen, and always transitions
 // any matching open recommendations (pending | accepted) into `watched`
 // — which fires the rec_watched notification trigger for the sender.

@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { Star } from 'lucide-react-native';
+import { Star, StarHalf } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     Modal,
@@ -23,32 +23,46 @@ import {
 interface RatingSheetProps {
     visible: boolean;
     busy: boolean;
-    // Pre-fill the stars with an existing rating (e.g. re-rating a
-    // previously-watched title). Null = no pre-selection.
+    // Pre-fill the stars with an existing rating. The rating is stored
+    // on the half-star 1-10 scale (1 = ½★, 2 = 1★, …, 10 = 5★). Null
+    // means no pre-selection.
     initialRating: number | null;
-    // Called with the chosen 1-5 rating when the user taps Done, or
+    // Called with the chosen 1-10 rating when the user taps Done, or
     // null when they dismissed without committing (Skip, backdrop tap,
     // hardware back).
     onSubmit: (rating: number | null) => void;
 }
 
 const STAR_COUNT = 5;
+const HALF_COUNT = STAR_COUNT * 2; // = 10
 // Distance (in px) the finger must travel before the row-level
-// PanResponder claims the gesture from the per-star Pressables.
-// Below the threshold: a tap, the Pressable handles it normally.
-// Above: a drag, the PanResponder takes over and selection follows
-// the finger across the row.
+// PanResponder claims the gesture from the per-half Pressables.
+// Below: a tap, the Pressable handles it. Above: a drag.
 const DRAG_THRESHOLD_PX = 5;
 
-// Map a row-relative X coordinate to a star value (1-5). Out-of-range
-// values clamp to the nearest end — drag past the rightmost star pins
-// to 5, drag left of the first star pins to 1. (Deselect-to-null lives
-// on the tap-toggle path; drag never produces 0.)
+type StarVariant = 'empty' | 'half' | 'full';
+
+// Map a (1-based) star slot + the current 1-10 rating to its visual
+// variant. Star N is full when rating >= N * 2, half when rating ==
+// N * 2 - 1, otherwise empty. Null rating → all empty.
+function getStarVariant(starIndex: number, rating: number | null): StarVariant {
+    if (rating === null) return 'empty';
+    if (rating >= starIndex * 2) return 'full';
+    if (rating === starIndex * 2 - 1) return 'half';
+    return 'empty';
+}
+
+// Map a row-relative X coordinate to a 1-10 rating. Each star occupies
+// rowWidth/STAR_COUNT pixels; left half maps to (starIndex*2 - 1),
+// right half to starIndex*2. Out-of-range coordinates clamp to the
+// nearest endpoint — drag past the rightmost star pins to 10, drag
+// before the first half pins to 1. (Deselect-to-null lives on the
+// tap-toggle path; drag never produces 0.)
 function valueFromRowX(localX: number, rowWidth: number): number {
     if (rowWidth <= 0) return 1;
-    const perStar = rowWidth / STAR_COUNT;
-    const idx = Math.floor(localX / perStar);
-    return Math.max(1, Math.min(STAR_COUNT, idx + 1));
+    const halfWidth = rowWidth / HALF_COUNT;
+    const idx = Math.floor(localX / halfWidth);
+    return Math.max(1, Math.min(HALF_COUNT, idx + 1));
 }
 
 // Bottom-sheet star rating prompt used after a Watched transition.
@@ -66,27 +80,25 @@ export function RatingSheet({
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
     // Tentative selection — committed only when Done is pressed.
-    // Tapping the same star a second time deselects it (back to null).
+    // Tapping the same half-star value a second time deselects it.
     const [selected, setSelected] = useState<number | null>(initialRating);
     // Press-in preview — lights stars while the user holds. Clears on
     // press-out so the display falls back to `selected`.
     const [pressedRating, setPressedRating] = useState<number | null>(null);
-    // Measured row width — set via onLayout. Drives the X→star mapping
-    // for drag gestures.
+    // Measured row width — set via onLayout. Drives the X→value mapping.
     const [rowWidth, setRowWidth] = useState(0);
 
     // Refs mirror state for the PanResponder closures: the responder is
     // created once via useRef, so its handlers can't close over the
-    // latest state values. setSelected/setPressedRating are stable so
-    // they don't need ref mirroring, but rowWidth and pressedRating
-    // (which we *read* during handlers) do.
+    // latest state values.
     const rowRef = useRef<View>(null);
     const rowWidthRef = useRef(0);
     const rowPageXRef = useRef(0);
     const pressedRatingRef = useRef<number | null>(null);
-    // Which star last triggered a haptic. Drag haptics fire once per
-    // transition into a new star rather than on every move event.
-    const lastHapticStarRef = useRef<number | null>(null);
+    // Which value last triggered a haptic. Drag haptics fire once per
+    // transition into a new half-star value rather than on every move
+    // event.
+    const lastHapticValueRef = useRef<number | null>(null);
 
     useEffect(() => {
         rowWidthRef.current = rowWidth;
@@ -95,14 +107,12 @@ export function RatingSheet({
         pressedRatingRef.current = pressedRating;
     }, [pressedRating]);
 
-    // Resync internal state to the prop each time the sheet opens, so
-    // re-rate flows show the existing rating and first-rate flows
-    // start unselected.
+    // Resync internal state to the prop each time the sheet opens.
     useEffect(() => {
         if (visible) {
             setSelected(initialRating);
             setPressedRating(null);
-            lastHapticStarRef.current = null;
+            lastHapticValueRef.current = null;
         }
     }, [visible, initialRating]);
 
@@ -117,12 +127,9 @@ export function RatingSheet({
         });
     }
 
-    // Row-level drag gesture. Quick taps still go through the per-star
+    // Row-level drag gesture. Quick taps still go through the per-half
     // Pressables (onStartShouldSet returns false); only crossing the
-    // DRAG_THRESHOLD_PX claims the responder for drag-to-rate. Once
-    // PanResponder owns the gesture, selection follows the finger and
-    // commits on release with SET semantics (no toggle — dragging to
-    // "3" means "I want 3", not "deselect if already 3").
+    // DRAG_THRESHOLD_PX claims the responder for drag-to-rate.
     const panResponder = useRef(
         PanResponder.create({
             onStartShouldSetPanResponder: () => false,
@@ -133,11 +140,8 @@ export function RatingSheet({
                 const localX = g.x0 - rowPageXRef.current;
                 const value = valueFromRowX(localX, rowWidthRef.current);
                 setPressedRating(value);
-                // Skip haptic if the per-star Pressable just fired one
-                // for this same star — avoids the double-haptic when
-                // the gesture transitions from Pressable to PanResponder.
-                if (lastHapticStarRef.current !== value) {
-                    lastHapticStarRef.current = value;
+                if (lastHapticValueRef.current !== value) {
+                    lastHapticValueRef.current = value;
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }
             },
@@ -145,36 +149,34 @@ export function RatingSheet({
                 const localX = g.moveX - rowPageXRef.current;
                 const value = valueFromRowX(localX, rowWidthRef.current);
                 setPressedRating(value);
-                if (lastHapticStarRef.current !== value) {
-                    lastHapticStarRef.current = value;
+                if (lastHapticValueRef.current !== value) {
+                    lastHapticValueRef.current = value;
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }
             },
             onPanResponderRelease: () => {
                 const committed = pressedRatingRef.current;
                 setPressedRating(null);
-                lastHapticStarRef.current = null;
+                lastHapticValueRef.current = null;
                 if (committed !== null) setSelected(committed);
             },
             onPanResponderTerminate: () => {
                 setPressedRating(null);
-                lastHapticStarRef.current = null;
+                lastHapticValueRef.current = null;
             },
         }),
     ).current;
 
-    function handleStarPressIn(value: number) {
+    function handleHalfPressIn(value: number) {
         setPressedRating(value);
         // Share the haptic-tracker with the PanResponder so its
-        // onPanResponderGrant doesn't re-fire a haptic for this star.
-        lastHapticStarRef.current = value;
-        // Letterboxd-style light impact as the finger lands. Fire and
-        // forget — failures (unsupported device, etc.) are silent.
+        // onPanResponderGrant doesn't re-fire a haptic for this value.
+        lastHapticValueRef.current = value;
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    function handleStarPress(value: number) {
-        // Tap-toggle: same star a second time clears the selection.
+    function handleHalfPress(value: number) {
+        // Tap-toggle: same value a second time clears the selection.
         setSelected((curr) => (curr === value ? null : value));
     }
 
@@ -227,30 +229,93 @@ export function RatingSheet({
                         style={styles.starsRow}
                         {...panResponder.panHandlers}
                     >
-                        {[1, 2, 3, 4, 5].map((value) => {
-                            const filled =
-                                effectiveRating !== null && value <= effectiveRating;
-                            const color = filled ? palette.accent : palette.textMuted;
+                        {[1, 2, 3, 4, 5].map((starIndex) => {
+                            const variant = getStarVariant(starIndex, effectiveRating);
+                            const leftValue = starIndex * 2 - 1;
+                            const rightValue = starIndex * 2;
+                            const iconColor =
+                                variant === 'empty'
+                                    ? palette.textMuted
+                                    : palette.accent;
                             return (
-                                <Pressable
-                                    key={value}
-                                    onPressIn={() => handleStarPressIn(value)}
-                                    onPressOut={() => setPressedRating(null)}
-                                    onPress={() => handleStarPress(value)}
-                                    disabled={busy}
-                                    hitSlop={spacing.xs}
-                                    style={({ pressed }) => [
-                                        styles.starButton,
-                                        { opacity: pressed || busy ? 0.6 : 1 },
-                                    ]}
-                                >
-                                    <Star
-                                        color={color}
-                                        fill={filled ? palette.accent : 'transparent'}
-                                        size={36}
-                                        strokeWidth={ICON_STROKE_WIDTH}
+                                <View key={starIndex} style={styles.starCell}>
+                                    {/* The visual layer renders behind the
+                                        tap overlays; pointerEvents:none on
+                                        the style so finger events fall
+                                        through to the Pressable halves. */}
+                                    <View style={styles.starVisual}>
+                                        {variant === 'full' ? (
+                                            <Star
+                                                color={iconColor}
+                                                fill={palette.accent}
+                                                size={36}
+                                                strokeWidth={ICON_STROKE_WIDTH}
+                                            />
+                                        ) : variant === 'half' ? (
+                                            // StarHalf fills the left side
+                                            // only; the right side is
+                                            // outlined by an underlying
+                                            // empty Star at the same
+                                            // position to keep the full
+                                            // star silhouette intact.
+                                            <View style={styles.starStack}>
+                                                <Star
+                                                    color={palette.textMuted}
+                                                    fill="transparent"
+                                                    size={36}
+                                                    strokeWidth={ICON_STROKE_WIDTH}
+                                                />
+                                                <View style={styles.halfOverlay}>
+                                                    <StarHalf
+                                                        color={palette.accent}
+                                                        fill={palette.accent}
+                                                        size={36}
+                                                        strokeWidth={
+                                                            ICON_STROKE_WIDTH
+                                                        }
+                                                    />
+                                                </View>
+                                            </View>
+                                        ) : (
+                                            <Star
+                                                color={palette.textMuted}
+                                                fill="transparent"
+                                                size={36}
+                                                strokeWidth={ICON_STROKE_WIDTH}
+                                            />
+                                        )}
+                                    </View>
+                                    {/* Two tap zones overlaid on each
+                                        star — left half writes the odd
+                                        ½-star value, right half writes
+                                        the even whole-star value. */}
+                                    <Pressable
+                                        onPressIn={() =>
+                                            handleHalfPressIn(leftValue)
+                                        }
+                                        onPressOut={() => setPressedRating(null)}
+                                        onPress={() => handleHalfPress(leftValue)}
+                                        disabled={busy}
+                                        style={({ pressed }) => [
+                                            styles.halfHit,
+                                            styles.halfLeft,
+                                            { opacity: pressed || busy ? 0.6 : 1 },
+                                        ]}
                                     />
-                                </Pressable>
+                                    <Pressable
+                                        onPressIn={() =>
+                                            handleHalfPressIn(rightValue)
+                                        }
+                                        onPressOut={() => setPressedRating(null)}
+                                        onPress={() => handleHalfPress(rightValue)}
+                                        disabled={busy}
+                                        style={({ pressed }) => [
+                                            styles.halfHit,
+                                            styles.halfRight,
+                                            { opacity: pressed || busy ? 0.6 : 1 },
+                                        ]}
+                                    />
+                                </View>
                             );
                         })}
                     </View>
@@ -297,6 +362,8 @@ export function RatingSheet({
     );
 }
 
+const STAR_CELL_SIZE = 44;
+
 const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
@@ -322,11 +389,35 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
         paddingVertical: spacing.sm,
     },
-    starButton: {
-        width: 44,
-        height: 44,
+    starCell: {
+        width: STAR_CELL_SIZE,
+        height: STAR_CELL_SIZE,
+        // relative wrapper; visual + two tap zones overlay inside.
+    },
+    starVisual: {
+        ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
         justifyContent: 'center',
+        pointerEvents: 'none',
+    },
+    starStack: {
+        width: 36,
+        height: 36,
+    },
+    halfOverlay: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    halfHit: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        width: STAR_CELL_SIZE / 2,
+    },
+    halfLeft: {
+        left: 0,
+    },
+    halfRight: {
+        right: 0,
     },
     doneButton: {
         alignSelf: 'center',

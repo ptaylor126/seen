@@ -422,8 +422,13 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
                 : null;
         const ratedFriendName = friendDisplayNameById.get(recentRated.user_id);
         if (ratedTitle && ratedFriendName && recentRated.rating !== null) {
-            const stars = recentRated.rating === 1 ? 'star' : 'stars';
-            activityHint = `${firstName(ratedFriendName)} just rated ${ratedTitle} ${recentRated.rating} ${stars}`;
+            // recentRated.rating is on the half-star 1-10 scale; divide
+            // to get the user-visible star count (4.5★, 5★, etc.).
+            const starCount = recentRated.rating / 2;
+            // Singular only for exactly one whole star (stored as 2);
+            // halves and other values stay plural in English.
+            const starsLabel = recentRated.rating === 2 ? 'star' : 'stars';
+            activityHint = `${firstName(ratedFriendName)} just rated ${ratedTitle} ${starCount} ${starsLabel}`;
         }
     }
 

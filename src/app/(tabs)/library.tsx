@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useUnreadCount } from '@/hooks/use-unread-count';
+import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
@@ -286,7 +287,8 @@ export default function LibraryScreen() {
         const watchedDate = item.watched_at
             ? new Date(item.watched_at).toLocaleDateString()
             : '';
-        const ratingDisplay = item.rating !== null ? `${item.rating}★` : '';
+        const ratingDisplay =
+            item.rating !== null ? formatRatingStars(item.rating) : '';
         const watchedLine = [ratingDisplay, watchedDate].filter(Boolean).join(' · ');
         const showWatchedLine = activeTab === 'watched' && watchedLine.length > 0;
 

@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
-import { type MediaType } from '@/lib/rating';
+import { formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
@@ -281,7 +281,8 @@ export default function FriendDetailScreen() {
         const watchedDate = item.watchedAt
             ? new Date(item.watchedAt).toLocaleDateString()
             : '';
-        const ratingDisplay = item.rating !== null ? `${item.rating}★` : '';
+        const ratingDisplay =
+            item.rating !== null ? formatRatingStars(item.rating) : '';
         const watchedLine = [ratingDisplay, watchedDate]
             .filter(Boolean)
             .join(' · ');

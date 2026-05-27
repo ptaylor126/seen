@@ -40,7 +40,7 @@ A user's library entry for a title. One row per (user, tmdb_id, media_type).
 | tmdb_id | int | TMDB ID |
 | media_type | text | 'movie' or 'tv' |
 | status | text | 'watchlist' / 'watching' / 'watched' |
-| rating | int | NULL or 1-5, only if status='watched' |
+| rating | int | NULL or 1-10 (half-star scale; odd = ½, even = whole), only if status='watched' |
 | is_private | bool | Default false |
 | watched_at | timestamptz | Set when status moves to 'watched' |
 | created_at | timestamptz | Default now() |

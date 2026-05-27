@@ -112,8 +112,12 @@ export default function BestWatchedScreen() {
     }
 
     async function setStarsRating(value: number) {
-        // Toggle off if tapping the currently-selected star.
-        const newRating = rating === value ? null : value;
+        // Stored rating is on the 1-10 half-star scale; the onboarding
+        // picker only exposes whole stars, so a tap on visible star N
+        // maps to value * 2 (star 5 → 10 stored). Toggle off if the
+        // user re-taps the currently-selected star.
+        const wholeStarValue = value * 2;
+        const newRating = rating === wholeStarValue ? null : wholeStarValue;
         setRating(newRating);
         // Light haptic on each rating change — same Letterboxd-style
         // feel the modal sheet uses.
@@ -226,7 +230,11 @@ export default function BestWatchedScreen() {
                         </Text>
                         <View style={styles.starsRow}>
                             {[1, 2, 3, 4, 5].map((value) => {
-                                const filled = rating !== null && value <= rating;
+                                // rating is stored on the 1-10 half-star
+                                // scale; visible star N is "filled" when
+                                // the stored value is >= N * 2.
+                                const filled =
+                                    rating !== null && rating >= value * 2;
                                 const color = filled
                                     ? palette.accent
                                     : palette.textMuted;
