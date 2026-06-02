@@ -94,11 +94,12 @@ export default function ProfileScreen() {
         ]);
     }
 
-    // Build a mailto: with structured prompts pre-filled in the body so
-    // testers don't stare at a blank email. Device + app version are
-    // auto-filled so reports come back with the context we need to
-    // reproduce issues. Falls back to a plain alert if no mail client
-    // is configured (e.g. fresh simulator without a Mail account).
+    // Build a mailto: with blank space at the top of the body for the
+    // tester to write freely; device + app version sit below a `---`
+    // separator as a footer. The previous structured-prompt template
+    // (I was doing / What happened / What I expected) felt prescriptive
+    // — a blank canvas + footer reads more like "tell me anything."
+    // Falls back to a plain alert if no mail client is configured.
     async function handleSendFeedback() {
         const appVersion = Constants.expoConfig?.version ?? 'unknown';
         const deviceLabel =
@@ -106,16 +107,9 @@ export default function ProfileScreen() {
                 ? `iOS ${Platform.Version}`
                 : `Android API ${Platform.Version}`;
         const subject = 'Seen feedback';
-        const body = [
-            'I was doing:',
-            '',
-            'What happened:',
-            '',
-            'What I expected:',
-            '',
-            `Device: ${deviceLabel}`,
-            `App version: ${appVersion}`,
-        ].join('\n');
+        // Four leading newlines drop the cursor onto a blank area; the
+        // separator + footer sit below the user's drafting space.
+        const body = `\n\n\n\n---\nDevice: ${deviceLabel}\nApp version: ${appVersion}`;
         const url = `mailto:thisispaultaylor@icloud.com?subject=${encodeURIComponent(
             subject,
         )}&body=${encodeURIComponent(body)}`;
