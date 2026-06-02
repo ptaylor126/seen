@@ -36,23 +36,30 @@ export default function EditProfileScreen() {
     const { status, profile, refresh } = useProfile();
 
     const [displayName, setDisplayName] = useState('');
-    const [initialDisplayName, setInitialDisplayName] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Hydrate the form from the profile context exactly once — after
-    // first hydration we don't want background profile re-fetches to
-    // clobber the user's in-progress edits.
+    // Hydrate the editable input from the profile context exactly once.
+    // We deliberately DO NOT keep a second state slot for the baseline:
+    // the previous implementation set displayName and initialDisplayName
+    // in the same effect, which raced with autoFocus-driven keystrokes
+    // — fast typers got their input clobbered when the effect committed,
+    // and the dirty check then compared two equal values. Reading the
+    // baseline straight off the context every render means there's only
+    // one source of truth and nothing to drift against.
     const hydratedRef = useRef(false);
     useEffect(() => {
         if (profile && !hydratedRef.current) {
             setDisplayName(profile.displayName);
-            setInitialDisplayName(profile.displayName);
             hydratedRef.current = true;
         }
     }, [profile]);
 
+    // Baseline = the currently-saved name. Trimming both sides so
+    // leading/trailing whitespace can't fake a dirty flag in either
+    // direction.
+    const baseline = (profile?.displayName ?? '').trim();
     const trimmed = displayName.trim();
-    const isDirty = trimmed !== initialDisplayName;
+    const isDirty = trimmed !== baseline;
     const isValid =
         trimmed.length > 0 && trimmed.length <= MAX_DISPLAY_NAME_LENGTH;
     const canSave = isDirty && isValid && !saving;
