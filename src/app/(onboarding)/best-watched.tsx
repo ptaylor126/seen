@@ -1,7 +1,6 @@
-import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, Star } from 'lucide-react-native';
+import { ChevronLeft } from 'lucide-react-native';
 import { useRef, useState } from 'react';
 import {
     Alert,
@@ -22,7 +21,9 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
+import { RatingSheet } from '@/components/rating-sheet';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
+import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { imageUrl } from '@/lib/tmdb';
 import {
@@ -39,8 +40,6 @@ interface PickedItem {
     title: string;
     posterPath: string;
 }
-
-const STAR_SIZE = 40;
 
 export default function BestWatchedScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -67,6 +66,11 @@ export default function BestWatchedScreen() {
     const [picked, setPicked] = useState<PickedItem | null>(null);
     const [rating, setRating] = useState<number | null>(null);
     const [busy, setBusy] = useState(false);
+    const [ratingBusy, setRatingBusy] = useState(false);
+    // RatingSheet opens automatically after a pick, and can be
+    // reopened by tapping the confirmation card's rating row (e.g.
+    // after Skip, or to change the rating).
+    const [showRatingSheet, setShowRatingSheet] = useState(false);
 
     async function handlePick(item: SearchableItem) {
         if (busy) return;
@@ -80,8 +84,9 @@ export default function BestWatchedScreen() {
             if (!userId) throw new Error('Not authenticated');
 
             const title = item.media_type === 'movie' ? item.title : item.name;
-            // Insert as watched with no rating yet — rating comes next
-            // and updates this same row via the unique constraint.
+            // Insert as watched with no rating yet — the RatingSheet
+            // will fire next and update this same row via the unique
+            // constraint.
             const { error } = await supabase.from('items').upsert(
                 {
                     user_id: userId,
@@ -100,6 +105,7 @@ export default function BestWatchedScreen() {
                 posterPath: item.poster_path,
             });
             setRating(null);
+            setShowRatingSheet(true);
         } catch (err) {
             console.error('best-watched add failed:', err);
             Alert.alert(
@@ -111,36 +117,43 @@ export default function BestWatchedScreen() {
         }
     }
 
-    async function setStarsRating(value: number) {
-        // Stored rating is on the 1-10 half-star scale; the onboarding
-        // picker only exposes whole stars, so a tap on visible star N
-        // maps to value * 2 (star 5 → 10 stored). Toggle off if the
-        // user re-taps the currently-selected star.
-        const wholeStarValue = value * 2;
-        const newRating = rating === wholeStarValue ? null : wholeStarValue;
-        setRating(newRating);
-        // Light haptic on each rating change — same Letterboxd-style
-        // feel the modal sheet uses.
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        if (!picked) return;
+    async function handleRatingSubmit(newRating: number | null) {
+        setShowRatingSheet(false);
+        if (!picked || newRating === null) {
+            // Skip / backdrop dismiss — leave rating null so the
+            // confirmation card prompts the user to rate, and Continue
+            // stays disabled until they do.
+            return;
+        }
+        setRatingBusy(true);
         try {
             const {
                 data: { session },
             } = await supabase.auth.getSession();
             const userId = session?.user.id;
             if (!userId) return;
-            // Persist rating + the derived rating_thumb on any matching
-            // open recs (mirrors applyWatchedRating in lib/rating, but
-            // simpler since onboarding never has open recs yet).
-            await supabase
+            // Onboarding never has open recs yet, so we skip the
+            // rating_thumb derivation that applyWatchedRating does
+            // outside onboarding.
+            const { error } = await supabase
                 .from('items')
                 .update({ rating: newRating })
                 .eq('user_id', userId)
                 .eq('tmdb_id', picked.tmdbId)
                 .eq('media_type', picked.mediaType);
+            if (error) throw error;
+            setRating(newRating);
         } catch (err) {
             console.warn('best-watched rating save failed:', err);
+        } finally {
+            setRatingBusy(false);
         }
+    }
+
+    function handlePickAnother() {
+        setPicked(null);
+        setRating(null);
+        setShowRatingSheet(false);
     }
 
     function handleContinue() {
@@ -153,7 +166,8 @@ export default function BestWatchedScreen() {
         router.push('/(onboarding)/currently-watching');
     }
 
-    const canContinue = picked !== null && rating !== null && !busy;
+    const canContinue =
+        picked !== null && rating !== null && !busy && !ratingBusy;
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.bg }}>
@@ -213,7 +227,12 @@ export default function BestWatchedScreen() {
                             { backgroundColor: palette.surfaceAlt },
                         ]}
                     >
-                        <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        <Text
+                            style={[
+                                typography.caption,
+                                { color: palette.textMuted },
+                            ]}
+                        >
                             Added
                         </Text>
                         <Image
@@ -223,50 +242,56 @@ export default function BestWatchedScreen() {
                             transition={150}
                         />
                         <Text
-                            style={[typography.bodyEmphasis, { color: palette.text }]}
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.text },
+                            ]}
                             numberOfLines={2}
                         >
                             {picked.title}
                         </Text>
-                        <View style={styles.starsRow}>
-                            {[1, 2, 3, 4, 5].map((value) => {
-                                // rating is stored on the 1-10 half-star
-                                // scale; visible star N is "filled" when
-                                // the stored value is >= N * 2.
-                                const filled =
-                                    rating !== null && rating >= value * 2;
-                                const color = filled
-                                    ? palette.accent
-                                    : palette.textMuted;
-                                return (
-                                    <Pressable
-                                        key={value}
-                                        onPress={() => setStarsRating(value)}
-                                        hitSlop={spacing.xs}
-                                        style={({ pressed }) => [
-                                            styles.starButton,
-                                            { opacity: pressed ? 0.6 : 1 },
-                                        ]}
-                                    >
-                                        <Star
-                                            color={color}
-                                            fill={filled ? palette.accent : 'transparent'}
-                                            size={STAR_SIZE}
-                                            strokeWidth={ICON_STROKE_WIDTH}
-                                        />
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
+                        {/* Tappable rating row — opens the same
+                            RatingSheet that fires automatically after
+                            the pick, so a user who skipped can come
+                            back and rate (and one who already rated
+                            can change it). */}
                         <Pressable
-                            onPress={() => {
-                                setPicked(null);
-                                setRating(null);
-                            }}
+                            onPress={() => setShowRatingSheet(true)}
+                            disabled={ratingBusy}
                             hitSlop={spacing.sm}
-                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                            style={({ pressed }) => [
+                                pressed && { opacity: 0.6 },
+                            ]}
                         >
-                            <Text style={[typography.caption, { color: palette.accent }]}>
+                            <Text
+                                style={[
+                                    typography.heading,
+                                    {
+                                        color:
+                                            rating !== null
+                                                ? palette.accent
+                                                : palette.textMuted,
+                                    },
+                                ]}
+                            >
+                                {rating !== null
+                                    ? formatRatingStars(rating)
+                                    : 'Tap to rate'}
+                            </Text>
+                        </Pressable>
+                        <Pressable
+                            onPress={handlePickAnother}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                pressed && { opacity: 0.6 },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.accent },
+                                ]}
+                            >
                                 Pick something else
                             </Text>
                         </Pressable>
@@ -325,6 +350,13 @@ export default function BestWatchedScreen() {
                 </Text>
             </Pressable>
         </View>
+
+        <RatingSheet
+            visible={showRatingSheet}
+            busy={ratingBusy}
+            initialRating={rating}
+            onSubmit={handleRatingSubmit}
+        />
         </View>
     );
 }
@@ -353,17 +385,6 @@ const styles = StyleSheet.create({
         width: 100,
         height: 150,
         borderRadius: radius.sm,
-    },
-    starsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.xs,
-    },
-    starButton: {
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     footer: {
         // Absolutely positioned so the Continue + Skip buttons snap to
