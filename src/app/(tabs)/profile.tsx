@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -16,16 +16,10 @@ import {
 } from 'react-native';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { useProfile } from '@/hooks/use-profile';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
-import supabase from '@/lib/supabase';
 import { getPalette, ICON_STROKE_WIDTH, spacing, typography } from '@/theme/theme';
-
-interface ProfileData {
-    handle: string;
-    display_name: string;
-    avatar_url: string | null;
-}
 
 const AVATAR_SIZE = 96;
 
@@ -34,44 +28,12 @@ export default function ProfileScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const { count: unreadCount } = useUnreadCount();
-
-    const [profile, setProfile] = useState<ProfileData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        let active = true;
-
-        (async () => {
-            try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const userId = session?.user.id;
-                if (!userId) throw new Error('Not authenticated');
-
-                const { data, error: queryError } = await supabase
-                    .from('profiles')
-                    .select('handle, display_name, avatar_url')
-                    .eq('id', userId)
-                    .single();
-
-                if (queryError) throw queryError;
-                if (!active) return;
-                setProfile(data);
-            } catch (err) {
-                if (!active) return;
-                console.error('profile fetch failed:', err);
-                setError(err instanceof Error ? err.message : 'Failed to load profile');
-            } finally {
-                if (active) setLoading(false);
-            }
-        })();
-
-        return () => {
-            active = false;
-        };
-    }, []);
+    // Read from the shared profile context so /profile/edit's
+    // refresh() call propagates here automatically. Previously this
+    // screen kept its own local state with a once-on-mount fetch,
+    // which meant edits never showed because the tab stays mounted
+    // and the effect never re-fired.
+    const { status, profile } = useProfile();
 
     async function handleSignOut() {
         try {
@@ -152,7 +114,7 @@ export default function ProfileScreen() {
         { id: 'signout', label: 'Sign out', onPress: confirmSignOut },
     ];
 
-    if (loading) {
+    if (status === 'loading') {
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
                 <ScreenHeader title="Profile" unreadCount={unreadCount} />
@@ -163,28 +125,31 @@ export default function ProfileScreen() {
         );
     }
 
-    if (error || !profile) {
+    if (!profile) {
+        // useProfile retries on transient errors internally, so a null
+        // profile after status=ready is a genuine miss (e.g. trigger
+        // never created a row). Same fallback copy as before.
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
                 <ScreenHeader title="Profile" unreadCount={unreadCount} />
                 <View style={styles.fillCenter}>
                     <Text style={[typography.body, { color: palette.error }]}>
-                        {error ?? 'Profile not available'}
+                        Profile not available
                     </Text>
                 </View>
             </View>
         );
     }
 
-    const firstLetter = profile.display_name[0]?.toUpperCase() ?? '?';
+    const firstLetter = profile.displayName[0]?.toUpperCase() ?? '?';
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader title="Profile" unreadCount={unreadCount} />
             <View style={styles.card}>
-                {profile.avatar_url ? (
+                {profile.avatarUrl ? (
                     <Image
-                        source={{ uri: profile.avatar_url }}
+                        source={{ uri: profile.avatarUrl }}
                         style={[styles.avatar, { backgroundColor: palette.accent }]}
                         contentFit="cover"
                         transition={200}
@@ -205,7 +170,7 @@ export default function ProfileScreen() {
                 <Text
                     style={[typography.display, styles.displayName, { color: palette.text }]}
                 >
-                    {profile.display_name}
+                    {profile.displayName}
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
                     @{profile.handle}
