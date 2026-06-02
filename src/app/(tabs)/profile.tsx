@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
@@ -5,6 +6,8 @@ import { Fragment, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Linking,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -91,11 +94,61 @@ export default function ProfileScreen() {
         ]);
     }
 
+    // Build a mailto: with structured prompts pre-filled in the body so
+    // testers don't stare at a blank email. Device + app version are
+    // auto-filled so reports come back with the context we need to
+    // reproduce issues. Falls back to a plain alert if no mail client
+    // is configured (e.g. fresh simulator without a Mail account).
+    async function handleSendFeedback() {
+        const appVersion = Constants.expoConfig?.version ?? 'unknown';
+        const deviceLabel =
+            Platform.OS === 'ios'
+                ? `iOS ${Platform.Version}`
+                : `Android API ${Platform.Version}`;
+        const subject = 'Seen feedback';
+        const body = [
+            'I was doing:',
+            '',
+            'What happened:',
+            '',
+            'What I expected:',
+            '',
+            `Device: ${deviceLabel}`,
+            `App version: ${appVersion}`,
+        ].join('\n');
+        const url = `mailto:thisispaultaylor@icloud.com?subject=${encodeURIComponent(
+            subject,
+        )}&body=${encodeURIComponent(body)}`;
+
+        try {
+            const canOpen = await Linking.canOpenURL(url);
+            if (!canOpen) {
+                Alert.alert(
+                    'No mail app found',
+                    'Please email feedback to thisispaultaylor@icloud.com directly.',
+                );
+                return;
+            }
+            await Linking.openURL(url);
+        } catch (err) {
+            console.warn('open mailto failed:', err);
+            Alert.alert(
+                'No mail app found',
+                'Please email feedback to thisispaultaylor@icloud.com directly.',
+            );
+        }
+    }
+
     const rows: Array<{ id: string; label: string; onPress: () => void }> = [
         {
             id: 'edit',
             label: 'Edit profile',
             onPress: () => router.push('/profile/edit'),
+        },
+        {
+            id: 'feedback',
+            label: 'Send feedback',
+            onPress: handleSendFeedback,
         },
         {
             id: 'account',
