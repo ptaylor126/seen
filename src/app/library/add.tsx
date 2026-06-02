@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
@@ -40,6 +41,7 @@ export default function LibraryAddScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const { open: keyboardOpen } = useKeyboard();
     // Optional recommend-flow context. When the user enters this screen
     // from a friend profile's "Recommend something" button, the friend's
     // user id is passed in as `recommendTo`. We forward it as `preselect`
@@ -258,13 +260,24 @@ export default function LibraryAddScreen() {
                         <ActivityIndicator color={palette.accent} />
                     </View>
                 ) : results === null ? (
-                    <View style={styles.statusBlock}>
-                        <Text
-                            style={[typography.body, { color: palette.textMuted }]}
-                        >
-                            Search for a film or TV show
-                        </Text>
-                    </View>
+                    // Suppress the "Search for…" placeholder while the
+                    // keyboard is up — the user is clearly typing, and
+                    // a centered prompt floating just above the keyboard
+                    // reads as misalignment rather than guidance. When
+                    // the keyboard is dismissed (e.g. by tapping the
+                    // scrim) the placeholder reappears.
+                    keyboardOpen ? null : (
+                        <View style={styles.statusBlock}>
+                            <Text
+                                style={[
+                                    typography.body,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                Search for a film or TV show
+                            </Text>
+                        </View>
+                    )
                 ) : results.length === 0 ? (
                     <View style={styles.statusBlock}>
                         <Text
