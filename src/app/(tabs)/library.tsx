@@ -139,6 +139,7 @@ export default function LibraryScreen() {
                             .select(
                                 'id, tmdb_id, media_type, rating, watched_at, updated_at',
                             )
+                            .eq('user_id', userId)
                             .eq('status', activeTab)
                             .order('updated_at', { ascending: false }),
                         supabase
