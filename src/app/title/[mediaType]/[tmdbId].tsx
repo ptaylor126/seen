@@ -260,53 +260,105 @@ export default function TitleDetailScreen() {
         // ignore further taps.
         if (updating || ratingBusy || showRatingSheet || !mediaType) return;
 
-        // Re-tapping Watched while already watched is meaningful — it
-        // reopens the rating sheet so the user can change their stars.
-        // Skip the redundant upsert in that case.
-        const watchedReTap = newStatus === 'watched' && currentStatus === 'watched';
-        if (currentStatus === newStatus && !watchedReTap) return;
-
-        let succeeded = !watchedReTap ? false : true;
-
-        if (!watchedReTap) {
-            setUpdating(true);
-            try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const userId = session?.user.id;
-                if (!userId) throw new Error('Not authenticated');
-
-                const row = {
-                    user_id: userId,
-                    tmdb_id: tmdbId,
-                    media_type: mediaType,
-                    status: newStatus,
-                    // Only stamp watched_at on the watched transition; other
-                    // status changes leave it untouched (column-omit semantics
-                    // in upsert means the existing value is preserved).
-                    ...(newStatus === 'watched'
-                        ? { watched_at: new Date().toISOString() }
-                        : {}),
-                };
-
-                const { error: upsertError } = await supabase
-                    .from('items')
-                    .upsert(row, { onConflict: 'user_id,tmdb_id,media_type' });
-                if (upsertError) throw upsertError;
-
-                setCurrentStatus(newStatus);
-                succeeded = true;
-            } catch (err) {
-                console.error('items upsert failed:', err);
-                surfaceUpdateError(err);
-            } finally {
-                setUpdating(false);
-            }
+        // Tapping the currently-active status toggles it off: delete the
+        // items row entirely. A row with no status doesn't exist in our
+        // model, and the rating lives on the row, so it goes too.
+        if (currentStatus === newStatus) {
+            await toggleOff();
+            return;
         }
 
-        if (succeeded && newStatus === 'watched') {
-            setShowRatingSheet(true);
+        setUpdating(true);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+
+            const row = {
+                user_id: userId,
+                tmdb_id: tmdbId,
+                media_type: mediaType,
+                status: newStatus,
+                // Only stamp watched_at on the watched transition; other
+                // status changes leave it untouched (column-omit semantics
+                // in upsert means the existing value is preserved).
+                ...(newStatus === 'watched'
+                    ? { watched_at: new Date().toISOString() }
+                    : {}),
+            };
+
+            const { error: upsertError } = await supabase
+                .from('items')
+                .upsert(row, { onConflict: 'user_id,tmdb_id,media_type' });
+            if (upsertError) throw upsertError;
+
+            setCurrentStatus(newStatus);
+            if (newStatus === 'watched') {
+                setShowRatingSheet(true);
+            }
+        } catch (err) {
+            console.error('items upsert failed:', err);
+            surfaceUpdateError(err);
+        } finally {
+            setUpdating(false);
+        }
+    }
+
+    // Toggle-off path for setStatus: delete the items row entirely. Only
+    // 'watched' with a rating prompts a confirm — watchlist and watching
+    // have no rating to lose (items_rating_only_when_watched_check),
+    // and silent removal avoids tap-friction for the common case.
+    async function toggleOff() {
+        if (!mediaType) return;
+
+        if (currentStatus === 'watched' && currentRating !== null) {
+            const confirmed = await new Promise<boolean>((resolve) => {
+                Alert.alert(
+                    'Remove from library?',
+                    'This deletes the show from your library and loses your rating.',
+                    [
+                        {
+                            text: 'Cancel',
+                            style: 'cancel',
+                            onPress: () => resolve(false),
+                        },
+                        {
+                            text: 'Remove',
+                            style: 'destructive',
+                            onPress: () => resolve(true),
+                        },
+                    ],
+                    { cancelable: true, onDismiss: () => resolve(false) },
+                );
+            });
+            if (!confirmed) return;
+        }
+
+        setUpdating(true);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+
+            const { error } = await supabase
+                .from('items')
+                .delete()
+                .eq('user_id', userId)
+                .eq('tmdb_id', tmdbId)
+                .eq('media_type', mediaType);
+            if (error) throw error;
+
+            setCurrentStatus(null);
+            setCurrentRating(null);
+        } catch (err) {
+            console.error('items delete failed:', err);
+            surfaceUpdateError(err);
+        } finally {
+            setUpdating(false);
         }
     }
 
