@@ -50,6 +50,32 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 **Open questions**
 - None.
 
+**Session close**
+
+*Shipped*
+- Library: list/grid view modes (2/3/4 density, global preference persisted to AsyncStorage), recommender attribution chips + rating chips, grouped view controls (filled list/grid toggle, stroked density numbers), Reanimated switch animation.
+- Home: "Friends are watching" restructured to social proof — grouped by show, stacked watcher avatars (cap 5 + N), sorted by watcher count then recency, Watching status only.
+- Shared `SearchBar` component on both Home and Library (TMDB search + add); removed Library's Plus icon and local-rows filter; consolidated header.
+- Avatar fallback: deterministic color-by-id, all sites seeded on userId, consistent color per person everywhere including the Friends list.
+- Sign-in logo wordmark; splash hold; asset refresh; floating pill invite button on Friends; unified `ScreenHeader` across Library / Friends / Profile / Inbox.
+- Fixed earlier: library tab leaking friends' items (explicit `user_id` filter), toggle-off to remove library items, badge counts pending friend requests separately.
+
+*Verified-only — NOT tested at scale; confirm with more testers*
+- Multi-watcher avatar stacking + "+N" overflow (needs several friends on one show).
+- Social-proof ordering by watcher count (needs varying counts across shows).
+- Avatar color differentiation across many users (only one friend so far → only two distinct hashes in play).
+- Friend-request badge persisting until actioned (no second account to test).
+- Splash and app icon (only render in a real dev/EAS build, not Expo Go).
+
+*Tech debt / lessons*
+- **LayoutAnimation no-ops under SDK 54's New Architecture (Fabric).** Mount/unmount animations registered via `LayoutAnimation.configureNext` run silently with no visible effect. Use `react-native-reanimated` `entering` / `exiting` / `layout` props instead — they work on both architectures. Applies to any future "thing appears next to other thing" animation.
+- **`items` RLS is permissive by design** (own + friends' public rows). Any "just my stuff" query must filter `user_id` explicitly; never rely on RLS as the scoping filter.
+- Removed Library's local-rows substring filter deliberately when the shared SearchBar took over. Revisit if a long-library filter becomes useful — it would coexist with the TMDB search bar but needs its own affordance.
+- v2 idea: Letterboxd CSV import (title + year → TMDB match), films-only, good cold-start lever for new users with existing watch history.
+
+*Next*
+- Cut a new EAS build with all of the above, supersede the build currently in External Beta, then share the TestFlight link.
+
 ---
 
 ## 2026-05-21
