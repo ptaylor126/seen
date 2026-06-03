@@ -1,22 +1,40 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Plus, Search } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import { LayoutGrid, LayoutList } from 'lucide-react-native';
+import { type ReactNode, useCallback, useState } from 'react';
 import {
     ActivityIndicator,
+    Dimensions,
     FlatList,
-    Keyboard,
     Pressable,
     StyleSheet,
+    type StyleProp,
     Text,
-    TextInput,
     useColorScheme,
     View,
+    type ViewStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, {
+    FadeIn,
+    FadeOut,
+    LinearTransition,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
+import {
+    SEARCH_OVERLAY_TOP_OFFSET,
+    SearchBarInput,
+    SearchBarOverlay,
+    useSearchBar,
+} from '@/components/search-bar';
 import { useUnreadCount } from '@/hooks/use-unread-count';
+import {
+    type LibraryGridCols,
+    type LibraryMode,
+    useLibraryView,
+} from '@/lib/library-view';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
@@ -46,9 +64,21 @@ interface LibraryRow {
     // Senders are deduped; totalCount === senders.length today but kept
     // separate so we can later cap the displayed list.
     recAttribution: {
-        senders: { handle: string; displayName: string }[];
+        senders: {
+            userId: string;
+            handle: string;
+            displayName: string;
+            avatarUrl: string | null;
+        }[];
         totalCount: number;
     } | null;
+}
+
+interface Sender {
+    userId: string;
+    handle: string;
+    displayName: string;
+    avatarUrl: string | null;
 }
 
 function firstName(displayName: string): string {
@@ -79,6 +109,25 @@ const EMPTY_MESSAGES: Record<ItemStatus, string> = {
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
 
+// Grid sizing: gap is wider at low density so the posters don't read as
+// crammed at grid-2, tighter at high density so we can fit grid-4 on
+// narrow screens. columnGap === rowGap in both cases.
+const POSTER_ASPECT = 1.5; // 2:3 poster
+const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
+    2: spacing.base,
+    3: spacing.sm,
+    4: spacing.sm,
+};
+
+const GRID_AVATAR_SIZE = 20;
+const GRID_PLUS_BADGE_HEIGHT = 14;
+
+function getGridCellWidth(cols: LibraryGridCols, screenWidth: number): number {
+    const gap = GRID_GAP_BY_COLS[cols];
+    const usable = screenWidth - 2 * spacing.base;
+    return Math.floor((usable - (cols - 1) * gap) / cols);
+}
+
 // N+1 metadata fetch — see prior journal entry for the trade-off. Posters
 // cache at the expo-image layer; only the JSON metadata is the real cost.
 async function fetchItemMeta(tmdbId: number, mediaType: MediaType) {
@@ -108,12 +157,14 @@ export default function LibraryScreen() {
     const [rows, setRows] = useState<LibraryRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-
-    // Local search state — filters the loaded library by title substring.
-    // Distinct from TMDB search (which lives in the /library/add modal
-    // behind the Plus icon).
-    const [searching, setSearching] = useState(false);
-    const [filter, setFilter] = useState('');
+    const { mode, gridCols, setMode, setGridCols } = useLibraryView();
+    const screenWidth = Dimensions.get('window').width;
+    const insets = useSafeAreaInsets();
+    // Shared SearchBar — same TMDB-search + add flow used on Home. The
+    // old local-substring filter on already-loaded rows is gone; search
+    // now reaches the title detail screen where status (watchlist /
+    // watching / watched) is set.
+    const search = useSearchBar();
 
     useFocusEffect(
         useCallback(() => {
@@ -147,7 +198,14 @@ export default function LibraryScreen() {
                             .from('recommendations')
                             .select('from_user_id, tmdb_id, media_type, sent_at')
                             .eq('to_user_id', userId)
-                            .in('status', ['accepted', 'watched'])
+                            // Attribution survives dismissal: if a friend
+                            // recommended a title and the user later added
+                            // it themselves (after dismissing the rec),
+                            // they still get credit as the recommender.
+                            // 'pending' stays out — a pending rec means
+                            // the show isn't in the library yet, so there's
+                            // nothing to attribute it to.
+                            .in('status', ['accepted', 'watched', 'dismissed'])
                             .order('sent_at', { ascending: false }),
                     ]);
 
@@ -181,20 +239,22 @@ export default function LibraryScreen() {
                         allSenderIds.size > 0
                             ? await supabase
                                   .from('profiles')
-                                  .select('id, handle, display_name')
+                                  .select('id, handle, display_name, avatar_url')
                                   .in('id', Array.from(allSenderIds))
                             : { data: [], error: null };
 
                     if (profilesResult.error) throw profilesResult.error;
                     if (!active) return;
 
-                    const senderById = new Map<
-                        string,
-                        { handle: string; displayName: string }
-                    >(
+                    const senderById = new Map<string, Sender>(
                         (profilesResult.data ?? []).map((p) => [
                             p.id,
-                            { handle: p.handle, displayName: p.display_name },
+                            {
+                                userId: p.id,
+                                handle: p.handle,
+                                displayName: p.display_name,
+                                avatarUrl: p.avatar_url,
+                            },
                         ]),
                     );
 
@@ -220,11 +280,7 @@ export default function LibraryScreen() {
                             [];
                         const senders = senderIds
                             .map((id) => senderById.get(id))
-                            .filter(
-                                (
-                                    s,
-                                ): s is { handle: string; displayName: string } => !!s,
-                            );
+                            .filter((s): s is Sender => !!s);
                         return {
                             id: row.id,
                             tmdb_id: row.tmdb_id,
@@ -262,25 +318,114 @@ export default function LibraryScreen() {
         }, [activeTab]),
     );
 
-    function enterSearch() {
-        setSearching(true);
+    // Leading-star variant for grid chips — "★4.5" reads tighter at
+    // small sizes than the trailing-star "4.5★" used in list rows.
+    function compactRatingStars(rating: number): string {
+        return `★${rating / 2}`;
     }
 
-    function exitSearch() {
-        setSearching(false);
-        setFilter('');
-        Keyboard.dismiss();
-    }
+    function renderGridCell({ item }: { item: LibraryRow }) {
+        const cellWidth = getGridCellWidth(gridCols, screenWidth);
+        const cellHeight = Math.floor(cellWidth * POSTER_ASPECT);
+        const showRating =
+            activeTab === 'watched' && item.rating !== null;
+        const firstSender = item.recAttribution?.senders[0] ?? null;
+        const extraSenders =
+            item.recAttribution && item.recAttribution.totalCount > 1
+                ? item.recAttribution.totalCount - 1
+                : 0;
 
-    // Filter applied client-side over the already-loaded rows. Case-
-    // insensitive substring match on the displayed title.
-    const trimmedFilter = filter.trim();
-    const filteredRows =
-        trimmedFilter.length === 0
-            ? rows
-            : rows.filter((r) =>
-                  r.title.toLowerCase().includes(trimmedFilter.toLowerCase()),
-              );
+        return (
+            <Pressable
+                onPress={() =>
+                    router.push({
+                        pathname: '/title/[mediaType]/[tmdbId]',
+                        params: {
+                            mediaType: item.media_type,
+                            tmdbId: String(item.tmdb_id),
+                        },
+                    })
+                }
+                style={({ pressed }) => [
+                    { width: cellWidth, height: cellHeight },
+                    styles.gridCell,
+                    pressed && { opacity: 0.6 },
+                ]}
+                accessibilityLabel={item.title}
+            >
+                {item.posterPath ? (
+                    <Image
+                        source={{ uri: imageUrl(item.posterPath, 'w342') }}
+                        style={[styles.gridPoster, { width: cellWidth, height: cellHeight }]}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : (
+                    <View
+                        style={[
+                            styles.gridPoster,
+                            {
+                                width: cellWidth,
+                                height: cellHeight,
+                                backgroundColor: palette.surfaceAlt,
+                            },
+                        ]}
+                    />
+                )}
+
+                {showRating && item.rating !== null ? (
+                    <View
+                        style={[
+                            styles.gridRatingChip,
+                            { backgroundColor: palette.bg },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                styles.gridRatingText,
+                                { color: palette.text },
+                            ]}
+                        >
+                            {compactRatingStars(item.rating)}
+                        </Text>
+                    </View>
+                ) : null}
+
+                {firstSender ? (
+                    <View
+                        style={[styles.gridSenderChip, { borderColor: palette.bg }]}
+                    >
+                        <Avatar
+                            avatarUrl={firstSender.avatarUrl}
+                            displayName={firstSender.displayName}
+                            seedId={firstSender.userId}
+                            size={GRID_AVATAR_SIZE}
+                        />
+                        {extraSenders > 0 ? (
+                            <View
+                                style={[
+                                    styles.gridPlusBadge,
+                                    {
+                                        backgroundColor: palette.accent,
+                                        borderColor: palette.bg,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.gridPlusBadgeText,
+                                        { color: palette.textInverse },
+                                    ]}
+                                >
+                                    +{extraSenders}
+                                </Text>
+                            </View>
+                        ) : null}
+                    </View>
+                ) : null}
+            </Pressable>
+        );
+    }
 
     function renderRow({ item }: { item: LibraryRow }) {
         const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
@@ -332,12 +477,26 @@ export default function LibraryScreen() {
                         </Text>
                     ) : null}
                     {item.recAttribution ? (
-                        <Text
-                            style={[typography.caption, { color: palette.textMuted }]}
-                            numberOfLines={1}
-                        >
-                            {formatRecAttribution(item.recAttribution)}
-                        </Text>
+                        <View style={styles.recAttributionRow}>
+                            <Avatar
+                                avatarUrl={item.recAttribution.senders[0]?.avatarUrl ?? null}
+                                displayName={
+                                    item.recAttribution.senders[0]?.displayName ?? '?'
+                                }
+                                seedId={item.recAttribution.senders[0]?.userId ?? item.id}
+                                size={16}
+                            />
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.recAttributionText,
+                                    { color: palette.textMuted },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {formatRecAttribution(item.recAttribution)}
+                            </Text>
+                        </View>
                     ) : null}
                     {showWatchedLine ? (
                         <Text style={[typography.caption, { color: palette.textMuted }]}>
@@ -351,75 +510,21 @@ export default function LibraryScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            {searching ? (
-                <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
-                    <View style={styles.searchHeader}>
-                        <TextInput
-                            value={filter}
-                            onChangeText={setFilter}
-                            placeholder="Search your library"
-                            placeholderTextColor={palette.textMuted}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            autoFocus
-                            returnKeyType="search"
-                            onSubmitEditing={() => Keyboard.dismiss()}
-                            style={[
-                                styles.searchInput,
-                                typography.body,
-                                {
-                                    backgroundColor: palette.surface,
-                                    color: palette.text,
-                                    borderColor: palette.border,
-                                },
-                            ]}
-                        />
-                        <Pressable
-                            onPress={exitSearch}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [
-                                styles.cancelButton,
-                                pressed && { opacity: 0.6 },
-                            ]}
-                        >
-                            <Text style={[typography.body, { color: palette.accent }]}>
-                                Cancel
-                            </Text>
-                        </Pressable>
-                    </View>
-                </SafeAreaView>
-            ) : (
-                <ScreenHeader
-                    title="Library"
-                    unreadCount={unreadCount}
-                    rightActions={
-                        <>
-                            <Pressable
-                                onPress={enterSearch}
-                                hitSlop={spacing.sm}
-                                style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                            >
-                                <Search
-                                    color={palette.text}
-                                    size={24}
-                                    strokeWidth={ICON_STROKE_WIDTH}
-                                />
-                            </Pressable>
-                            <Pressable
-                                onPress={() => router.push({ pathname: '/library/add' })}
-                                hitSlop={spacing.sm}
-                                style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                            >
-                                <Plus
-                                    color={palette.text}
-                                    size={24}
-                                    strokeWidth={ICON_STROKE_WIDTH}
-                                />
-                            </Pressable>
-                        </>
-                    }
-                />
-            )}
+            <ScreenHeader
+                title="Library"
+                unreadCount={unreadCount}
+                rightActions={
+                    <ViewControls
+                        mode={mode}
+                        gridCols={gridCols}
+                        onModeChange={setMode}
+                        onGridColsChange={setGridCols}
+                        palette={palette}
+                    />
+                }
+            />
+
+            <SearchBarInput state={search} />
 
             <View style={styles.tabs}>
                 {TABS.map((tab) => {
@@ -469,20 +574,19 @@ export default function LibraryScreen() {
                         {error}
                     </Text>
                 </View>
-            ) : filteredRows.length === 0 ? (
+            ) : rows.length === 0 ? (
                 <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={3}
                     >
-                        {trimmedFilter.length > 0
-                            ? `No matches for "${trimmedFilter}"`
-                            : EMPTY_MESSAGES[activeTab]}
+                        {EMPTY_MESSAGES[activeTab]}
                     </Text>
                 </View>
-            ) : (
+            ) : mode === 'list' ? (
                 <FlatList
-                    data={filteredRows}
+                    key="list"
+                    data={rows}
                     keyExtractor={(item) => item.id}
                     renderItem={renderRow}
                     contentContainerStyle={styles.listContent}
@@ -494,31 +598,199 @@ export default function LibraryScreen() {
                         />
                     )}
                 />
+            ) : (
+                // FlatList can't change numColumns in place — key includes
+                // the column count so density changes trigger a clean
+                // unmount + remount.
+                <FlatList
+                    key={`grid-${gridCols}`}
+                    data={rows}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderGridCell}
+                    numColumns={gridCols}
+                    contentContainerStyle={styles.gridContent}
+                    columnWrapperStyle={{
+                        columnGap: GRID_GAP_BY_COLS[gridCols],
+                    }}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    ItemSeparatorComponent={() => (
+                        <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
+                    )}
+                />
+            )}
+            {search.overlayVisible && (
+                <SearchBarOverlay
+                    state={search}
+                    top={insets.top + SEARCH_OVERLAY_TOP_OFFSET}
+                />
             )}
         </View>
     );
 }
 
+type Palette = ReturnType<typeof getPalette>;
+
+// Cell shared between the two control types in the cluster. Both
+// variants keep `borderWidth: 1.5` and the same `minHeight` so toggle
+// and density cells sit level in the row regardless of which active
+// treatment they carry.
+//   - `variant: 'fill'`: active = solid accent fill, inactive = no
+//     visible chrome. Border is always transparent.
+//   - `variant: 'stroke'`: active = coral outline, inactive = no
+//     visible chrome. Background is always transparent.
+// Caller passes the content color (icon/text) to match.
+function ViewControlsCell({
+    active,
+    variant,
+    onPress,
+    palette,
+    accessibilityLabel,
+    cellStyle,
+    children,
+}: {
+    active: boolean;
+    variant: 'fill' | 'stroke';
+    onPress: () => void;
+    palette: Palette;
+    accessibilityLabel: string;
+    cellStyle?: StyleProp<ViewStyle>;
+    children: ReactNode;
+}) {
+    const variantStyle =
+        variant === 'fill'
+            ? {
+                  backgroundColor: active ? palette.accent : 'transparent',
+                  borderColor: 'transparent',
+              }
+            : {
+                  backgroundColor: 'transparent',
+                  borderColor: active ? palette.accent : 'transparent',
+              };
+    return (
+        <Pressable
+            onPress={onPress}
+            hitSlop={spacing.xs}
+            style={({ pressed }) => [
+                styles.controlsCell,
+                cellStyle,
+                variantStyle,
+                pressed && { opacity: 0.6 },
+            ]}
+            accessibilityLabel={accessibilityLabel}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+        >
+            {children}
+        </Pressable>
+    );
+}
+
+function ViewControls({
+    mode,
+    gridCols,
+    onModeChange,
+    onGridColsChange,
+    palette,
+}: {
+    mode: LibraryMode;
+    gridCols: LibraryGridCols;
+    onModeChange: (next: LibraryMode) => void;
+    onGridColsChange: (next: LibraryGridCols) => void;
+    palette: Palette;
+}) {
+    const densityOptions: LibraryGridCols[] = [2, 3, 4];
+    return (
+        // LinearTransition animates the container's width on density
+        // mount/unmount so the toggle doesn't pop sideways. Reanimated
+        // is used here rather than LayoutAnimation because the latter
+        // silently no-ops for mount/unmount on the New Architecture
+        // (Fabric, which Expo SDK 54 turns on by default) — that's why
+        // the previous LayoutAnimation attempt was invisible.
+        <Animated.View
+            layout={LinearTransition.duration(180)}
+            style={[styles.viewControls, { backgroundColor: palette.surfaceAlt }]}
+        >
+            <View style={styles.toggleGroup}>
+                <ViewControlsCell
+                    active={mode === 'list'}
+                    variant="fill"
+                    onPress={() => onModeChange('list')}
+                    palette={palette}
+                    accessibilityLabel="List view"
+                >
+                    <LayoutList
+                        color={
+                            mode === 'list'
+                                ? palette.textInverse
+                                : palette.text
+                        }
+                        size={18}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                </ViewControlsCell>
+                <ViewControlsCell
+                    active={mode === 'grid'}
+                    variant="fill"
+                    onPress={() => onModeChange('grid')}
+                    palette={palette}
+                    accessibilityLabel="Grid view"
+                >
+                    <LayoutGrid
+                        color={
+                            mode === 'grid'
+                                ? palette.textInverse
+                                : palette.text
+                        }
+                        size={18}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                </ViewControlsCell>
+            </View>
+            {mode === 'grid' ? (
+                // Density group fades in/out as one cohesive unit so the
+                // three numbers read as a single control appearing,
+                // rather than three staggered cells popping in.
+                <Animated.View
+                    style={styles.densityGroup}
+                    entering={FadeIn.duration(180)}
+                    exiting={FadeOut.duration(140)}
+                >
+                    {densityOptions.map((opt) => {
+                        const isActive = gridCols === opt;
+                        return (
+                            <ViewControlsCell
+                                key={opt}
+                                active={isActive}
+                                variant="stroke"
+                                onPress={() => onGridColsChange(opt)}
+                                palette={palette}
+                                accessibilityLabel={`${opt} columns`}
+                                cellStyle={styles.densityCell}
+                            >
+                                <Text
+                                    style={[
+                                        styles.controlsNumber,
+                                        {
+                                            color: isActive
+                                                ? palette.accent
+                                                : palette.text,
+                                        },
+                                    ]}
+                                >
+                                    {opt}
+                                </Text>
+                            </ViewControlsCell>
+                        );
+                    })}
+                </Animated.View>
+            ) : null}
+        </Animated.View>
+    );
+}
+
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    searchHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.md,
-        gap: spacing.sm,
-    },
-    searchInput: {
-        flex: 1,
-        height: 40,
-        // Fully pill-shaped — matches the Home search bar treatment.
-        borderRadius: radius.full,
-        borderWidth: 1,
-        paddingHorizontal: spacing.md,
-    },
-    cancelButton: {
-        paddingHorizontal: spacing.xs,
-    },
     tabs: {
         flexDirection: 'row',
         gap: spacing.sm,
@@ -562,5 +834,126 @@ const styles = StyleSheet.create({
     separator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: POSTER_WIDTH + spacing.md,
+    },
+    recAttributionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    recAttributionText: {
+        flex: 1,
+    },
+    viewControls: {
+        // Single shared container behind the whole list/grid + density
+        // cluster so the controls read as one connected unit. 2pt
+        // padding gives the cells a small breath against the rounded
+        // outer edge. Gap is the visible separation between the toggle
+        // group and the density group when both are present.
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: radius.sm,
+        padding: 2,
+        gap: spacing.xs,
+    },
+    toggleGroup: {
+        // Tight pair — list and grid are two states of one decision, so
+        // they sit flush together with just a hairline of padding.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+    },
+    densityGroup: {
+        // Wider gap so the three numeric options read as distinct
+        // discrete buttons, not a single block.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    controlsCell: {
+        // Same height in every variant so the filled toggle and the
+        // stroked numbers sit perfectly level in the row. borderWidth
+        // is always present (transparent when inactive in the stroke
+        // variant, always transparent in the fill variant) to keep
+        // layout stable as selection moves.
+        minWidth: 28,
+        minHeight: 26,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 2,
+        borderRadius: radius.sm - 2,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    densityCell: {
+        // Extra horizontal breathing room so the single-digit number
+        // doesn't read as cramped inside its border.
+        paddingHorizontal: spacing.sm,
+    },
+    controlsNumber: {
+        // Slightly smaller than the previous 14pt / 600 — reads as a
+        // label rather than competing with the toggle icons for weight.
+        fontSize: 12,
+        fontWeight: '700',
+        lineHeight: 16,
+    },
+    gridContent: {
+        paddingHorizontal: spacing.base,
+        paddingBottom: spacing.lg,
+        paddingTop: spacing.sm,
+    },
+    gridCell: {
+        position: 'relative',
+    },
+    gridPoster: {
+        borderRadius: radius.sm,
+    },
+    gridRatingChip: {
+        // Height tuned to match the sender chip's outer height: text
+        // lineHeight (18) + 2 × paddingVertical (3) = 24pt, same as the
+        // sender chip's 20pt avatar + 2 × 2pt border. Both anchored at
+        // bottom: spacing.xs so they sit on identical baselines, with
+        // identical tops — mirrored left / right corners.
+        position: 'absolute',
+        bottom: spacing.xs,
+        left: spacing.xs,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 3,
+        borderRadius: radius.sm,
+        opacity: 0.92,
+    },
+    gridRatingText: {
+        ...typography.caption,
+        fontWeight: '600',
+    },
+    gridSenderChip: {
+        // Inset to match the rating chip on the opposite corner — same
+        // vertical baseline, mirrored horizontally. Kept the 2pt cream
+        // border so the chip still reads as distinct from the poster.
+        position: 'absolute',
+        bottom: spacing.xs,
+        right: spacing.xs,
+        borderRadius: GRID_AVATAR_SIZE / 2 + 2,
+        borderWidth: 2,
+        overflow: 'visible',
+    },
+    gridPlusBadge: {
+        // With the chip inset 4pt from the poster edge, a -7 right
+        // offset would poke 3pt past the poster bound. -2 keeps the
+        // badge attached to the avatar's top-right corner while
+        // staying 2pt inside the poster.
+        position: 'absolute',
+        top: -4,
+        right: -2,
+        minWidth: GRID_PLUS_BADGE_HEIGHT,
+        height: GRID_PLUS_BADGE_HEIGHT,
+        paddingHorizontal: 3,
+        borderRadius: GRID_PLUS_BADGE_HEIGHT / 2,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    gridPlusBadgeText: {
+        fontSize: 9,
+        fontWeight: '700',
     },
 });
