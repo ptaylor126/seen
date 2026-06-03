@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Mail, Plus, Search } from 'lucide-react-native';
+import { Plus, Search } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
@@ -350,119 +351,75 @@ export default function LibraryScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
-                <View style={styles.header}>
-                    {searching ? (
+            {searching ? (
+                <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
+                    <View style={styles.searchHeader}>
+                        <TextInput
+                            value={filter}
+                            onChangeText={setFilter}
+                            placeholder="Search your library"
+                            placeholderTextColor={palette.textMuted}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            autoFocus
+                            returnKeyType="search"
+                            onSubmitEditing={() => Keyboard.dismiss()}
+                            style={[
+                                styles.searchInput,
+                                typography.body,
+                                {
+                                    backgroundColor: palette.surface,
+                                    color: palette.text,
+                                    borderColor: palette.border,
+                                },
+                            ]}
+                        />
+                        <Pressable
+                            onPress={exitSearch}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                styles.cancelButton,
+                                pressed && { opacity: 0.6 },
+                            ]}
+                        >
+                            <Text style={[typography.body, { color: palette.accent }]}>
+                                Cancel
+                            </Text>
+                        </Pressable>
+                    </View>
+                </SafeAreaView>
+            ) : (
+                <ScreenHeader
+                    title="Library"
+                    unreadCount={unreadCount}
+                    rightActions={
                         <>
-                            <TextInput
-                                value={filter}
-                                onChangeText={setFilter}
-                                placeholder="Search your library"
-                                placeholderTextColor={palette.textMuted}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                autoFocus
-                                returnKeyType="search"
-                                onSubmitEditing={() => Keyboard.dismiss()}
-                                style={[
-                                    styles.searchInput,
-                                    typography.body,
-                                    {
-                                        backgroundColor: palette.surface,
-                                        color: palette.text,
-                                        borderColor: palette.border,
-                                    },
-                                ]}
-                            />
                             <Pressable
-                                onPress={exitSearch}
+                                onPress={enterSearch}
                                 hitSlop={spacing.sm}
-                                style={({ pressed }) => [
-                                    styles.cancelButton,
-                                    pressed && { opacity: 0.6 },
-                                ]}
+                                style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                             >
-                                <Text
-                                    style={[typography.body, { color: palette.accent }]}
-                                >
-                                    Cancel
-                                </Text>
+                                <Search
+                                    color={palette.text}
+                                    size={24}
+                                    strokeWidth={ICON_STROKE_WIDTH}
+                                />
+                            </Pressable>
+                            <Pressable
+                                onPress={() => router.push({ pathname: '/library/add' })}
+                                hitSlop={spacing.sm}
+                                style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                            >
+                                <Plus
+                                    color={palette.text}
+                                    size={24}
+                                    strokeWidth={ICON_STROKE_WIDTH}
+                                />
                             </Pressable>
                         </>
-                    ) : (
-                        <>
-                            <Text
-                                style={[typography.display, { color: palette.text }]}
-                                numberOfLines={1}
-                            >
-                                Library
-                            </Text>
-                            <View style={styles.iconRow}>
-                                <Pressable
-                                    onPress={enterSearch}
-                                    hitSlop={spacing.sm}
-                                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                                >
-                                    <Search
-                                        color={palette.text}
-                                        size={24}
-                                        strokeWidth={ICON_STROKE_WIDTH}
-                                    />
-                                </Pressable>
-                                <Pressable
-                                    onPress={() =>
-                                        router.push({ pathname: '/library/add' })
-                                    }
-                                    hitSlop={spacing.sm}
-                                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                                >
-                                    <Plus
-                                        color={palette.text}
-                                        size={24}
-                                        strokeWidth={ICON_STROKE_WIDTH}
-                                    />
-                                </Pressable>
-                                <Pressable
-                                    onPress={() =>
-                                        router.push({ pathname: '/inbox' })
-                                    }
-                                    hitSlop={spacing.sm}
-                                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                                >
-                                    <View>
-                                        <Mail
-                                            color={palette.text}
-                                            size={24}
-                                            strokeWidth={ICON_STROKE_WIDTH}
-                                        />
-                                        {unreadCount > 0 && (
-                                            <View
-                                                style={[
-                                                    styles.badge,
-                                                    { backgroundColor: palette.accent },
-                                                ]}
-                                            >
-                                                <Text
-                                                    style={[
-                                                        styles.badgeText,
-                                                        {
-                                                            color: palette.textInverse,
-                                                        },
-                                                    ]}
-                                                >
-                                                    {unreadCount > 9
-                                                        ? '9+'
-                                                        : String(unreadCount)}
-                                                </Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                </Pressable>
-                            </View>
-                        </>
-                    )}
-                </View>
-            </SafeAreaView>
+                    }
+                />
+            )}
 
             <View style={styles.tabs}>
                 {TABS.map((tab) => {
@@ -544,33 +501,12 @@ export default function LibraryScreen() {
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    header: {
+    searchHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.md,
         gap: spacing.sm,
-    },
-    iconRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.base,
-    },
-    badge: {
-        position: 'absolute',
-        top: -4,
-        right: -6,
-        minWidth: 16,
-        height: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 3,
-    },
-    badgeText: {
-        fontSize: 10,
-        fontWeight: '700',
     },
     searchInput: {
         flex: 1,

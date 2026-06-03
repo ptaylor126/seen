@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Mail } from 'lucide-react-native';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -13,15 +14,16 @@ interface ScreenHeaderProps {
     /** Suppress the right-side bell. Useful on the inbox screen itself so
      *  the icon doesn't link back to the same place. */
     hideBell?: boolean;
+    /** Extra right-side actions rendered before the Mail bell. */
+    rightActions?: ReactNode;
 }
-
-const HEADER_HEIGHT = 44;
 
 export function ScreenHeader({
     title,
     showBackButton = false,
     unreadCount = 0,
     hideBell = false,
+    rightActions,
 }: ScreenHeaderProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -33,34 +35,33 @@ export function ScreenHeader({
             style={{ backgroundColor: palette.bg }}
         >
             <View style={styles.bar}>
-                <View style={styles.side}>
-                    {showBackButton && (
-                        <Pressable
-                            onPress={() => router.back()}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                        >
-                            <ChevronLeft
-                                color={palette.accent}
-                                size={28}
-                                strokeWidth={ICON_STROKE_WIDTH}
-                            />
-                        </Pressable>
-                    )}
-                </View>
+                {showBackButton && (
+                    <Pressable
+                        onPress={() => router.back()}
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <ChevronLeft
+                            color={palette.accent}
+                            size={28}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    </Pressable>
+                )}
 
-                <View style={styles.center}>
-                    {title ? (
-                        <Text
-                            style={[typography.heading, { color: palette.text }]}
-                            numberOfLines={1}
-                        >
-                            {title}
-                        </Text>
-                    ) : null}
-                </View>
+                {title ? (
+                    <Text
+                        style={[typography.display, styles.title, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        {title}
+                    </Text>
+                ) : (
+                    <View style={styles.title} />
+                )}
 
-                <View style={[styles.side, styles.sideEnd]}>
+                <View style={styles.rightCluster}>
+                    {rightActions}
                     {!hideBell && (
                         <Pressable
                             onPress={() => router.push('/inbox')}
@@ -103,22 +104,19 @@ export function ScreenHeader({
 
 const styles = StyleSheet.create({
     bar: {
-        height: HEADER_HEIGHT,
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: spacing.base,
+        paddingVertical: spacing.md,
+        gap: spacing.sm,
     },
-    side: {
+    title: {
         flex: 1,
+    },
+    rightCluster: {
         flexDirection: 'row',
         alignItems: 'center',
-    },
-    sideEnd: {
-        justifyContent: 'flex-end',
-    },
-    center: {
-        flex: 2,
-        alignItems: 'center',
+        gap: spacing.base,
     },
     badge: {
         position: 'absolute',
