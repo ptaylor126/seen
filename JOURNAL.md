@@ -4,6 +4,15 @@ Running session log. Newest entries at top. Read this first to brief future Clau
 
 ---
 
+## Tech debt
+
+Cleanup items deferred from other work — not blocking, but don't lose track.
+
+- `supabase/functions/send-push-notification/index.ts` has a `case 'friend_request'` branch (around lines 43 and 274–283) that became unreachable after `20260603120000_drop_friend_request_notification_trigger` removed the only producer of `kind='friend_request'` notification rows. Cleanup pass: delete the branch and any helper code only it referenced.
+- `notifications_kind_check` CHECK constraint still allows `'friend_request'` as a permitted `kind` value. Harmless given there's no inserter, but it would silently mask a reintroduction bug. Follow-up migration could drop `'friend_request'` from the allowed set.
+
+---
+
 ## 2026-05-21
 
 **Done**

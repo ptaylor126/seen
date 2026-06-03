@@ -1,21 +1,35 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import supabase from '@/lib/supabase';
 
 /**
- * Unread/unactioned count for the notifications bell badge.
+ * Inbox-badge count = (unread notifications) + (pending friend requests).
  *
- * Sums three sources:
- *   1. Pending incoming recommendations (recommendations.status = 'pending', to_user_id = me)
- *   2. Pending friend requests (friend_requests where to_user_id = me)
- *   3. Unread `rec_watched` / `friend_accepted` notifications
- *      (`rec_received` and `friend_request` notification kinds are
- *       intentionally excluded — they'd double-count with sources 1+2.)
+ * The two sources represent different kinds of "stuff that needs me":
+ *   - notifications: events to *see* (rec_received, rec_watched,
+ *     friend_accepted). Inbox focus marks them read; badge drops.
+ *   - friend_requests: events to *act on*. The row exists iff the
+ *     request is pending — accept/decline both delete it. Opening the
+ *     inbox doesn't change anything; the badge only drops when the
+ *     user accepts or declines.
  *
- * Refetches on screen focus via `useFocusEffect`. After the inbox marks
- * notifications read, navigating back to a tab will refocus and recount,
- * so the badge updates without manual coordination.
+ * No double-counting risk: the friend_request notification kind was
+ * dropped in 20260603120000_drop_friend_request_notification_trigger,
+ * so the friend_requests table is now the sole source of truth for
+ * pending requests.
+ *
+ * Two refresh paths feed `count`:
+ *   1. `useFocusEffect` — refetches on tab/screen focus so a quick
+ *      backgrounding round-trip can't leave a stale count.
+ *   2. Realtime subscription — both tables are members of the
+ *      supabase_realtime publication (added by the same migration).
+ *      Any INSERT / UPDATE / DELETE matching the user filter triggers
+ *      a re-fetch, so new arrivals and accept/decline-driven drops
+ *      land without waiting for focus. We refetch the whole count
+ *      rather than maintain a delta because two sources need summing
+ *      and RLS-gated deliveries can drop events on auth edges; a full
+ *      re-count is cheaper than chasing those bugs.
  */
 export function useUnreadCount(): { count: number; refresh: () => Promise<void> } {
     const [count, setCount] = useState(0);
@@ -31,32 +45,22 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
                 return;
             }
 
-            const [recsResult, requestsResult, notificationsResult] = await Promise.all([
-                supabase
-                    .from('recommendations')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('to_user_id', userId)
-                    .eq('status', 'pending'),
-                supabase
-                    .from('friend_requests')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('to_user_id', userId),
+            const [notificationsRes, friendRequestsRes] = await Promise.all([
                 supabase
                     .from('notifications')
                     .select('id', { count: 'exact', head: true })
                     .eq('user_id', userId)
-                    .in('kind', ['rec_watched', 'friend_accepted'])
                     .is('read_at', null),
+                supabase
+                    .from('friend_requests')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('to_user_id', userId),
             ]);
-
-            if (recsResult.error) throw recsResult.error;
-            if (requestsResult.error) throw requestsResult.error;
-            if (notificationsResult.error) throw notificationsResult.error;
+            if (notificationsRes.error) throw notificationsRes.error;
+            if (friendRequestsRes.error) throw friendRequestsRes.error;
 
             setCount(
-                (recsResult.count ?? 0) +
-                    (requestsResult.count ?? 0) +
-                    (notificationsResult.count ?? 0),
+                (notificationsRes.count ?? 0) + (friendRequestsRes.count ?? 0),
             );
         } catch (err) {
             console.error('unread count fetch failed:', err);
@@ -69,6 +73,54 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
             refresh();
         }, [refresh]),
     );
+
+    // Realtime: subscribe to both tables filtered to this user, refetch
+    // the count on any change. The session lookup is async, so we set
+    // up the channel inside an IIFE and guard with `active` against the
+    // hook unmounting before the auth round trip finishes.
+    useEffect(() => {
+        let active = true;
+        let channel: ReturnType<typeof supabase.channel> | null = null;
+        (async () => {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId || !active) return;
+
+            channel = supabase
+                .channel(`unread:${userId}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'notifications',
+                        filter: `user_id=eq.${userId}`,
+                    },
+                    () => {
+                        void refresh();
+                    },
+                )
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'friend_requests',
+                        filter: `to_user_id=eq.${userId}`,
+                    },
+                    () => {
+                        void refresh();
+                    },
+                )
+                .subscribe();
+        })();
+        return () => {
+            active = false;
+            if (channel) void supabase.removeChannel(channel);
+        };
+    }, [refresh]);
 
     return { count, refresh };
 }
