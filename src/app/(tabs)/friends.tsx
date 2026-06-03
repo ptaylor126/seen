@@ -32,6 +32,12 @@ interface FriendRow {
 
 const AVATAR_SIZE = 44;
 
+// List bottom padding so the last friend isn't hidden behind the floating
+// "Invite more" button. Button height (~46pt) + bottom offset (spacing.base)
+// + breathing room. The tab bar lives outside the screen view, so it does
+// not contribute here — only clear the floating button itself.
+const FLOATING_BUTTON_CLEAR = spacing.xxxl + spacing.base;
+
 export default function FriendsScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -173,6 +179,7 @@ export default function FriendsScreen() {
 
     const showEmptyState =
         !loading && !error && friends.length === 0 && pendingIncoming === 0;
+    const showFloatingInvite = !loading && !error && !showEmptyState;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -256,18 +263,6 @@ export default function FriendsScreen() {
                 </View>
             ) : (
                 <>
-                    <View style={styles.actionRow}>
-                        <Pressable
-                            onPress={() => router.push('/friends/invite')}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                        >
-                            <Text style={[typography.body, { color: palette.accent }]}>
-                                Invite more
-                            </Text>
-                        </Pressable>
-                    </View>
-
                     {pendingIncoming > 0 && (
                         <Pressable
                             onPress={() => router.push('/friends/requests')}
@@ -317,6 +312,30 @@ export default function FriendsScreen() {
                     )}
                 </>
             )}
+
+            {showFloatingInvite && (
+                <View style={styles.floatingInvite} pointerEvents="box-none">
+                    <Pressable
+                        onPress={() => router.push('/friends/invite')}
+                        style={({ pressed }) => [
+                            styles.floatingInviteButton,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: pressed ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.textInverse },
+                            ]}
+                        >
+                            Invite more
+                        </Text>
+                    </Pressable>
+                </View>
+            )}
         </View>
     );
 }
@@ -329,24 +348,36 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
     },
-    actionRow: {
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
-        paddingBottom: spacing.md,
-    },
     pendingBanner: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         marginHorizontal: spacing.base,
+        marginTop: spacing.sm,
         marginBottom: spacing.md,
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
     },
-    listContent: { paddingHorizontal: spacing.base, paddingBottom: spacing.lg },
+    listContent: {
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.sm,
+        paddingBottom: FLOATING_BUTTON_CLEAR,
+    },
+    floatingInvite: {
+        position: 'absolute',
+        left: spacing.base,
+        right: spacing.base,
+        bottom: spacing.base,
+        alignItems: 'center',
+    },
+    floatingInviteButton: {
+        paddingVertical: spacing.md,
+        paddingHorizontal: spacing.lg,
+        borderRadius: radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
