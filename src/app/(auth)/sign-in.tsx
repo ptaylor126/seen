@@ -1,9 +1,11 @@
 import { isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import { Image } from 'expo-image';
 import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     Platform,
     Pressable,
     StyleSheet,
@@ -15,6 +17,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { signInWithApple, signInWithGoogle } from '@/lib/auth';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
+
+// Logo is 1998×587 (aspect ~3.40:1). Cap width so it doesn't dominate
+// small phones or balloon on tablets; derive height from the aspect ratio.
+const LOGO_ASPECT = 1998 / 587;
+const LOGO_WIDTH = Math.min(240, Dimensions.get('window').width * 0.6);
+const LOGO_HEIGHT = LOGO_WIDTH / LOGO_ASPECT;
 
 export default function SignInScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -56,9 +64,12 @@ export default function SignInScreen() {
     return (
         <SafeAreaView style={[styles.root, { backgroundColor: palette.bg }]}>
             <View style={styles.centerCluster}>
-                <Text style={[typography.display, styles.wordmark, { color: palette.text }]}>
-                    Seen
-                </Text>
+                <Image
+                    source={require('../../../assets/logo.png')}
+                    style={styles.logo}
+                    contentFit="contain"
+                    accessibilityLabel="Seen"
+                />
 
                 {Platform.OS === 'ios' ? (
                     <AppleAuthentication.AppleAuthenticationButton
@@ -139,7 +150,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         gap: spacing.lg,
     },
-    wordmark: {
+    logo: {
+        width: LOGO_WIDTH,
+        height: LOGO_HEIGHT,
         marginBottom: spacing.md,
     },
     appleButton: {

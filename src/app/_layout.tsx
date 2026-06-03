@@ -6,6 +6,7 @@ import {
     useFonts,
 } from '@expo-google-fonts/geist';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -13,6 +14,13 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
 import { useSession } from '@/hooks/use-session';
 import { getPalette } from '@/theme/theme';
+
+// Keep the native splash up through font load — without this the splash
+// hides as soon as the first React frame mounts (even a `null` render),
+// flashing the cream background before Geist is ready.
+SplashScreen.preventAutoHideAsync().catch(() => {
+    // Already-prevented or called twice during fast refresh — safe to ignore.
+});
 
 export default function RootLayout() {
     // Load Geist before the rest of the tree mounts. Until the fonts
@@ -26,6 +34,15 @@ export default function RootLayout() {
         Geist_600SemiBold,
         Geist_700Bold,
     });
+
+    useEffect(() => {
+        if (fontsLoaded) {
+            SplashScreen.hideAsync().catch(() => {
+                // Splash may already be hidden; ignore.
+            });
+        }
+    }, [fontsLoaded]);
+
     if (!fontsLoaded) return null;
 
     // ProfileProvider sits above RootLayoutInner so useProfile() inside
