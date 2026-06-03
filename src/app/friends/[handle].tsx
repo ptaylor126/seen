@@ -413,6 +413,7 @@ export default function FriendDetailScreen() {
                     <Avatar
                         avatarUrl={state.profile.avatarUrl}
                         displayName={state.profile.displayName}
+                        seedId={state.profile.id}
                         size={AVATAR_SIZE}
                     />
                     <Text
@@ -478,6 +479,7 @@ export default function FriendDetailScreen() {
                     <Avatar
                         avatarUrl={profile.avatarUrl}
                         displayName={profile.displayName}
+                        seedId={profile.id}
                         size={AVATAR_SIZE}
                     />
                     <Text

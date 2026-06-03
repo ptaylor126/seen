@@ -193,6 +193,7 @@ export default function EditProfileScreen() {
                             <Avatar
                                 avatarUrl={profile.avatarUrl}
                                 displayName={profile.displayName}
+                                seedId={profile.id}
                                 size={AVATAR_SIZE}
                             />
                             <Pressable

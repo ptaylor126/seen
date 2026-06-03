@@ -414,6 +414,7 @@ export default function InboxScreen() {
                 <Avatar
                     avatarUrl={item.sender.avatarUrl}
                     displayName={item.sender.displayName}
+                    seedId={item.sender.userId}
                     size={AVATAR_SIZE}
                 />
                 <View style={styles.rowText}>
@@ -453,6 +454,7 @@ export default function InboxScreen() {
                 <Avatar
                     avatarUrl={item.sender.avatarUrl}
                     displayName={item.sender.displayName}
+                    seedId={item.sender.userId}
                     size={AVATAR_SIZE}
                 />
                 <View style={styles.rowText}>
@@ -540,6 +542,7 @@ export default function InboxScreen() {
                 <Avatar
                     avatarUrl={item.watcher.avatarUrl}
                     displayName={item.watcher.displayName}
+                    seedId={item.watcher.userId}
                     size={AVATAR_SIZE}
                 />
                 <View style={styles.rowText}>
@@ -569,6 +572,7 @@ export default function InboxScreen() {
                 <Avatar
                     avatarUrl={item.friend.avatarUrl}
                     displayName={item.friend.displayName}
+                    seedId={item.friend.userId}
                     size={AVATAR_SIZE}
                 />
                 <View style={styles.rowText}>

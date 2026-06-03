@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ChevronRight, Users } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
@@ -12,6 +11,7 @@ import {
     View,
 } from 'react-native';
 
+import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
@@ -121,42 +121,18 @@ export default function FriendsScreen() {
         }, [load]),
     );
 
-    function renderAvatar(row: FriendRow) {
-        if (row.avatarUrl) {
-            return (
-                <Image
-                    source={{ uri: row.avatarUrl }}
-                    style={[styles.avatar, { backgroundColor: palette.accent }]}
-                    contentFit="cover"
-                    transition={150}
-                />
-            );
-        }
-        const letter = row.displayName[0]?.toUpperCase() ?? '?';
-        return (
-            <View
-                style={[
-                    styles.avatar,
-                    styles.avatarFallback,
-                    { backgroundColor: palette.accent },
-                ]}
-            >
-                <Text
-                    style={[typography.bodyEmphasis, { color: palette.textInverse }]}
-                >
-                    {letter}
-                </Text>
-            </View>
-        );
-    }
-
     function renderFriendRow({ item }: { item: FriendRow }) {
         return (
             <Pressable
                 onPress={() => router.push(`/friends/${item.handle}`)}
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
-                {renderAvatar(item)}
+                <Avatar
+                    avatarUrl={item.avatarUrl}
+                    displayName={item.displayName}
+                    seedId={item.userId}
+                    size={AVATAR_SIZE}
+                />
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.bodyEmphasis, { color: palette.text }]}
@@ -383,15 +359,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: spacing.md,
         gap: spacing.md,
-    },
-    avatar: {
-        width: AVATAR_SIZE,
-        height: AVATAR_SIZE,
-        borderRadius: AVATAR_SIZE / 2,
-    },
-    avatarFallback: {
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     rowText: {
         flex: 1,

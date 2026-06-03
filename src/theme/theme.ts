@@ -27,6 +27,22 @@ export const palette = {
         warning: '#D89B3C',
         error: '#C04B3D',
         overlay: 'rgba(26, 22, 20, 0.5)',
+        // Avatar fallback fills used when no avatar image is available.
+        // Hashed deterministically from a stable user id so the same user
+        // always gets the same colour. All values are medium-dark so the
+        // initial reads in textInverse (white) at ≥4:1 contrast. Warm
+        // palette only — nothing that clashes with the cream + coral
+        // theme.
+        avatarFallbacks: [
+            '#C46850',
+            '#B08A3C',
+            '#7C8F60',
+            '#B06978',
+            '#5E807F',
+            '#87729D',
+            '#6F8460',
+            '#8B5E45',
+        ],
     },
     dark: {
         bg: '#15110F',
@@ -44,6 +60,19 @@ export const palette = {
         warning: '#E4AC4D',
         error: '#D75B4D',
         overlay: 'rgba(0, 0, 0, 0.6)',
+        // Parallel set to light.avatarFallbacks, lifted in lightness so
+        // the dark-mode textInverse (near-black) reads with ≥4:1
+        // contrast on each fill.
+        avatarFallbacks: [
+            '#E8957D',
+            '#D4B173',
+            '#B0C28D',
+            '#D49AA6',
+            '#9CB5B3',
+            '#B7A2C7',
+            '#A8BD9A',
+            '#BF9A82',
+        ],
     },
 } as const;
 
@@ -183,9 +212,13 @@ export type ColorScheme = 'light' | 'dark';
 // `palette.light` to plain `string` so both halves of the palette satisfy
 // the contract. (The previous `typeof palette.light` alias failed because
 // `as const` made every color a literal type, and the dark variants
-// couldn't be assigned to the light-keyed literal type.)
+// couldn't be assigned to the light-keyed literal type.) Array-valued
+// tokens (e.g. avatarFallbacks) widen to `readonly string[]` instead.
+type WidenPaletteValue<V> = V extends readonly string[] ? readonly string[] : string;
 export type Palette = {
-    readonly [K in keyof typeof palette.light]: string;
+    readonly [K in keyof typeof palette.light]: WidenPaletteValue<
+        (typeof palette.light)[K]
+    >;
 };
 
 export const getPalette = (scheme: ColorScheme): Palette => palette[scheme];

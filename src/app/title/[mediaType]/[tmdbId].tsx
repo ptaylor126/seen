@@ -48,6 +48,7 @@ const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
 
 interface Sender {
+    userId: string;
     handle: string;
     displayName: string;
     avatarUrl: string | null;
@@ -216,6 +217,7 @@ export default function TitleDetailScreen() {
                                     } => !!p,
                                 )
                                 .map((p) => ({
+                                    userId: p.id,
                                     handle: p.handle,
                                     displayName: p.display_name,
                                     avatarUrl: p.avatar_url,
@@ -478,6 +480,7 @@ export default function TitleDetailScreen() {
                         <Avatar
                             avatarUrl={recContext.senders[0].avatarUrl}
                             displayName={recContext.senders[0].displayName}
+                            seedId={recContext.senders[0].userId}
                             size={36}
                         />
                         <View style={styles.recContextText}>

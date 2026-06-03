@@ -6,10 +6,24 @@ import { getPalette } from '@/theme/theme';
 interface AvatarProps {
     avatarUrl: string | null;
     displayName: string;
+    /** Stable id used to pick a deterministic fallback colour when there
+     *  is no avatarUrl. Same id always gets the same colour. Pass userId
+     *  if available, otherwise handle — anything stable per user. */
+    seedId: string;
     size: number;
 }
 
-export function Avatar({ avatarUrl, displayName, size }: AvatarProps) {
+// djb2 — small deterministic string hash. Bounded to a 32-bit signed int
+// via `| 0`; `Math.abs` because the bit-shift result can be negative.
+function hashIndex(seed: string, modulo: number): number {
+    let h = 5381;
+    for (let i = 0; i < seed.length; i++) {
+        h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h) % modulo;
+}
+
+export function Avatar({ avatarUrl, displayName, seedId, size }: AvatarProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const borderRadius = size / 2;
@@ -32,6 +46,8 @@ export function Avatar({ avatarUrl, displayName, size }: AvatarProps) {
 
     const letter = displayName[0]?.toUpperCase() ?? '?';
     const fontSize = Math.floor(size * 0.45);
+    const fallbacks = palette.avatarFallbacks;
+    const backgroundColor = fallbacks[hashIndex(seedId, fallbacks.length)];
 
     return (
         <View
@@ -39,7 +55,7 @@ export function Avatar({ avatarUrl, displayName, size }: AvatarProps) {
                 width: size,
                 height: size,
                 borderRadius,
-                backgroundColor: palette.accent,
+                backgroundColor,
                 alignItems: 'center',
                 justifyContent: 'center',
             }}
