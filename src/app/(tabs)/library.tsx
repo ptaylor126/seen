@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Bell, Plus, Search } from 'lucide-react-native';
+import { Mail, Plus, Search } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -429,7 +429,7 @@ export default function LibraryScreen() {
                                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                                 >
                                     <View>
-                                        <Bell
+                                        <Mail
                                             color={palette.text}
                                             size={24}
                                             strokeWidth={ICON_STROKE_WIDTH}

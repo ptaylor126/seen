@@ -68,8 +68,10 @@ interface FriendCard {
     posterPath: string | null;
     // Kept on the interface so the section's older attribution-line
     // variant remains buildable if we ever revert; the new grid
-    // layout doesn't render this.
+    // layout doesn't render this string directly, but uses the sender
+    // info below to overlay a small avatar on the poster.
     attribution: string;
+    sender: { displayName: string; avatarUrl: string | null };
 }
 
 interface WatchingItem {
@@ -90,10 +92,6 @@ interface HomeData {
     currentlyWatching: WatchingItem[];
     hasLibraryItems: boolean;
     hasFriends: boolean;
-    // Short freshness line surfaced under the search bar. Built from
-    // the most timely activity in the last 24h; null when nothing
-    // fresh is worth saying.
-    activityHint: string | null;
 }
 
 // Recs for you — HERO cards. One card mostly visible at a time with
@@ -118,10 +116,15 @@ const FRIENDS_GRID_LIMIT = 8;
 const WATCHING_POSTER_W = 40;
 const WATCHING_POSTER_H = 60;
 
-// 24-hour window for the activity hint. Computed once per render of
-// fetchHomeData; the SQL `gte` filter is applied client-side against
-// already-fetched rows so we don't multiply round trips.
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+// Single-rec hero — when only one rec exists, fill the available width
+// minus the section's horizontal padding so the card doesn't read as
+// "tiny floating thing waiting for siblings."
+const REC_CARD_SOLO_W = HERO_SCREEN_W - spacing.base * 2;
+
+// Friends grid avatar overlay — small social attribution badge on
+// each poster's bottom-right corner. 24 px reads as a "who" signal
+// without competing with the poster art for attention.
+const FRIENDS_GRID_AVATAR_SIZE = 24;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -267,7 +270,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         friendItemOwnerIds.length > 0
             ? supabase
                   .from('profiles')
-                  .select('id, display_name')
+                  .select('id, display_name, avatar_url')
                   .in('id', friendItemOwnerIds)
             : Promise.resolve({ data: [], error: null });
 
@@ -323,8 +326,14 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
 
     if (friendProfilesResult.error) throw friendProfilesResult.error;
 
-    const friendDisplayNameById = new Map<string, string>(
-        friendProfilesResult.data?.map((p) => [p.id, p.display_name]) ?? [],
+    const friendProfileById = new Map<
+        string,
+        { displayName: string; avatarUrl: string | null }
+    >(
+        friendProfilesResult.data?.map((p) => [
+            p.id,
+            { displayName: p.display_name, avatarUrl: p.avatar_url },
+        ]) ?? [],
     );
     const senderProfileById = new Map(
         senderProfilesResult.data?.map((p) => [p.id, p]) ?? [],
@@ -358,7 +367,8 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     uniqueFriendItems.forEach((item, i) => {
         const titleResult = friendTitleResults[i];
         if (titleResult.status !== 'fulfilled') return;
-        const displayName = friendDisplayNameById.get(item.user_id) ?? 'A friend';
+        const friendProfile = friendProfileById.get(item.user_id);
+        const displayName = friendProfile?.displayName ?? 'A friend';
         const verb = item.status === 'watching' ? 'is watching this' : 'watched this';
         friendCards.push({
             tmdbId: item.tmdb_id,
@@ -366,6 +376,10 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             title: titleResult.value.title,
             posterPath: titleResult.value.posterPath,
             attribution: `${firstName(displayName)} ${verb}`,
+            sender: {
+                displayName,
+                avatarUrl: friendProfile?.avatarUrl ?? null,
+            },
         });
     });
 
@@ -384,89 +398,12 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         });
     });
 
-    // ---- Activity hint
-    //
-    // Pick at most one freshness line for the area under the search
-    // bar. Priority is:
-    //   1. A specific friend rating in the last 24 h — most personal
-    //   2. Pending recs count — direct call to action
-    //   3. Friend additions today count — group activity, vaguest
-    // Null if nothing in any category. We work from already-fetched
-    // rows so this doesn't cost an extra round trip; the rated
-    // friend item's TMDB title is reused from friendTitleResults
-    // when available, otherwise the rating line is skipped to avoid
-    // an extra lookup on cold paths.
-    const twentyFourHoursAgoIso = new Date(
-        Date.now() - TWENTY_FOUR_HOURS_MS,
-    ).toISOString();
-    let activityHint: string | null = null;
-
-    const recentRated = friendItems.find(
-        (item) =>
-            item.rating !== null &&
-            item.status === 'watched' &&
-            item.updated_at >= twentyFourHoursAgoIso,
-    );
-    if (recentRated) {
-        const ratedTitleIdx = uniqueFriendItems.findIndex(
-            (u) =>
-                u.user_id === recentRated.user_id &&
-                u.tmdb_id === recentRated.tmdb_id &&
-                u.media_type === recentRated.media_type,
-        );
-        const ratedTitleResult =
-            ratedTitleIdx >= 0 ? friendTitleResults[ratedTitleIdx] : null;
-        const ratedTitle =
-            ratedTitleResult && ratedTitleResult.status === 'fulfilled'
-                ? ratedTitleResult.value.title
-                : null;
-        const ratedFriendName = friendDisplayNameById.get(recentRated.user_id);
-        if (ratedTitle && ratedFriendName && recentRated.rating !== null) {
-            // recentRated.rating is on the half-star 1-10 scale; divide
-            // to get the user-visible star count (4.5★, 5★, etc.).
-            const starCount = recentRated.rating / 2;
-            // Singular only for exactly one whole star (stored as 2);
-            // halves and other values stay plural in English.
-            const starsLabel = recentRated.rating === 2 ? 'star' : 'stars';
-            activityHint = `${firstName(ratedFriendName)} just rated ${ratedTitle} ${starCount} ${starsLabel}`;
-        }
-    }
-
-    if (!activityHint) {
-        const pendingCount = recs.filter(
-            (r) => (r as { status?: string }).status === 'pending',
-        ).length;
-        if (pendingCount > 0) {
-            activityHint =
-                pendingCount === 1
-                    ? '1 rec waiting for you'
-                    : `${pendingCount} recs waiting for you`;
-        }
-    }
-
-    if (!activityHint) {
-        const recentAdders = new Set<string>();
-        for (const item of friendItems) {
-            if (item.created_at && item.created_at >= twentyFourHoursAgoIso) {
-                recentAdders.add(item.user_id);
-            }
-        }
-        const count = recentAdders.size;
-        if (count > 0) {
-            activityHint =
-                count === 1
-                    ? '1 friend added titles today'
-                    : `${count} friends added titles today`;
-        }
-    }
-
     return {
         recsForYou,
         friendCards,
         currentlyWatching,
         hasLibraryItems: (itemsCountResult.count ?? 0) > 0,
         hasFriends: friendIds.length > 0,
-        activityHint,
     };
 }
 
@@ -848,14 +785,91 @@ export default function HomeScreen() {
         );
     }
 
-    function renderActivityHint(hint: string) {
+    // Shared between the single-card and multi-card render paths so a
+    // change to the card layout doesn't have to land in two places.
+    // `cardWidth` is overridden inline because the solo and carousel
+    // widths differ; everything else comes from styles.recHeroCard.
+    function renderRecHeroCard(rec: RecForYou, cardWidth: number) {
         return (
-            <Text
-                style={[styles.activityHint, { color: palette.textMuted }]}
-                numberOfLines={1}
+            <Pressable
+                key={rec.id}
+                onPress={() =>
+                    navigateToTitle(rec.mediaType, rec.tmdbId, rec.id)
+                }
+                style={({ pressed }) => [
+                    styles.recHeroCard,
+                    {
+                        width: cardWidth,
+                        backgroundColor: palette.surfaceAlt,
+                        borderColor: palette.border,
+                    },
+                    pressed && { opacity: 0.85 },
+                ]}
             >
-                {hint}
-            </Text>
+                {rec.posterPath ? (
+                    <Image
+                        source={{ uri: imageUrl(rec.posterPath, 'w342') }}
+                        style={styles.recHeroPoster}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : (
+                    <View
+                        style={[
+                            styles.recHeroPoster,
+                            { backgroundColor: palette.surface },
+                        ]}
+                    />
+                )}
+                <View style={styles.recHeroContent}>
+                    <View style={styles.recHeroSenderRow}>
+                        <Avatar
+                            avatarUrl={rec.sender.avatarUrl}
+                            displayName={rec.sender.displayName}
+                            size={REC_AVATAR_SIZE}
+                        />
+                        <View style={styles.recHeroSenderText}>
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.accent },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {firstName(rec.sender.displayName)}
+                            </Text>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                recommends
+                            </Text>
+                        </View>
+                    </View>
+                    <Text
+                        style={[
+                            typography.heading,
+                            { color: palette.text },
+                        ]}
+                        numberOfLines={2}
+                    >
+                        {rec.title}
+                    </Text>
+                    {rec.note ? (
+                        <Text
+                            style={[
+                                styles.recNote,
+                                { color: palette.textMuted },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            “{rec.note}”
+                        </Text>
+                    ) : null}
+                </View>
+            </Pressable>
         );
     }
 
@@ -872,102 +886,28 @@ export default function HomeScreen() {
                     Recs for you
                 </Text>
                 {data.recsForYou.length > 0 ? (
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        // The card width (85% of screen) plus the
-                        // contentContainerStyle's right padding leaves
-                        // the next card's edge visible — that "peek"
-                        // is the swipe affordance.
-                        contentContainerStyle={styles.recCardsRow}
-                        // Snap each swipe to a card so the user always
-                        // lands on a full hero, not a partial one.
-                        snapToInterval={REC_CARD_W + spacing.md}
-                        decelerationRate="fast"
-                    >
-                        {data.recsForYou.map((rec) => (
-                            <Pressable
-                                key={rec.id}
-                                onPress={() =>
-                                    navigateToTitle(rec.mediaType, rec.tmdbId, rec.id)
-                                }
-                                style={({ pressed }) => [
-                                    styles.recHeroCard,
-                                    {
-                                        backgroundColor: palette.surfaceAlt,
-                                        borderColor: palette.border,
-                                    },
-                                    pressed && { opacity: 0.85 },
-                                ]}
-                            >
-                                {rec.posterPath ? (
-                                    <Image
-                                        source={{
-                                            uri: imageUrl(rec.posterPath, 'w342'),
-                                        }}
-                                        style={styles.recHeroPoster}
-                                        contentFit="cover"
-                                        transition={150}
-                                    />
-                                ) : (
-                                    <View
-                                        style={[
-                                            styles.recHeroPoster,
-                                            { backgroundColor: palette.surface },
-                                        ]}
-                                    />
-                                )}
-                                <View style={styles.recHeroContent}>
-                                    <View style={styles.recHeroSenderRow}>
-                                        <Avatar
-                                            avatarUrl={rec.sender.avatarUrl}
-                                            displayName={rec.sender.displayName}
-                                            size={REC_AVATAR_SIZE}
-                                        />
-                                        <View style={styles.recHeroSenderText}>
-                                            <Text
-                                                style={[
-                                                    typography.bodyEmphasis,
-                                                    { color: palette.accent },
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {firstName(rec.sender.displayName)}
-                                            </Text>
-                                            <Text
-                                                style={[
-                                                    typography.caption,
-                                                    { color: palette.textMuted },
-                                                ]}
-                                            >
-                                                recommends
-                                            </Text>
-                                        </View>
-                                    </View>
-                                    <Text
-                                        style={[
-                                            typography.heading,
-                                            { color: palette.text },
-                                        ]}
-                                        numberOfLines={2}
-                                    >
-                                        {rec.title}
-                                    </Text>
-                                    {rec.note ? (
-                                        <Text
-                                            style={[
-                                                styles.recNote,
-                                                { color: palette.textMuted },
-                                            ]}
-                                            numberOfLines={2}
-                                        >
-                                            “{rec.note}”
-                                        </Text>
-                                    ) : null}
-                                </View>
-                            </Pressable>
-                        ))}
-                    </ScrollView>
+                    // Single rec → render at near-full width without
+                    // the horizontal scroller, since there's nothing
+                    // to swipe to. Multi-rec → keep the 85%-width
+                    // cards in a snap-scroll so the next card peeks
+                    // and invites the swipe.
+                    data.recsForYou.length === 1 ? (
+                        <View style={styles.recSoloRow}>
+                            {renderRecHeroCard(data.recsForYou[0], REC_CARD_SOLO_W)}
+                        </View>
+                    ) : (
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.recCardsRow}
+                            snapToInterval={REC_CARD_W + spacing.md}
+                            decelerationRate="fast"
+                        >
+                            {data.recsForYou.map((rec) =>
+                                renderRecHeroCard(rec, REC_CARD_W),
+                            )}
+                        </ScrollView>
+                    )
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
@@ -1010,9 +950,10 @@ export default function HomeScreen() {
                                     navigateToTitle(card.mediaType, card.tmdbId)
                                 }
                                 style={({ pressed }) => [
+                                    styles.friendsGridCell,
                                     pressed && { opacity: 0.6 },
                                 ]}
-                                accessibilityLabel={card.title}
+                                accessibilityLabel={`${card.title}, from ${card.sender.displayName}`}
                             >
                                 {card.posterPath ? (
                                     <Image
@@ -1031,6 +972,27 @@ export default function HomeScreen() {
                                         ]}
                                     />
                                 )}
+                                {/* Sender avatar overlay — small "who"
+                                    signal in the bottom-right corner so
+                                    the user can tell at a glance which
+                                    friend's library the poster came
+                                    from. The Pressable owns the tap
+                                    target; the avatar is purely
+                                    decorative. */}
+                                <View
+                                    style={[
+                                        styles.friendsGridAvatar,
+                                        {
+                                            borderColor: palette.bg,
+                                        },
+                                    ]}
+                                >
+                                    <Avatar
+                                        avatarUrl={card.sender.avatarUrl}
+                                        displayName={card.sender.displayName}
+                                        size={FRIENDS_GRID_AVATAR_SIZE}
+                                    />
+                                </View>
                             </Pressable>
                         ))}
                     </View>
@@ -1306,9 +1268,6 @@ export default function HomeScreen() {
                     renderGlobalEmpty()
                 ) : (
                     <>
-                        {data.activityHint
-                            ? renderActivityHint(data.activityHint)
-                            : null}
                         {renderRecsForYou(data)}
                         {renderFriendsWatching(data)}
                         {renderCurrentlyWatching(data)}
@@ -1476,14 +1435,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         marginBottom: spacing.md,
     },
-    // Activity hint — small italic line under the search bar.
-    activityHint: {
-        fontSize: 12,
-        lineHeight: 16,
-        fontStyle: 'italic',
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.xs,
-    },
     // Recs for you — HERO cards. Each card is ~85% of screen width
     // with poster on the left and content on the right; the next card
     // peeks on the right edge as a swipe affordance.
@@ -1493,9 +1444,18 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.xs,
         gap: spacing.md,
     },
+    // Solo-card wrapper: matches the multi-card row's vertical padding
+    // so swapping between 1 and 2+ recs doesn't shift the section
+    // height. The card width itself is passed inline by
+    // renderRecHeroCard.
+    recSoloRow: {
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.xs,
+    },
     recHeroCard: {
         flexDirection: 'row',
-        width: REC_CARD_W,
+        // Width is supplied inline by renderRecHeroCard so the single
+        // and multi-card paths can use different sizes.
         height: REC_CARD_H,
         padding: spacing.sm,
         borderRadius: radius.md,
@@ -1534,16 +1494,43 @@ const styles = StyleSheet.create({
     // space-between distributes the row evenly regardless of device
     // width; rowGap controls vertical space between rows of two.
     friendsGrid: {
+        // Wrapping grid packed from the left with a fixed gap. Using
+        // space-between previously meant rows with <4 items (e.g. the
+        // last row of an odd count) stretched edge-to-edge with a huge
+        // visual gap between two posters; columnGap holds the spacing
+        // constant regardless of how many items land on a row.
         flexDirection: 'row',
         flexWrap: 'wrap',
         paddingHorizontal: spacing.base,
-        justifyContent: 'space-between',
-        rowGap: spacing.sm,
+        // Symmetric column + row gap. rowGap matches columnGap so the
+        // grid reads as evenly spaced, and the 16 px vertical gap
+        // gives the sender-avatar overlay (which extends 4 px past
+        // each poster's bottom-right corner) clear breathing room
+        // before the next row's poster.
+        columnGap: spacing.base,
+        rowGap: spacing.base,
+    },
+    friendsGridCell: {
+        // Cell wraps the poster + the absolute avatar overlay so the
+        // overlay can position relative to the poster's bounds.
+        position: 'relative',
     },
     friendsGridPoster: {
         width: FRIENDS_GRID_POSTER_W,
         height: FRIENDS_GRID_POSTER_H,
         borderRadius: radius.sm,
+    },
+    friendsGridAvatar: {
+        // Hairline cream border tucks the avatar against the poster
+        // so it reads as a chip pinned to the corner rather than
+        // floating loose. -4 nudge keeps it just inside the poster
+        // rounded corner while still kissing the edge.
+        position: 'absolute',
+        bottom: -4,
+        right: -4,
+        borderRadius: FRIENDS_GRID_AVATAR_SIZE / 2 + 2,
+        borderWidth: 2,
+        overflow: 'hidden',
     },
     // Currently watching — compact list rows: small poster + inline
     // title/relative-time + primary-action pill on the right.

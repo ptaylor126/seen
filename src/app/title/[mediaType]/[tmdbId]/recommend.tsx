@@ -458,8 +458,17 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.sm,
+        // Horizontal inset matches every body element in the modal so
+        // the Cancel / Send row edge-aligns with the title context,
+        // section labels, friend list, and note box below.
+        paddingHorizontal: spacing.lg,
+        // Asymmetric vertical padding: a deeper top pushes the
+        // Cancel / Recommend / Send row off the modal's top edge
+        // (iOS modal presentations don't supply a usable top safe-area
+        // inset since the modal sits below the system chrome). Bottom
+        // stays tight so the title row that follows isn't oversized.
+        paddingTop: spacing.base,
+        paddingBottom: spacing.sm,
     },
     scrollContent: {
         paddingBottom: spacing.xl,
@@ -468,7 +477,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.md,
-        paddingHorizontal: spacing.base,
+        paddingHorizontal: spacing.lg,
         paddingTop: spacing.md,
         paddingBottom: spacing.lg,
     },
@@ -487,13 +496,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.xl,
     },
     sectionLabel: {
-        paddingHorizontal: spacing.base,
+        paddingHorizontal: spacing.lg,
         marginTop: spacing.lg,
         marginBottom: spacing.sm,
         letterSpacing: 0.5,
     },
     friendList: {
-        paddingHorizontal: spacing.base,
+        paddingHorizontal: spacing.lg,
     },
     friendRow: {
         flexDirection: 'row',
@@ -525,7 +534,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     noteBox: {
-        marginHorizontal: spacing.base,
+        marginHorizontal: spacing.lg,
         borderRadius: radius.sm,
         borderWidth: 1,
         paddingHorizontal: spacing.md,
@@ -538,7 +547,7 @@ const styles = StyleSheet.create({
     },
     charCount: {
         textAlign: 'right',
-        paddingHorizontal: spacing.base,
+        paddingHorizontal: spacing.lg,
         marginTop: spacing.xs,
     },
 });

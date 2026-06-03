@@ -359,7 +359,11 @@ export default function TitleDetailScreen() {
         }
     }
 
-    const closeButtonTop = insets.top + spacing.sm;
+    // Modal presentation sits below the status bar already, so we
+    // don't add `insets.top` — that would push the X well into the
+    // hero image. A flat spacing.base sits just inside the modal's
+    // rounded top-right corner without clipping.
+    const closeButtonTop = spacing.base;
 
     if (loading) {
         return (
@@ -770,7 +774,10 @@ const styles = StyleSheet.create({
     },
     closeButton: {
         position: 'absolute',
-        left: spacing.base,
+        // Top-right per design — when a rec attribution banner is
+        // shown at the top of the scroll, the avatar sits on the left
+        // and the close X belongs on the opposite side.
+        right: spacing.base,
         width: 36,
         height: 36,
         borderRadius: radius.full,

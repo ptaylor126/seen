@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { Bell, ChevronLeft } from 'lucide-react-native';
+import { ChevronLeft, Mail } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -68,7 +68,7 @@ export function ScreenHeader({
                             style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                         >
                             <View>
-                                <Bell
+                                <Mail
                                     color={palette.text}
                                     size={24}
                                     strokeWidth={ICON_STROKE_WIDTH}
