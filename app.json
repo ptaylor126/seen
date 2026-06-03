@@ -10,6 +10,9 @@
     "ios": {
       "bundleIdentifier": "com.paultaylor.seen",
       "usesAppleSignIn": true,
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
