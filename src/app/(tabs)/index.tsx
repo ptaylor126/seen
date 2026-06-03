@@ -1,19 +1,16 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Mail, Search, X } from 'lucide-react-native';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Mail } from 'lucide-react-native';
+import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     Dimensions,
-    FlatList,
-    Keyboard,
     Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -21,10 +18,16 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { Avatar } from '@/components/avatar';
 import { RatingSheet } from '@/components/rating-sheet';
+import {
+    SEARCH_OVERLAY_TOP_OFFSET,
+    SearchBarInput,
+    SearchBarOverlay,
+    useSearchBar,
+} from '@/components/search-bar';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
+import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -33,24 +36,6 @@ import {
     typography,
 } from '@/theme/theme';
 
-// Same shape as the /library/add modal: surface only movies and TV
-// with a poster — TMDB returns plenty of poster-less rows that don't
-// belong in a results list.
-type SearchableItem =
-    | (TMDBMediaItem & { media_type: 'movie'; poster_path: string })
-    | (TMDBMediaItem & { media_type: 'tv'; poster_path: string });
-
-const SEARCH_DEBOUNCE_MS = 300;
-// Distance from the SafeArea top inset to the bottom of the search bar.
-// Used to position the search results overlay's top edge just under the
-// input. Sized from the header + searchBar style values below:
-// header padding (12 + 12) + display lineHeight (38) + searchBar
-// marginTop (8) + searchBar height (44) = 114; rounded to 116 for a
-// hairline of breathing room.
-const SEARCH_SHEET_TOP_OFFSET = 116;
-const SEARCH_RESULT_POSTER_W = 56;
-const SEARCH_RESULT_POSTER_H = 84;
-
 interface RecForYou {
     id: string;
     tmdbId: number;
@@ -58,7 +43,12 @@ interface RecForYou {
     title: string;
     posterPath: string | null;
     note: string | null;
-    sender: { handle: string; displayName: string; avatarUrl: string | null };
+    sender: {
+        userId: string;
+        handle: string;
+        displayName: string;
+        avatarUrl: string | null;
+    };
 }
 
 interface FriendCard {
@@ -66,12 +56,15 @@ interface FriendCard {
     mediaType: MediaType;
     title: string;
     posterPath: string | null;
-    // Kept on the interface so the section's older attribution-line
-    // variant remains buildable if we ever revert; the new grid
-    // layout doesn't render this string directly, but uses the sender
-    // info below to overlay a small avatar on the poster.
-    attribution: string;
-    sender: { displayName: string; avatarUrl: string | null };
+    // All friends currently watching this show, ordered most-recent
+    // activity first. Tile renders the first 5 as a stacked-avatar row;
+    // any extra are summarised in a +N chip.
+    watchers: {
+        userId: string;
+        displayName: string;
+        avatarUrl: string | null;
+    }[];
+    totalWatchers: number;
 }
 
 interface WatchingItem {
@@ -121,10 +114,16 @@ const WATCHING_POSTER_H = 60;
 // "tiny floating thing waiting for siblings."
 const REC_CARD_SOLO_W = HERO_SCREEN_W - spacing.base * 2;
 
-// Friends grid avatar overlay — small social attribution badge on
-// each poster's bottom-right corner. 24 px reads as a "who" signal
-// without competing with the poster art for attention.
-const FRIENDS_GRID_AVATAR_SIZE = 24;
+// Friends grid stacked-avatar overlay — small social-proof row on
+// each poster's bottom-right corner showing every friend currently
+// watching this title (cap-then-overflow). 18 px lets a cap of 5 +
+// "+N" fit comfortably across an 80 px tile at 60% overlap.
+const FRIENDS_GRID_AVATAR_SIZE = 18;
+const FRIENDS_GRID_MAX_AVATARS = 5;
+// Negative marginLeft applied to every chip after the first so each
+// overlaps its left neighbour by ~60%. Tighter overlap = stack fits
+// within tile bounds even at the 5-avatar + "+N" max.
+const FRIENDS_GRID_STACK_OVERLAP = 11;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -219,9 +218,16 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
                       'user_id, tmdb_id, media_type, status, updated_at, created_at, rating',
                   )
                   .in('user_id', friendIds)
-                  .in('status', ['watching', 'watched'])
+                  // Section is "Friends are watching" — only the watching
+                  // status drives the social proof. Watched-by-friends
+                  // belongs elsewhere if we ever surface it.
+                  .eq('status', 'watching')
                   .order('updated_at', { ascending: false })
-                  .limit(40)
+                  // Bumped from 40 → 200 so popular shows don't get
+                  // their watcher count clipped: with grouping we need
+                  // enough rows in the window to surface every friend
+                  // who's watching X, not just the most recent few.
+                  .limit(200)
             : Promise.resolve({ data: [], error: null }),
         senderIds.size > 0
             ? supabase
@@ -234,9 +240,12 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     if (friendItemsResult.error) throw friendItemsResult.error;
     if (senderProfilesResult.error) throw senderProfilesResult.error;
 
-    // Dedup friend items by (media_type, tmdb_id) — show one card per
-    // title, attributed to the most recent watcher (the SQL ordering
-    // already has the most recent first, so the first occurrence wins).
+    // Group friend items by (media_type, tmdb_id) — one card per show,
+    // carrying the list of friends watching it. Items arrive ordered
+    // updated_at DESC, so the first occurrence per show pins
+    // `mostRecentAt` to the freshest activity; subsequent watchers are
+    // appended (deduped by user_id in case a friend somehow has two
+    // watching rows for the same show).
     interface FriendItemRow {
         user_id: string;
         tmdb_id: number;
@@ -246,19 +255,42 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         created_at: string;
         rating: number | null;
     }
+    interface FriendShowGroup {
+        tmdbId: number;
+        mediaType: MediaType;
+        mostRecentAt: string;
+        watcherIds: string[];
+    }
     const friendItems = (friendItemsResult.data ?? []) as FriendItemRow[];
-    const seenTitleKeys = new Set<string>();
-    const uniqueFriendItems: FriendItemRow[] = [];
+    const groupsByKey = new Map<string, FriendShowGroup>();
     for (const item of friendItems) {
         const key = `${item.media_type}:${item.tmdb_id}`;
-        if (!seenTitleKeys.has(key)) {
-            seenTitleKeys.add(key);
-            uniqueFriendItems.push(item);
+        let group = groupsByKey.get(key);
+        if (!group) {
+            group = {
+                tmdbId: item.tmdb_id,
+                mediaType: item.media_type as MediaType,
+                mostRecentAt: item.updated_at,
+                watcherIds: [],
+            };
+            groupsByKey.set(key, group);
+        }
+        if (!group.watcherIds.includes(item.user_id)) {
+            group.watcherIds.push(item.user_id);
         }
     }
+    // Primary sort: watcher count DESC (social proof). Tie: most recent
+    // activity DESC — ISO timestamps sort lexicographically.
+    const friendShowGroups = Array.from(groupsByKey.values()).sort(
+        (a, b) =>
+            b.watcherIds.length - a.watcherIds.length ||
+            b.mostRecentAt.localeCompare(a.mostRecentAt),
+    );
 
+    // Profiles batched for ALL distinct watchers across all groups —
+    // each group needs every watcher's avatar, not just the first.
     const friendItemOwnerIds = Array.from(
-        new Set(uniqueFriendItems.map((i) => i.user_id)),
+        new Set(friendItems.map((i) => i.user_id)),
     );
 
     // ---- Wave 3: friend owner display names + TMDB metadata (parallel)
@@ -286,13 +318,13 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
               })),
     );
 
-    const friendTitlePromises = uniqueFriendItems.map((i) =>
-        i.media_type === 'movie'
-            ? getMovie(i.tmdb_id).then((m) => ({
+    const friendTitlePromises = friendShowGroups.map((g) =>
+        g.mediaType === 'movie'
+            ? getMovie(g.tmdbId).then((m) => ({
                   title: m.title,
                   posterPath: m.poster_path,
               }))
-            : getTV(i.tmdb_id).then((t) => ({
+            : getTV(g.tmdbId).then((t) => ({
                   title: t.name,
                   posterPath: t.poster_path,
               })),
@@ -356,6 +388,11 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             posterPath: titleResult.value.posterPath,
             note: typeof r.note === 'string' && r.note.length > 0 ? r.note : null,
             sender: {
+                // Fallback to the rec id when the sender's profile is
+                // gone (deleted account) — keeps the avatar colour
+                // deterministic per orphaned rec instead of all
+                // collapsing onto the same hash of 'unknown'.
+                userId: r.from_user_id ?? r.id,
                 handle: senderProfile?.handle ?? 'unknown',
                 displayName: senderProfile?.display_name ?? 'Former user',
                 avatarUrl: senderProfile?.avatar_url ?? null,
@@ -364,22 +401,24 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     });
 
     const friendCards: FriendCard[] = [];
-    uniqueFriendItems.forEach((item, i) => {
+    friendShowGroups.forEach((group, i) => {
         const titleResult = friendTitleResults[i];
         if (titleResult.status !== 'fulfilled') return;
-        const friendProfile = friendProfileById.get(item.user_id);
-        const displayName = friendProfile?.displayName ?? 'A friend';
-        const verb = item.status === 'watching' ? 'is watching this' : 'watched this';
+        const watchers = group.watcherIds.map((id) => {
+            const profile = friendProfileById.get(id);
+            return {
+                userId: id,
+                displayName: profile?.displayName ?? 'A friend',
+                avatarUrl: profile?.avatarUrl ?? null,
+            };
+        });
         friendCards.push({
-            tmdbId: item.tmdb_id,
-            mediaType: item.media_type as MediaType,
+            tmdbId: group.tmdbId,
+            mediaType: group.mediaType,
             title: titleResult.value.title,
             posterPath: titleResult.value.posterPath,
-            attribution: `${firstName(displayName)} ${verb}`,
-            sender: {
-                displayName,
-                avatarUrl: friendProfile?.avatarUrl ?? null,
-            },
+            watchers,
+            totalWatchers: watchers.length,
         });
     });
 
@@ -432,90 +471,15 @@ export default function HomeScreen() {
     } | null>(null);
     const [ratingBusy, setRatingBusy] = useState(false);
 
-    // Inline search. The TextInput in the header lives on Home itself;
-    // when focused (or whenever it holds text) the results sheet Modal
-    // opens below it. The Modal's top region is a tap-to-dismiss scrim
-    // so the user can swipe back to Home without committing a search.
-    const homeInputRef = useRef<TextInput>(null);
-    const [homeSearchQuery, setHomeSearchQuery] = useState('');
-    const [searchOpen, setSearchOpen] = useState(false);
-    const [searchResults, setSearchResults] = useState<SearchableItem[] | null>(null);
-    const [searchLoading, setSearchLoading] = useState(false);
-    const [searchError, setSearchError] = useState<string | null>(null);
-
-    // 300 ms debounce + stale-result guard. Mirrors the pattern used in
-    // src/app/library/add.tsx; the search is driven by the query alone,
-    // so closing the modal doesn't cancel an in-flight request — the
-    // stale guard's `active` flag is enough.
-    useEffect(() => {
-        const trimmed = homeSearchQuery.trim();
-        if (!trimmed) {
-            setSearchResults(null);
-            setSearchError(null);
-            setSearchLoading(false);
-            return;
-        }
-
-        let active = true;
-        setSearchLoading(true);
-
-        const handle = setTimeout(async () => {
-            try {
-                const response = await searchMulti(trimmed, 1);
-                if (!active) return;
-                const filtered = response.results.filter(
-                    (item): item is SearchableItem =>
-                        (item.media_type === 'movie' || item.media_type === 'tv') &&
-                        !!item.poster_path,
-                );
-                setSearchResults(filtered);
-                setSearchError(null);
-            } catch (err) {
-                if (!active) return;
-                setSearchResults([]);
-                setSearchError(err instanceof Error ? err.message : 'Search failed');
-            } finally {
-                if (active) setSearchLoading(false);
-            }
-        }, SEARCH_DEBOUNCE_MS);
-
-        return () => {
-            active = false;
-            clearTimeout(handle);
-        };
-    }, [homeSearchQuery]);
-
-    function handleSearchFocus() {
-        setSearchOpen(true);
-    }
-
-    function handleSearchDismiss() {
-        setHomeSearchQuery('');
-        setSearchResults(null);
-        setSearchError(null);
-        setSearchOpen(false);
-        homeInputRef.current?.blur();
-        Keyboard.dismiss();
-    }
-
-    function handleSearchResultTap(item: SearchableItem) {
-        handleSearchDismiss();
-        router.push({
-            pathname: '/title/[mediaType]/[tmdbId]',
-            params: {
-                mediaType: item.media_type,
-                tmdbId: String(item.id),
-            },
-        });
-    }
+    const search = useSearchBar();
 
     // CTA from the Currently watching empty state: refocus the home
     // input so the user lands directly in the search experience.
     // Fallback to the /library/add modal route on the unlikely event
     // the input ref is not yet attached.
     function handleSearchFromEmpty() {
-        if (homeInputRef.current) {
-            homeInputRef.current.focus();
+        if (search.inputRef.current) {
+            search.inputRef.current.focus();
         } else {
             router.push({ pathname: '/library/add' });
         }
@@ -715,76 +679,6 @@ export default function HomeScreen() {
         );
     }
 
-    function renderSearchBar() {
-        return (
-            <View
-                style={[
-                    styles.searchBar,
-                    {
-                        backgroundColor: palette.surface,
-                        borderColor: palette.border,
-                    },
-                ]}
-            >
-                <Search
-                    color={palette.textMuted}
-                    size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
-                />
-                <TextInput
-                    ref={homeInputRef}
-                    value={homeSearchQuery}
-                    onChangeText={setHomeSearchQuery}
-                    onFocus={handleSearchFocus}
-                    placeholder="Search to add or find anything"
-                    placeholderTextColor={palette.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
-                    style={[styles.searchInput, typography.body, { color: palette.text }]}
-                />
-            </View>
-        );
-    }
-
-    function renderSearchResult({ item }: { item: SearchableItem }) {
-        const titleText = item.media_type === 'movie' ? item.title : item.name;
-        const dateField =
-            item.media_type === 'movie' ? item.release_date : item.first_air_date;
-        const year = dateField ? dateField.slice(0, 4) : '';
-        const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
-        const metaLine = [year, mediaLabel].filter(Boolean).join(' · ');
-        return (
-            <Pressable
-                onPress={() => handleSearchResultTap(item)}
-                style={({ pressed }) => [
-                    styles.searchResultRow,
-                    pressed && { opacity: 0.6 },
-                ]}
-            >
-                <Image
-                    source={{ uri: imageUrl(item.poster_path, 'w185') }}
-                    style={styles.searchResultPoster}
-                    contentFit="cover"
-                    transition={150}
-                />
-                <View style={styles.searchResultText}>
-                    <Text
-                        style={[typography.bodyEmphasis, { color: palette.text }]}
-                        numberOfLines={2}
-                    >
-                        {titleText}
-                    </Text>
-                    {metaLine ? (
-                        <Text style={[typography.caption, { color: palette.textMuted }]}>
-                            {metaLine}
-                        </Text>
-                    ) : null}
-                </View>
-            </Pressable>
-        );
-    }
-
     // Shared between the single-card and multi-card render paths so a
     // change to the card layout doesn't have to land in two places.
     // `cardWidth` is overridden inline because the solo and carousel
@@ -826,6 +720,7 @@ export default function HomeScreen() {
                         <Avatar
                             avatarUrl={rec.sender.avatarUrl}
                             displayName={rec.sender.displayName}
+                            seedId={rec.sender.userId}
                             size={REC_AVATAR_SIZE}
                         />
                         <View style={styles.recHeroSenderText}>
@@ -943,58 +838,108 @@ export default function HomeScreen() {
                 </Text>
                 {gridItems.length > 0 ? (
                     <View style={styles.friendsGrid}>
-                        {gridItems.map((card) => (
-                            <Pressable
-                                key={`${card.mediaType}-${card.tmdbId}`}
-                                onPress={() =>
-                                    navigateToTitle(card.mediaType, card.tmdbId)
-                                }
-                                style={({ pressed }) => [
-                                    styles.friendsGridCell,
-                                    pressed && { opacity: 0.6 },
-                                ]}
-                                accessibilityLabel={`${card.title}, from ${card.sender.displayName}`}
-                            >
-                                {card.posterPath ? (
-                                    <Image
-                                        source={{
-                                            uri: imageUrl(card.posterPath, 'w185'),
-                                        }}
-                                        style={styles.friendsGridPoster}
-                                        contentFit="cover"
-                                        transition={150}
-                                    />
-                                ) : (
-                                    <View
-                                        style={[
-                                            styles.friendsGridPoster,
-                                            { backgroundColor: palette.surfaceAlt },
-                                        ]}
-                                    />
-                                )}
-                                {/* Sender avatar overlay — small "who"
-                                    signal in the bottom-right corner so
-                                    the user can tell at a glance which
-                                    friend's library the poster came
-                                    from. The Pressable owns the tap
-                                    target; the avatar is purely
-                                    decorative. */}
-                                <View
-                                    style={[
-                                        styles.friendsGridAvatar,
-                                        {
-                                            borderColor: palette.bg,
-                                        },
+                        {gridItems.map((card) => {
+                            const shown = card.watchers.slice(
+                                0,
+                                FRIENDS_GRID_MAX_AVATARS,
+                            );
+                            const extra =
+                                card.totalWatchers - shown.length;
+                            return (
+                                <Pressable
+                                    key={`${card.mediaType}-${card.tmdbId}`}
+                                    onPress={() =>
+                                        navigateToTitle(card.mediaType, card.tmdbId)
+                                    }
+                                    style={({ pressed }) => [
+                                        styles.friendsGridCell,
+                                        pressed && { opacity: 0.6 },
                                     ]}
+                                    accessibilityLabel={`${card.title}, ${card.totalWatchers} friend${
+                                        card.totalWatchers === 1 ? '' : 's'
+                                    } watching`}
                                 >
-                                    <Avatar
-                                        avatarUrl={card.sender.avatarUrl}
-                                        displayName={card.sender.displayName}
-                                        size={FRIENDS_GRID_AVATAR_SIZE}
-                                    />
-                                </View>
-                            </Pressable>
-                        ))}
+                                    {card.posterPath ? (
+                                        <Image
+                                            source={{
+                                                uri: imageUrl(card.posterPath, 'w185'),
+                                            }}
+                                            style={styles.friendsGridPoster}
+                                            contentFit="cover"
+                                            transition={150}
+                                        />
+                                    ) : (
+                                        <View
+                                            style={[
+                                                styles.friendsGridPoster,
+                                                { backgroundColor: palette.surfaceAlt },
+                                            ]}
+                                        />
+                                    )}
+                                    {/* Stacked-avatar social proof. Render
+                                        order is left-to-right (front-of-
+                                        stack = last drawn = rightmost):
+                                        [+N (if any), …shown.reverse()] so
+                                        the most-recent watcher (first
+                                        item in `shown`) lands rightmost
+                                        and on top, with older watchers
+                                        and the +N pill tucked behind to
+                                        the left. Each non-first chip
+                                        overlaps its predecessor via a
+                                        negative marginLeft. */}
+                                    <View style={styles.friendsGridStack}>
+                                        {extra > 0 ? (
+                                            <View
+                                                style={[
+                                                    styles.friendsGridStackChip,
+                                                    styles.friendsGridStackOverflow,
+                                                    {
+                                                        backgroundColor: palette.accent,
+                                                        borderColor: palette.bg,
+                                                    },
+                                                ]}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.friendsGridOverflowText,
+                                                        { color: palette.textInverse },
+                                                    ]}
+                                                >
+                                                    +{extra}
+                                                </Text>
+                                            </View>
+                                        ) : null}
+                                        {shown
+                                            .slice()
+                                            .reverse()
+                                            .map((w, idx) => {
+                                                const isLeftmost =
+                                                    idx === 0 && extra === 0;
+                                                return (
+                                                    <View
+                                                        key={w.userId}
+                                                        style={[
+                                                            styles.friendsGridStackChip,
+                                                            !isLeftmost && {
+                                                                marginLeft:
+                                                                    -FRIENDS_GRID_STACK_OVERLAP,
+                                                            },
+                                                            { borderColor: palette.bg },
+                                                        ]}
+                                                    >
+                                                        <Avatar
+                                                            avatarUrl={w.avatarUrl}
+                                                            displayName={w.displayName}
+                                                            seedId={w.userId}
+                                                            size={FRIENDS_GRID_AVATAR_SIZE}
+                                                        />
+                                                    </View>
+                                                );
+                                            })}
+                                    </View>
+                                </Pressable>
+                            );
+                        })}
                     </View>
                 ) : (
                     <View style={styles.inlineEmpty}>
@@ -1279,17 +1224,10 @@ export default function HomeScreen() {
         body = null;
     }
 
-    const searchModalVisible = searchOpen || homeSearchQuery.length > 0;
-    const searchSheetTop = insets.top + SEARCH_SHEET_TOP_OFFSET;
-
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             {renderHeader()}
-            {/* Search bar lives outside the ScrollView so its screen
-                position is deterministic — the search results Modal
-                positions its sheet directly below it via a fixed
-                offset (SEARCH_SHEET_TOP_OFFSET). */}
-            {renderSearchBar()}
+            <SearchBarInput state={search} />
             {body}
             <RatingSheet
                 visible={!!ratingTarget}
@@ -1297,72 +1235,11 @@ export default function HomeScreen() {
                 initialRating={ratingTarget?.rating ?? null}
                 onSubmit={handleRatingSubmit}
             />
-            {searchModalVisible && (
-                <View
-                    style={[
-                        styles.searchOverlay,
-                        {
-                            top: searchSheetTop,
-                            backgroundColor: palette.bg,
-                            borderTopColor: palette.border,
-                        },
-                    ]}
-                >
-                    <Pressable
-                        onPress={handleSearchDismiss}
-                        hitSlop={spacing.sm}
-                        style={({ pressed }) => [
-                            styles.searchClose,
-                            pressed && { opacity: 0.6 },
-                        ]}
-                    >
-                        <X
-                            color={palette.textMuted}
-                            size={20}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
-                    </Pressable>
-                    {searchLoading ? (
-                        <View style={styles.searchStatusBlock}>
-                            <ActivityIndicator color={palette.accent} />
-                        </View>
-                    ) : searchResults === null ? (
-                        // Empty overlay before the user types — the
-                        // search input's placeholder already states
-                        // the action, so a "Type to search" hint here
-                        // is redundant and gets cut off behind the
-                        // keyboard on shorter devices.
-                        <View style={styles.searchStatusBlock} />
-                    ) : searchResults.length === 0 ? (
-                        <View style={styles.searchStatusBlock}>
-                            <Text
-                                style={[typography.body, { color: palette.textMuted }]}
-                                numberOfLines={2}
-                            >
-                                {searchError
-                                    ? searchError
-                                    : `No results for "${homeSearchQuery.trim()}"`}
-                            </Text>
-                        </View>
-                    ) : (
-                        <FlatList
-                            data={searchResults}
-                            keyExtractor={(item) => `${item.media_type}-${item.id}`}
-                            renderItem={renderSearchResult}
-                            keyboardShouldPersistTaps="handled"
-                            keyboardDismissMode="on-drag"
-                            contentContainerStyle={styles.searchListContent}
-                            ItemSeparatorComponent={() => (
-                                <View
-                                    style={[
-                                        styles.searchSeparator,
-                                        { backgroundColor: palette.border },
-                                    ]}
-                                />
-                            )}
-                        />
-                    )}
-                </View>
+            {search.overlayVisible && (
+                <SearchBarOverlay
+                    state={search}
+                    top={insets.top + SEARCH_OVERLAY_TOP_OFFSET}
+                />
             )}
         </View>
     );
@@ -1408,25 +1285,6 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingBottom: spacing.xxl,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-        marginHorizontal: spacing.base,
-        marginTop: spacing.sm,
-        paddingHorizontal: spacing.md,
-        // Fully pill-shaped — search inputs read as their own object
-        // class (vs. content inputs which use radius.md).
-        borderRadius: radius.full,
-        borderWidth: 1,
-        height: 44,
-    },
-    searchInput: {
-        flex: 1,
-        // padding zeroed: the parent .searchBar height owns vertical
-        // sizing so the icon and text stay perfectly aligned.
-        paddingVertical: 0,
     },
     section: {
         paddingTop: spacing.lg,
@@ -1520,17 +1378,41 @@ const styles = StyleSheet.create({
         height: FRIENDS_GRID_POSTER_H,
         borderRadius: radius.sm,
     },
-    friendsGridAvatar: {
-        // Hairline cream border tucks the avatar against the poster
-        // so it reads as a chip pinned to the corner rather than
-        // floating loose. -4 nudge keeps it just inside the poster
-        // rounded corner while still kissing the edge.
+    friendsGridStack: {
+        // Stack is anchored at the bottom-right of the tile and extends
+        // leftward through its children. -4 nudge keeps the front chip
+        // just outside the poster corner (matches the prior single-
+        // avatar overlay aesthetic).
         position: 'absolute',
         bottom: -4,
         right: -4,
-        borderRadius: FRIENDS_GRID_AVATAR_SIZE / 2 + 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    friendsGridStackChip: {
+        // Outer = avatar + 2×border on each side. Without this the
+        // border ate into the chip's content box and shifted the
+        // avatar's centered letter visibly down-and-right.
+        width: FRIENDS_GRID_AVATAR_SIZE + 4,
+        height: FRIENDS_GRID_AVATAR_SIZE + 4,
+        // Wrapper carries the 2pt cream border so each chip reads as
+        // discrete against its neighbour in the stack. `overflow:
+        // hidden` clips the avatar's circle to fit inside the border.
+        borderRadius: (FRIENDS_GRID_AVATAR_SIZE + 4) / 2,
         borderWidth: 2,
         overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    friendsGridStackOverflow: {
+        // Same border + radius as a watcher chip so +N stacks
+        // coherently with the avatars.
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    friendsGridOverflowText: {
+        fontSize: 9,
+        fontWeight: '700',
     },
     // Currently watching — compact list rows: small poster + inline
     // title/relative-time + primary-action pill on the right.
@@ -1580,59 +1462,6 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     // Inline search overlay. Absolutely positioned over the ScrollView
-    // body — `top` is set inline from insets.top + SEARCH_SHEET_TOP_OFFSET
-    // so the overlay starts directly below the search bar. zIndex keeps
-    // it above the body's ScrollView; the header + searchBar sit above
-    // the overlay's top edge in normal flow, so the input stays
-    // tappable while the overlay is open.
-    searchOverlay: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        zIndex: 10,
-    },
-    searchClose: {
-        position: 'absolute',
-        top: spacing.sm,
-        right: spacing.base,
-        width: 32,
-        height: 32,
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1,
-    },
-    searchStatusBlock: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: spacing.xl,
-    },
-    searchListContent: {
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.xl,
-        paddingBottom: spacing.lg,
-    },
-    searchResultRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: spacing.md,
-        gap: spacing.md,
-    },
-    searchResultPoster: {
-        width: SEARCH_RESULT_POSTER_W,
-        height: SEARCH_RESULT_POSTER_H,
-        borderRadius: radius.sm,
-    },
-    searchResultText: {
-        flex: 1,
-        gap: spacing.xs,
-    },
-    searchSeparator: {
-        height: StyleSheet.hairlineWidth,
-        marginLeft: SEARCH_RESULT_POSTER_W + spacing.md,
-    },
     // Global empty
     globalEmpty: {
         flex: 1,
