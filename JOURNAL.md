@@ -15,6 +15,14 @@ Cleanup items deferred from other work — not blocking, but don't lose track.
 
 ---
 
+## Open items / UX
+
+Product or interaction gaps that need a decision, not a code cleanup. Land in a dated entry once resolved.
+
+- Toggle-off replaced the re-tap-to-re-rate path on title detail. No way to change an existing rating now without removing and re-adding. Add a dedicated "edit rating" affordance — decide placement (tap stars / long-press / pencil) so it doesn't conflict with the toggle-off tap.
+
+---
+
 ## 2026-06-03
 
 **Done**
