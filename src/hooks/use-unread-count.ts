@@ -1,5 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 import supabase from '@/lib/supabase';
 
@@ -74,10 +75,38 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
         }, [refresh]),
     );
 
+    // App-foreground fallback: useFocusEffect only fires on navigation
+    // (tab switch, screen push). It does NOT fire when the OS brings the
+    // app back from background to foreground with the same screen still
+    // mounted. If realtime was disconnected during background or a
+    // network blip dropped a delivery, the badge would stay stale until
+    // the user navigated. Refetching on AppState 'active' transitions
+    // closes that gap.
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'active') {
+                void refresh();
+            }
+        });
+        return () => sub.remove();
+    }, [refresh]);
+
     // Realtime: subscribe to both tables filtered to this user, refetch
     // the count on any change. The session lookup is async, so we set
     // up the channel inside an IIFE and guard with `active` against the
     // hook unmounting before the auth round trip finishes.
+    //
+    // Channel naming: `supabase.channel(name)` returns the existing
+    // channel if one is already registered under that topic. Combined
+    // with `removeChannel()`'s async teardown (sends a `phx_leave` and
+    // only removes from the realtime registry after the server acks),
+    // a React Strict Mode double-mount or a Fast Refresh hot-reload can
+    // get the new effect run a still-subscribed channel back — and
+    // calling `.on(...)` on a JOINED channel throws "cannot add
+    // postgres_changes callbacks ... after subscribe()". Per-effect
+    // random suffix sidesteps the reuse path entirely; each mount gets
+    // its own fresh channel under a unique topic, the previous one
+    // tears down independently in the background.
     useEffect(() => {
         let active = true;
         let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -88,8 +117,9 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
             const userId = session?.user.id;
             if (!userId || !active) return;
 
-            channel = supabase
-                .channel(`unread:${userId}`)
+            const topic = `unread:${userId}:${Math.random().toString(36).slice(2, 10)}`;
+            const newChannel = supabase
+                .channel(topic)
                 .on(
                     'postgres_changes',
                     {
@@ -115,6 +145,15 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
                     },
                 )
                 .subscribe();
+
+            if (!active) {
+                // Cleanup raced subscribe() — `channel` was never assigned,
+                // so the cleanup return won't tear this one down. Do it
+                // here directly rather than orphan it on the realtime client.
+                void supabase.removeChannel(newChannel);
+                return;
+            }
+            channel = newChannel;
         })();
         return () => {
             active = false;
