@@ -32,10 +32,12 @@ interface FriendRow {
 
 const AVATAR_SIZE = 44;
 
-// List bottom padding so the last friend isn't hidden behind the floating
-// "Invite more" button. Button height (~46pt) + bottom offset (spacing.base)
-// + breathing room. The tab bar lives outside the screen view, so it does
-// not contribute here — only clear the floating button itself.
+// List bottom padding so the last friend isn't hidden behind the
+// floating two-button action cluster (Add friend / Invite link). The
+// cluster is still a single pill-height row, so the clear distance
+// matches a single button: ~46pt + bottom offset (spacing.base) +
+// breathing room. The tab bar lives outside the screen view and is
+// already cleared by React Navigation.
 const FLOATING_BUTTON_CLEAR = spacing.xxxl + spacing.base;
 
 export default function FriendsScreen() {
@@ -155,7 +157,7 @@ export default function FriendsScreen() {
 
     const showEmptyState =
         !loading && !error && friends.length === 0 && pendingIncoming === 0;
-    const showFloatingInvite = !loading && !error && !showEmptyState;
+    const showFloatingActions = !loading && !error && !showEmptyState;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -289,17 +291,22 @@ export default function FriendsScreen() {
                 </>
             )}
 
-            {showFloatingInvite && (
-                <View style={styles.floatingInvite} pointerEvents="box-none">
+            {showFloatingActions && (
+                <View style={styles.floatingActions} pointerEvents="box-none">
+                    {/* Primary: find someone already on Seen and send a
+                        friend request. The request must be accepted by
+                        the recipient — not an auto-friendship. */}
                     <Pressable
-                        onPress={() => router.push('/friends/invite')}
+                        onPress={() => router.push('/friends/add')}
                         style={({ pressed }) => [
-                            styles.floatingInviteButton,
+                            styles.floatingPrimaryButton,
                             {
                                 backgroundColor: palette.accent,
                                 opacity: pressed ? 0.6 : 1,
                             },
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Add friend by handle"
                     >
                         <Text
                             style={[
@@ -307,7 +314,32 @@ export default function FriendsScreen() {
                                 { color: palette.textInverse },
                             ]}
                         >
-                            Invite more
+                            Add friend
+                        </Text>
+                    </Pressable>
+                    {/* Secondary: share an invite link to bring someone
+                        new in. Accepting the link auto-friends, so this
+                        is the path for people not yet on Seen. */}
+                    <Pressable
+                        onPress={() => router.push('/friends/invite')}
+                        style={({ pressed }) => [
+                            styles.floatingSecondaryButton,
+                            {
+                                borderColor: palette.accent,
+                                backgroundColor: palette.bg,
+                                opacity: pressed ? 0.6 : 1,
+                            },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Share invite link"
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.accent },
+                            ]}
+                        >
+                            Invite link
                         </Text>
                     </Pressable>
                 </View>
@@ -340,17 +372,37 @@ const styles = StyleSheet.create({
         paddingTop: spacing.sm,
         paddingBottom: FLOATING_BUTTON_CLEAR,
     },
-    floatingInvite: {
+    floatingActions: {
+        // Same anchoring as the prior single pill — full-width wrapper
+        // with `pointerEvents="box-none"` so taps on transparent padding
+        // pass through to the list. flexDirection: row + center +
+        // gap.md groups the two pills as a single connected affordance.
         position: 'absolute',
         left: spacing.base,
         right: spacing.base,
         bottom: spacing.base,
-        alignItems: 'center',
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: spacing.md,
     },
-    floatingInviteButton: {
+    floatingPrimaryButton: {
+        // Same pill shape as the previous single invite button so the
+        // anchor visually matches what was there.
         paddingVertical: spacing.md,
         paddingHorizontal: spacing.lg,
         borderRadius: radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    floatingSecondaryButton: {
+        // Outlined pill in the same shape — accent border, cream fill
+        // (NOT transparent, so the list scrolling behind doesn't show
+        // through the rounded corners). Vertical padding accounts for
+        // the 1.5pt border to keep the cluster's heights identical.
+        paddingVertical: spacing.md - 1.5,
+        paddingHorizontal: spacing.lg - 1.5,
+        borderRadius: radius.full,
+        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
     },
