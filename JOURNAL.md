@@ -14,6 +14,7 @@ Cleanup items deferred from other work — not blocking, but don't lose track.
 - "Friends are watching" multi-watcher stacking, +N overflow, and count-based ordering are code-verified only — can't exercise with one friend. Confirm once multiple testers have overlapping watching items.
 - Library leak bug: items RLS is permissive (own + friends' public rows) by design. Any "just my stuff" query must filter user_id explicitly — never rely on RLS as the scoping filter.
 - Un-watching drifts the rec out of sync: when a user un-watches an item (Watched → Watching/Watchlist), the recommendation that prompted it stays at `status='watched'` and the sender's `rec_watched` notification has already fired — so the sender's view of "they watched my rec" can drift away from the recipient's actual state. Deferred: un-watching is rare, and resetting the rec touches the notification system (would we un-send the notification? mark the rec as `accepted` again silently?). Revisit if it matters.
+- Recommend "Send to" friend list (`src/app/title/[mediaType]/[tmdbId]/recommend.tsx`) uses a bespoke `renderAvatar` with a hardcoded `palette.accent` fill, bypassing the shared color-by-id `<Avatar>`. **Third place this pattern has appeared** (also Friends tab — previously fixed by replacing with the shared component). Sweep all bespoke avatar implementations onto the shared `<Avatar>` (seeded on `userId`) in one cleanup pass so every screen renders the same person in the same color.
 
 ---
 
