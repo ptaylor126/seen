@@ -27,6 +27,47 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-04
+
+**Done — build 8 batch**
+
+- Friends tab: surfaced Add-friend (handle search → sends a friend request) and Invite-link as two buttons on the populated Friends tab (`38105b6`). The handle-search flow (`friends/add.tsx`) already existed but was only reachable from empty states — discoverability fix, not a new feature. Verified the request → accept loop on device with two accounts.
+- Status transitions fix (`4370cae`): Watched → Watching and Watched → Watchlist were throwing because `items_rating_only_when_watched_check` rejected the upsert when the existing rating column survived the status change. Now any transition out of `'watched'` explicitly nulls both `rating` AND `watched_at`. All six pairwise transitions verified.
+- Recommend: friend picker is now multi-select (`b8d0638`). Each recipient gets their own `recommendations` row + `rec_received` notification through the existing single-recipient RPC, called in parallel via `Promise.allSettled`; the note applies to all. Duplicate (already-recommended-this-to-them) treated as a benign no-op — Postgres `23505` on `recommendations_pair_unique` reported as "already had this rec — left as-is", not as a failure.
+- Home "Friends are watching" → horizontal scroll row (`699b64d`). Was a wrapping 2-row grid of 80×80 square tiles; now a single horizontally-scrolling row of true 2:3 posters (~93pt wide so 3.5 are visible — the half-poster peek at the right edge is the affordance, no scrollbar). Watcher avatars resized 18 → 20 and repositioned `bottom: spacing.xs / right: spacing.xs` so the ScrollView's native cross-axis clip doesn't chop the chip — the prior `bottom: -4 / right: -4` overhang worked on the grid (`<View>` parent, no clip) but the horizontal `ScrollView` clips children below the cell's bottom edge.
+- Where to Watch on title detail (`bf43f3c`). TMDB `/watch/providers` (JustWatch data) per device region (`expo-localization`), showing stream / rent / buy. **JustWatch compliance**: provider logos are decorative non-interactive; the only outbound link goes to the `link` field TMDB returns in the region's response (no fabricated deep links into Netflix / Apple TV / etc.); attribution caption "Streaming, rental and purchase data provided by JustWatch" is rendered with the section. Hides entirely (no "not available" copy) when the region has no providers or all three buckets are empty. Required deploying the `tmdb-proxy` Edge Function with watch-providers paths added to the allowlist, plus a dev-client rebuild for the new native module.
+- Profile image upload (`6c07ca5`). Supabase Storage `avatars` bucket, public-read, owner-only-write RLS scoped via `(storage.foldername(name))[1] = auth.uid()::text`. Pipeline (`src/lib/avatar-upload.ts`): pick → square crop (`aspect: [1, 1]`) → resize to 256×256 → JPEG compress at q=0.85 → **ArrayBuffer** upload (RN-safe; Blob upload has long-standing zero-byte bugs on iOS) → `profiles.avatar_url` update → best-effort delete of the old object. Remove-photo nulls `avatar_url` + best-effort deletes the storage object. **Zero display-code changes**: the shared `<Avatar>` already checks `avatarUrl != null` and renders the image, so all 13 call sites pick up the uploaded photo on their next mount/focus — friends see it via natural re-fetch on Home / Library / Friends / Inbox / title detail. New native deps: `expo-image-picker`, `expo-image-manipulator`. `NSPhotoLibraryUsageDescription` set explicitly ("Seen needs access to your photos to set your profile picture."); `cameraPermission` and `microphonePermission` explicitly set to `false` in the `expo-image-picker` plugin config so the build doesn't inject unused permission strings that App Store review can ding. Verified end-to-end on device including cross-account.
+- Profile edit save model: dropped the Save button in favour of immediate-save (same `6c07ca5`). Display name saves on `onBlur` AND on back-navigation (explicit `await commitNameIfChanged()` in the back handler before `router.back()` — NOT relying on iOS's implicit blur-on-tap-outside, which doesn't behave the same way on Android). Avatar saves immediately as before. **First toast in the app** — local-to-screen `<Animated.View>` with Reanimated `FadeIn` / `FadeOut`, shown ~1.5s on every successful save, timer reset on rapid re-trigger, cleared on unmount. Failures use `Alert`; empty-name validation shows an inline error below the field (not an alert) and clears on next keystroke.
+
+**Decisions worth remembering**
+- **Watch providers attribution / linking** is non-negotiable. Provider logos are decoration only, the bottom CTA is the ONLY outbound link and goes to TMDB's region-specific `link` field, attribution caption stays visible. If a future spec asks for "tap-to-open Netflix" we have to say no — that would violate the TMDB watch-providers terms.
+- **Status transitions**: any move INTO a non-watched status (`watchlist` / `watching`) must explicitly null both `rating` AND `watched_at`. The `items_rating_only_when_watched_check` constraint rejects any other shape. The rule is documented inline in `setStatus`.
+- **Multi-recipient fan-out** uses parallel `Promise.allSettled` over the existing single-recipient RPC, NOT a new bulk RPC. Avoids a migration, AND lets one bad recipient (already-recommended / temporary RLS error / network blip) not abort the rest. Duplicate (`23505`) treated as benign — recs are immutable on the sender side per `enforce_recommendation_immutability`, so there's nothing to "re-send".
+- **Storage policy pattern**: Supabase storage RLS via `(storage.foldername(name))[1] = auth.uid()::text` — folder-prefix the object path with the user's UUID and the per-user write check is one line. Reuse for any future per-user bucket (video uploads, document attachments, etc.).
+- **First toast pattern**: local-to-screen `<Animated.View>` with Reanimated `FadeIn` / `FadeOut`, not a global system. Extract `SavedToast` + a `useToast()` hook the next time a second consumer shows up — premature global infrastructure for a single use site is the wrong shape.
+
+**Workflow / infra**
+- **App has outgrown Expo Go.** Native modules across the app (Google Sign-In, `expo-notifications`, `expo-localization`, `expo-image-picker`, `expo-image-manipulator`) can't run in Expo Go. Live testing now requires a **development build** (`eas build --profile development --platform ios`) installed via internal distribution. `npx expo start` over Metro lights up the dev build. JS / UI changes are live; **adding or changing native deps requires rebuilding the dev client**. The dev build and the TestFlight build share the same bundle id — only one installs at a time (delete one to install the other; data is shared via Supabase).
+- **Supabase project state**: `avatars` Storage bucket exists on the Seen project (id `xhzrsdgrgimlrdnyzidr`) — migration is in the repo as the source of truth, applied via `supabase db push`. `tmdb-proxy` Edge Function redeployed (`supabase functions deploy tmdb-proxy`) with watch-providers paths in its allowlist.
+
+**Tech debt / known edges (carry forward)**
+- Bespoke avatars bypassing the shared `<Avatar>`: the Recommend "Send to" friend list still uses a hardcoded-coral avatar (no color-by-id). Third place this pattern has appeared (Friends list + one other previously fixed). Sweep all onto the shared component in one pass.
+- `profile/edit.tsx` still uses a bespoke header instead of the shared `ScreenHeader`. Inconsistent with the rest of the app. Separate refactor.
+- Un-watch rec-sync edge: Watched → Watching / Watchlist leaves the recommendation that prompted it at `status='watched'` and the sender's `rec_watched` notification has already fired — sender's view can drift. Deferred (rare; touches the notification system).
+- Orphaned avatar files: old avatars are best-effort deleted on replace/remove; failures leave orphans in storage. Acceptable for v1 — reap via cron later if it matters.
+- Home "Friends are watching" capped at `FRIENDS_GRID_LIMIT = 8`. Fine for now; bump if scrolling feels thin in practice.
+- `assets/images/app-icon-off-white.png` referenced but missing — still outstanding (dev server logs an asset-not-found error). Fix before the next production build.
+
+**Next**
+- **Cut build 8** (`eas build --profile production --platform ios`). Carries everything above plus three new native modules vs build 7 (`expo-localization`, `expo-image-picker`, `expo-image-manipulator`). Submit to TestFlight, get approved. Build 7 was in review — resolve / supersede.
+- **Only share the TestFlight tester link AFTER build 8 is approved**, with install + auto-update instructions for testers.
+- **Android (Google Play)**: personal account (created 2025) IS subject to the 12-testers-for-14-continuous-days closed-testing gate before production. Can reuse the 12 testers from the prior app. Clock starts once a working Android build is in a closed track. Needs: EAS android profile + keystore, Google Sign-In Android OAuth client, FCM, test on a real Android device. Start soon as its own session; not blocking iOS.
+
+**Open questions**
+- None.
+
+---
+
 ## 2026-06-03
 
 **Done**
