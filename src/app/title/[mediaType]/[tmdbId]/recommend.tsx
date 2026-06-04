@@ -74,9 +74,13 @@ export default function RecommendScreen() {
     // Initial state seeds from the preselect param so the recipient is
     // pre-checked when arriving from the friend-profile recommend flow.
     // We never re-apply it after mount — once the user picks, they own
-    // the selection.
-    const [selectedFriendId, setSelectedFriendId] = useState<string | null>(
-        preselectedFriendId,
+    // the selection. Set rather than scalar so the user can pick several
+    // recipients and send to all of them with a single tap of Send.
+    const [selectedFriendIds, setSelectedFriendIds] = useState<Set<string>>(
+        () =>
+            preselectedFriendId
+                ? new Set([preselectedFriendId])
+                : new Set<string>(),
     );
     const [note, setNote] = useState('');
     const [loading, setLoading] = useState(true);
@@ -163,23 +167,127 @@ export default function RecommendScreen() {
     }, [mediaType, tmdbId]);
 
     const trimmedNote = note.trim();
+    const selectedCount = selectedFriendIds.size;
     const canSend =
-        !sending && selectedFriendId !== null && mediaType !== null && !loading;
+        !sending && selectedCount > 0 && mediaType !== null && !loading;
+
+    function toggleFriend(userId: string) {
+        setSelectedFriendIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(userId)) {
+                next.delete(userId);
+            } else {
+                next.add(userId);
+            }
+            return next;
+        });
+    }
 
     async function handleSend() {
-        if (!canSend || !mediaType || !selectedFriendId) return;
+        if (!canSend || !mediaType) return;
         setSending(true);
         try {
-            const { error: rpcError } = await supabase.rpc('send_recommendation', {
-                to_user_id: selectedFriendId,
-                tmdb_id: tmdbId,
-                media_type: mediaType,
-                note: trimmedNote.length > 0 ? trimmedNote : undefined,
-            });
-            if (rpcError) throw rpcError;
+            // Fan out to all recipients in parallel via the existing
+            // single-recipient RPC. allSettled (not Promise.all) so one
+            // bad recipient doesn't abort the rest — each rec is its own
+            // row and its own rec_received notification through the
+            // existing trigger path, so partial success is meaningful.
+            const recipientIds = Array.from(selectedFriendIds);
+            const results = await Promise.allSettled(
+                recipientIds.map((toId) =>
+                    supabase.rpc('send_recommendation', {
+                        to_user_id: toId,
+                        tmdb_id: tmdbId,
+                        media_type: mediaType,
+                        note: trimmedNote.length > 0 ? trimmedNote : undefined,
+                    }),
+                ),
+            );
 
-            Alert.alert('Sent', 'Recommendation sent.', [
-                { text: 'OK', onPress: () => router.back() },
+            const nameFor = (id: string) =>
+                friends.find((f) => f.userId === id)?.displayName ?? 'a friend';
+            const sent: string[] = [];
+            const alreadySent: string[] = [];
+            const failed: { name: string; message: string }[] = [];
+
+            results.forEach((result, i) => {
+                const toId = recipientIds[i];
+                const name = nameFor(toId);
+                if (result.status === 'rejected') {
+                    // Network-level rejection (the supabase-js call never
+                    // resolved). Rare but possible on offline.
+                    failed.push({
+                        name,
+                        message:
+                            result.reason instanceof Error
+                                ? result.reason.message
+                                : String(result.reason),
+                    });
+                    return;
+                }
+                // Fulfilled: supabase.rpc resolves with { data, error }
+                // — the RPC error lives in result.value.error, not a
+                // rejected promise.
+                const rpcError = result.value.error;
+                if (!rpcError) {
+                    sent.push(name);
+                    return;
+                }
+                // 23505 = unique_violation on recommendations_pair_unique
+                // (from_user_id, to_user_id, tmdb_id, media_type). Means
+                // the user already recommended this exact title to this
+                // exact friend at some point — and recs are immutable on
+                // the sender side, so we leave the existing one alone
+                // and report it as a benign no-op rather than a failure.
+                if (rpcError.code === '23505') {
+                    alreadySent.push(name);
+                    return;
+                }
+                failed.push({ name, message: rpcError.message });
+            });
+
+            // Build one summary message that names which recipients
+            // landed in which bucket. Title flips to "Partially sent" /
+            // "Couldn't send" if anything actually failed.
+            const lines: string[] = [];
+            if (sent.length > 0) {
+                lines.push(
+                    sent.length === 1
+                        ? `Sent to ${sent[0]}.`
+                        : `Sent to ${sent.length} friends: ${sent.join(', ')}.`,
+                );
+            }
+            if (alreadySent.length > 0) {
+                lines.push(
+                    alreadySent.length === 1
+                        ? `${alreadySent[0]} already had this rec — left as-is.`
+                        : `Already recommended to ${alreadySent.join(', ')} — left as-is.`,
+                );
+            }
+            if (failed.length > 0) {
+                lines.push(
+                    `Couldn't send to ${failed.map((f) => f.name).join(', ')}.`,
+                );
+            }
+
+            const anySuccess = sent.length > 0 || alreadySent.length > 0;
+            const alertTitle =
+                failed.length === 0
+                    ? 'Sent'
+                    : anySuccess
+                      ? 'Partially sent'
+                      : "Couldn't send";
+
+            Alert.alert(alertTitle, lines.join('\n\n'), [
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        // Only pop back if at least one rec actually
+                        // landed; if every recipient failed, leave the
+                        // modal up so the user can retry.
+                        if (anySuccess) router.back();
+                    },
+                },
             ]);
         } catch (err) {
             console.error('send recommendation failed:', err);
@@ -219,13 +327,11 @@ export default function RecommendScreen() {
     }
 
     function renderFriendRow(row: FriendRow) {
-        const isSelected = row.userId === selectedFriendId;
+        const isSelected = selectedFriendIds.has(row.userId);
         return (
             <Pressable
                 key={row.userId}
-                onPress={() =>
-                    setSelectedFriendId(isSelected ? null : row.userId)
-                }
+                onPress={() => toggleFriend(row.userId)}
                 style={({ pressed }) => [
                     styles.friendRow,
                     isSelected && { backgroundColor: palette.accentSubtle },
@@ -298,7 +404,9 @@ export default function RecommendScreen() {
                         <ActivityIndicator color={palette.accent} />
                     ) : (
                         <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
-                            Send
+                            {selectedCount > 1
+                                ? `Send (${selectedCount})`
+                                : 'Send'}
                         </Text>
                     )}
                 </Pressable>
