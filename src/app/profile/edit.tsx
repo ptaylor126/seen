@@ -1,6 +1,7 @@
+import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
-import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronLeft } from 'lucide-react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -13,10 +14,12 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { useProfile } from '@/hooks/use-profile';
+import { pickAndUploadAvatar, removeAvatar } from '@/lib/avatar-upload';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
@@ -28,6 +31,8 @@ import {
 
 const MAX_DISPLAY_NAME_LENGTH = 30;
 const AVATAR_SIZE = 96;
+const SAVED_TOAST_VISIBLE_MS = 1500;
+const SAVED_TOAST_FADE_MS = 150;
 
 export default function EditProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -35,8 +40,12 @@ export default function EditProfileScreen() {
     const router = useRouter();
     const { status, profile, refresh } = useProfile();
 
+    const insets = useSafeAreaInsets();
+    const nameInputRef = useRef<TextInput | null>(null);
+
     const [displayName, setDisplayName] = useState('');
-    const [saving, setSaving] = useState(false);
+    const [nameSaving, setNameSaving] = useState(false);
+    const [nameError, setNameError] = useState<string | null>(null);
 
     // Hydrate the editable input from the profile context exactly once.
     // We deliberately DO NOT keep a second state slot for the baseline:
@@ -54,19 +63,62 @@ export default function EditProfileScreen() {
         }
     }, [profile]);
 
-    // Baseline = the currently-saved name. Trimming both sides so
-    // leading/trailing whitespace can't fake a dirty flag in either
-    // direction.
-    const baseline = (profile?.displayName ?? '').trim();
-    const trimmed = displayName.trim();
-    const isDirty = trimmed !== baseline;
-    const isValid =
-        trimmed.length > 0 && trimmed.length <= MAX_DISPLAY_NAME_LENGTH;
-    const canSave = isDirty && isValid && !saving;
+    // ---- Saved toast (ambient success confirmation)
+    //
+    // Local-to-screen because there's no other consumer of toast/snackbar
+    // feedback in the app today. Reanimated FadeIn/FadeOut wraps a small
+    // pill; a single timer governs visibility. Re-triggering while a
+    // toast is up resets the timer so the user sees a fresh ~1.8s.
+    const [toastVisible, setToastVisible] = useState(false);
+    const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    async function handleSave() {
-        if (!canSave) return;
-        setSaving(true);
+    const showSavedToast = useCallback(() => {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        setToastVisible(true);
+        toastTimerRef.current = setTimeout(() => {
+            setToastVisible(false);
+            toastTimerRef.current = null;
+        }, SAVED_TOAST_VISIBLE_MS);
+    }, []);
+
+    useEffect(() => {
+        // Cancel a pending toast-hide timer on unmount so a fast back-
+        // navigation mid-toast doesn't leave a setTimeout pointing at an
+        // unmounted setState.
+        return () => {
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+                toastTimerRef.current = null;
+            }
+        };
+    }, []);
+
+    // ---- Display-name commit
+    //
+    // Shared between two trigger points: the TextInput's onBlur (the
+    // standard "user moved away from the field" case) AND the back
+    // chevron handler (so a typed-but-not-yet-blurred change still
+    // commits regardless of platform — relying on iOS's implicit
+    // blur-on-tap-outside doesn't work on Android, and we want one
+    // consistent behavior).
+    const commitNameIfChanged = useCallback(async (): Promise<boolean> => {
+        if (!profile || nameSaving) return true;
+        const trimmed = displayName.trim();
+        const baseline = profile.displayName.trim();
+        if (trimmed === baseline) return true; // nothing to do
+
+        if (trimmed.length === 0) {
+            // Invalid — don't save, surface inline error. Returns true
+            // so callers (including the back handler) can treat
+            // validation failure as "navigate anyway, discard"; the
+            // alternative (block navigation on invalid) would trap the
+            // user with no Save button.
+            setNameError("Name can't be empty");
+            return true;
+        }
+
+        setNameError(null);
+        setNameSaving(true);
         try {
             const {
                 data: { session },
@@ -80,38 +132,145 @@ export default function EditProfileScreen() {
                 .eq('id', userId);
             if (error) throw error;
 
-            // Push the new value into the shared profile context so
-            // the previous screen (and any consumer of useProfile)
-            // reads the fresh value the instant we navigate back.
             await refresh();
-            router.back();
+            showSavedToast();
+            return true;
         } catch (err) {
-            console.error('profile edit save failed:', err);
+            console.error('profile name save failed:', err);
             Alert.alert(
                 "Couldn't save",
                 err instanceof Error ? err.message : 'Unknown error',
             );
+            return false;
         } finally {
-            setSaving(false);
+            setNameSaving(false);
+        }
+    }, [displayName, profile, nameSaving, refresh, showSavedToast]);
+
+    function handleNameBlur() {
+        void commitNameIfChanged();
+    }
+
+    function handleNameChange(value: string) {
+        setDisplayName(value);
+        // Clear an inline error as soon as the user resumes typing so
+        // they're not staring at a stale "can't be empty" while they
+        // type a valid value.
+        if (nameError) setNameError(null);
+    }
+
+    async function handleBack() {
+        // Commit any pending name change BEFORE navigating. Don't rely
+        // on the back tap implicitly blurring the input — that's a
+        // platform-dependent behaviour and would silently lose a typed
+        // name change on Android. Validation failures still navigate
+        // (user can fix on re-entry); save failures surface their own
+        // Alert from inside commitNameIfChanged.
+        await commitNameIfChanged();
+        router.back();
+    }
+
+    const [avatarBusy, setAvatarBusy] = useState(false);
+
+    async function handleChangePhoto() {
+        if (!profile || avatarBusy) return;
+        setAvatarBusy(true);
+        try {
+            const result = await pickAndUploadAvatar({
+                userId: profile.id,
+                previousAvatarUrl: profile.avatarUrl,
+            });
+            switch (result.kind) {
+                case 'uploaded':
+                    // refresh re-fetches profiles row from the DB. The
+                    // shared ProfileContext propagates to every consumer
+                    // (root layout, Profile screen, edit screen), and
+                    // every other site that renders this user's avatar
+                    // picks up the new URL on its next focus/mount.
+                    await refresh();
+                    showSavedToast();
+                    break;
+                case 'cancelled':
+                    // User backed out of the picker. No-op.
+                    break;
+                case 'permission_denied':
+                    Alert.alert(
+                        'Photos permission needed',
+                        "Seen can't access your photos. Enable Photos access in Settings to set a profile picture.",
+                        [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                                text: 'Open Settings',
+                                onPress: () => {
+                                    Linking.openSettings().catch(() => {
+                                        // No-op — some platforms reject
+                                        // openSettings; nothing useful to
+                                        // surface here.
+                                    });
+                                },
+                            },
+                        ],
+                    );
+                    break;
+                case 'failed':
+                    Alert.alert("Couldn't update photo", result.message);
+                    break;
+            }
+        } finally {
+            setAvatarBusy(false);
         }
     }
 
-    function handleChangePhoto() {
-        // Photo upload requires expo-image-picker + Supabase storage
-        // wiring; not part of MVP. Polite stub so the affordance
-        // doesn't look broken.
-        Alert.alert('Photo editing coming soon');
+    async function handleRemovePhoto() {
+        if (!profile || avatarBusy || !profile.avatarUrl) return;
+        const confirmed = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+                'Remove photo?',
+                'Your initial will show instead.',
+                [
+                    {
+                        text: 'Cancel',
+                        style: 'cancel',
+                        onPress: () => resolve(false),
+                    },
+                    {
+                        text: 'Remove',
+                        style: 'destructive',
+                        onPress: () => resolve(true),
+                    },
+                ],
+                { cancelable: true, onDismiss: () => resolve(false) },
+            );
+        });
+        if (!confirmed) return;
+
+        setAvatarBusy(true);
+        try {
+            const result = await removeAvatar({
+                userId: profile.id,
+                previousAvatarUrl: profile.avatarUrl,
+            });
+            if (result.kind === 'removed') {
+                await refresh();
+                showSavedToast();
+            } else {
+                Alert.alert("Couldn't remove photo", result.message);
+            }
+        } finally {
+            setAvatarBusy(false);
+        }
     }
 
-    // Header is rendered in every branch (loading and ready), so it's
-    // extracted to avoid duplication. `actionLabel` is the right-side
-    // button — disabled-styled grey when no changes, accent when there
-    // are unsaved changes ready to commit.
+    // Header rendered in every branch (loading and ready). Save button
+    // is gone — name and avatar save on blur / on upload respectively.
+    // The right side keeps an empty placeholder so the title stays
+    // horizontally centered against the asymmetric back-chevron on the
+    // left (same spacer pattern used in friends/add.tsx).
     function renderHeader() {
         return (
             <View style={styles.header}>
                 <Pressable
-                    onPress={() => router.back()}
+                    onPress={handleBack}
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [
                         styles.headerSide,
@@ -134,33 +293,7 @@ export default function EditProfileScreen() {
                 >
                     Edit profile
                 </Text>
-                <Pressable
-                    onPress={handleSave}
-                    disabled={!canSave}
-                    hitSlop={spacing.sm}
-                    style={({ pressed }) => [
-                        styles.headerSide,
-                        styles.headerSideEnd,
-                        pressed && canSave && { opacity: 0.6 },
-                    ]}
-                >
-                    {saving ? (
-                        <ActivityIndicator color={palette.accent} />
-                    ) : (
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                {
-                                    color: canSave
-                                        ? palette.accent
-                                        : palette.textMuted,
-                                },
-                            ]}
-                        >
-                            Save
-                        </Text>
-                    )}
-                </Pressable>
+                <View style={[styles.headerSide, styles.headerSideEnd]} />
             </View>
         );
     }
@@ -196,22 +329,50 @@ export default function EditProfileScreen() {
                                 seedId={profile.id}
                                 size={AVATAR_SIZE}
                             />
-                            <Pressable
-                                onPress={handleChangePhoto}
-                                hitSlop={spacing.sm}
-                                style={({ pressed }) => [
-                                    pressed && { opacity: 0.6 },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        { color: palette.accent },
+                            <View style={styles.avatarActions}>
+                                <Pressable
+                                    onPress={handleChangePhoto}
+                                    hitSlop={spacing.sm}
+                                    disabled={avatarBusy}
+                                    style={({ pressed }) => [
+                                        pressed && !avatarBusy && { opacity: 0.6 },
+                                        avatarBusy && { opacity: 0.5 },
                                     ]}
                                 >
-                                    Change photo
-                                </Text>
-                            </Pressable>
+                                    {avatarBusy ? (
+                                        <ActivityIndicator
+                                            color={palette.accent}
+                                        />
+                                    ) : (
+                                        <Text
+                                            style={[
+                                                typography.body,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            Change photo
+                                        </Text>
+                                    )}
+                                </Pressable>
+                                {profile.avatarUrl && !avatarBusy ? (
+                                    <Pressable
+                                        onPress={handleRemovePhoto}
+                                        hitSlop={spacing.sm}
+                                        style={({ pressed }) => [
+                                            pressed && { opacity: 0.6 },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                { color: palette.textMuted },
+                                            ]}
+                                        >
+                                            Remove photo
+                                        </Text>
+                                    </Pressable>
+                                ) : null}
+                            </View>
                         </View>
 
                         <View style={styles.field}>
@@ -224,28 +385,46 @@ export default function EditProfileScreen() {
                                 Display name
                             </Text>
                             <TextInput
+                                ref={nameInputRef}
                                 value={displayName}
-                                onChangeText={setDisplayName}
+                                onChangeText={handleNameChange}
+                                onBlur={handleNameBlur}
                                 placeholder="Your display name"
                                 placeholderTextColor={palette.textMuted}
                                 maxLength={MAX_DISPLAY_NAME_LENGTH}
                                 autoCapitalize="words"
                                 autoCorrect={false}
                                 returnKeyType="done"
+                                // Submit dismisses the keyboard, which
+                                // fires onBlur and routes through the
+                                // standard commit path. No bespoke
+                                // duplicate save here.
                                 onSubmitEditing={() => {
-                                    if (canSave) void handleSave();
+                                    nameInputRef.current?.blur();
                                 }}
-                                editable={!saving}
+                                editable={!nameSaving}
                                 style={[
                                     styles.textInput,
                                     typography.body,
                                     {
                                         backgroundColor: palette.surface,
-                                        borderColor: palette.border,
+                                        borderColor: nameError
+                                            ? palette.error
+                                            : palette.border,
                                         color: palette.text,
                                     },
                                 ]}
                             />
+                            {nameError ? (
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        { color: palette.error },
+                                    ]}
+                                >
+                                    {nameError}
+                                </Text>
+                            ) : null}
                             <Text
                                 style={[
                                     typography.micro,
@@ -287,6 +466,30 @@ export default function EditProfileScreen() {
                     </View>
                 </SafeAreaView>
             </KeyboardAvoidingView>
+            {toastVisible ? (
+                <Animated.View
+                    entering={FadeIn.duration(SAVED_TOAST_FADE_MS)}
+                    exiting={FadeOut.duration(SAVED_TOAST_FADE_MS)}
+                    pointerEvents="none"
+                    style={[
+                        styles.toast,
+                        {
+                            bottom: insets.bottom + spacing.xl,
+                            backgroundColor: palette.surface,
+                            borderColor: palette.border,
+                        },
+                    ]}
+                >
+                    <Check
+                        color={palette.success}
+                        size={16}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <Text style={[typography.body, { color: palette.text }]}>
+                        Saved
+                    </Text>
+                </Animated.View>
+            ) : null}
         </View>
     );
 }
@@ -329,6 +532,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: spacing.sm,
     },
+    avatarActions: {
+        // Stacked action labels under the avatar — "Change photo" on
+        // top (primary affordance), "Remove photo" below (smaller,
+        // muted) when one is set. Tight gap so the pair reads as one
+        // affordance group.
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
     field: {
         gap: spacing.xs,
     },
@@ -340,5 +551,22 @@ const styles = StyleSheet.create({
     },
     counter: {
         alignSelf: 'flex-end',
+    },
+    toast: {
+        // Pill-shaped success confirmation pinned at the bottom of the
+        // screen. `bottom` is set inline from useSafeAreaInsets so the
+        // toast clears the home indicator on iOS without a fixed magic
+        // offset. pointerEvents="none" on the wrapping Animated.View
+        // means the toast can never block taps on the underlying form
+        // — important because it overlays the keyboard-adjacent area.
+        position: 'absolute',
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.full,
+        borderWidth: StyleSheet.hairlineWidth,
     },
 });
