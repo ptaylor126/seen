@@ -278,17 +278,30 @@ export default function TitleDetailScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
+            // Transitions INTO 'watched' stamp watched_at and leave
+            // rating alone — the rating sheet that opens after will
+            // set it (`rating: undefined` drops the key at JSON
+            // serialisation, so supabase-js sends no rating column at
+            // all, preserving the existing DB value). Transitions to
+            // ANY other status must null both columns:
+            //   - `rating` MUST be null when status != 'watched' or
+            //     items_rating_only_when_watched_check rejects the
+            //     upsert (this was the Watched→Watching bug — the
+            //     existing rating from the watched state stuck around
+            //     through the upsert and tripped the constraint).
+            //   - `watched_at` is cleared so the timestamp doesn't
+            //     lie about a show that's no longer watched. The next
+            //     watched transition will re-stamp to now.
+            const isWatched = newStatus === 'watched';
             const row = {
                 user_id: userId,
                 tmdb_id: tmdbId,
                 media_type: mediaType,
                 status: newStatus,
-                // Only stamp watched_at on the watched transition; other
-                // status changes leave it untouched (column-omit semantics
-                // in upsert means the existing value is preserved).
-                ...(newStatus === 'watched'
-                    ? { watched_at: new Date().toISOString() }
-                    : {}),
+                rating: isWatched ? undefined : null,
+                watched_at: isWatched
+                    ? new Date().toISOString()
+                    : null,
             };
 
             const { error: upsertError } = await supabase
@@ -299,6 +312,12 @@ export default function TitleDetailScreen() {
             setCurrentStatus(newStatus);
             if (newStatus === 'watched') {
                 setShowRatingSheet(true);
+            } else {
+                // Mirror the DB null so the rating display + toggle-off
+                // confirm guard reflect the post-transition state
+                // immediately instead of carrying the stale watched
+                // rating into the new status.
+                setCurrentRating(null);
             }
         } catch (err) {
             console.error('items upsert failed:', err);
