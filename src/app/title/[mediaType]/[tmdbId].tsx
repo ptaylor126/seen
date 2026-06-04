@@ -1,7 +1,8 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Send, X } from 'lucide-react-native';
+import { ExternalLink, Send, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -17,9 +18,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { RatingSheet } from '@/components/rating-sheet';
+import { getRegion } from '@/lib/locale';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
+import {
+    getMovie,
+    getMovieWatchProviders,
+    getTV,
+    getTVWatchProviders,
+    imageUrl,
+    type TMDBMovie,
+    type TMDBTV,
+    type TMDBWatchProvidersRegion,
+} from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -118,6 +129,13 @@ export default function TitleDetailScreen() {
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
+    // Watch providers for the device's region. `null` covers loading +
+    // "no data in this region" + "fetch failed" — all three should render
+    // identically (hide the section), so collapsing them into one state
+    // keeps the JSX simple.
+    const [providersForRegion, setProvidersForRegion] =
+        useState<TMDBWatchProvidersRegion | null>(null);
+    const region = getRegion();
 
     // Load title detail (TMDB) and the current library status (Supabase) in
     // parallel. The detail fetch picks getMovie or getTV based on mediaType
@@ -137,14 +155,31 @@ export default function TitleDetailScreen() {
                 ? getMovie(tmdbId).then((data) => ({ type: 'movie' as const, data }))
                 : getTV(tmdbId).then((data) => ({ type: 'tv' as const, data }));
 
+        // Watch providers fetched in parallel — failure of this call
+        // should NOT take down the title screen, so it's swallowed to
+        // `null` (which the renderer treats as "hide the section").
+        const watchProvidersPromise = (
+            mediaType === 'movie'
+                ? getMovieWatchProviders(tmdbId)
+                : getTVWatchProviders(tmdbId)
+        )
+            .then((result) => result.results[region] ?? null)
+            .catch((err) => {
+                console.warn('watch providers fetch failed:', err);
+                return null;
+            });
+
         (async () => {
             try {
-                const [resolvedDetail, sessionResult] = await Promise.all([
-                    detailPromise,
-                    supabase.auth.getSession(),
-                ]);
+                const [resolvedDetail, sessionResult, resolvedProviders] =
+                    await Promise.all([
+                        detailPromise,
+                        supabase.auth.getSession(),
+                        watchProvidersPromise,
+                    ]);
                 if (!active) return;
                 setDetail(resolvedDetail);
+                setProvidersForRegion(resolvedProviders);
 
                 const userId = sessionResult.data.session?.user.id;
                 if (userId) {
@@ -632,6 +667,12 @@ export default function TitleDetailScreen() {
                     </Text>
                 ) : null}
 
+                <WhereToWatch
+                    region={region}
+                    providers={providersForRegion}
+                    palette={palette}
+                />
+
                 {/* Status pills — a choice. The selected status is
                     filled accent; the others are outline-only with a
                     muted border so they read as "available options",
@@ -745,6 +786,185 @@ function CloseButton({
     );
 }
 
+// "Where to watch" — TMDB watch providers (JustWatch data).
+//
+// Compliance notes (read before touching this component):
+//   - Logos are non-interactive (purely decorative identifiers). TMDB's
+//     terms forbid fabricating direct deep links into individual provider
+//     apps from this data.
+//   - The only outbound link goes to `providers.link` (TMDB's JustWatch
+//     deep link for the title in the user's region). Do NOT replace this
+//     with a URL we construct ourselves.
+//   - The "data provided by JustWatch" attribution caption must remain
+//     visible whenever this data is rendered.
+//   - Renders nothing when the region has no providers — explicitly NOT
+//     a "not available in your region" message; an empty section is
+//     dropped cleanly so the layout doesn't acquire a useless heading.
+type Palette = ReturnType<typeof getPalette>;
+
+function WhereToWatch({
+    region,
+    providers,
+    palette,
+}: {
+    region: string;
+    providers: TMDBWatchProvidersRegion | null;
+    palette: Palette;
+}) {
+    if (!providers) return null;
+    const flatrate = providers.flatrate ?? [];
+    const rent = providers.rent ?? [];
+    const buy = providers.buy ?? [];
+    if (flatrate.length === 0 && rent.length === 0 && buy.length === 0) {
+        return null;
+    }
+
+    function openJustWatch() {
+        // Linking.openURL handles browser launch for http(s) URLs. It
+        // returns a promise that rejects if the URL is malformed; the
+        // tap is fire-and-forget so we just log a warning rather than
+        // surface a modal.
+        Linking.openURL(providers!.link).catch((err) => {
+            console.warn('failed to open JustWatch link:', err);
+        });
+    }
+
+    return (
+        <View style={styles.wtw}>
+            <View style={styles.wtwHeaderRow}>
+                <Text
+                    style={[
+                        typography.micro,
+                        styles.sectionLabel,
+                        { color: palette.textMuted },
+                    ]}
+                >
+                    WHERE TO WATCH
+                </Text>
+                <Text
+                    style={[
+                        typography.micro,
+                        styles.wtwRegion,
+                        {
+                            color: palette.textMuted,
+                            backgroundColor: palette.surfaceAlt,
+                        },
+                    ]}
+                >
+                    {region}
+                </Text>
+            </View>
+
+            {flatrate.length > 0 && (
+                <WhereToWatchGroup
+                    label="Stream"
+                    providers={flatrate}
+                    palette={palette}
+                />
+            )}
+            {rent.length > 0 && (
+                <WhereToWatchGroup
+                    label="Rent"
+                    providers={rent}
+                    palette={palette}
+                />
+            )}
+            {buy.length > 0 && (
+                <WhereToWatchGroup
+                    label="Buy"
+                    providers={buy}
+                    palette={palette}
+                />
+            )}
+
+            <Text
+                style={[
+                    typography.caption,
+                    styles.wtwAttribution,
+                    { color: palette.textMuted },
+                ]}
+            >
+                Streaming, rental and purchase data provided by JustWatch.
+            </Text>
+
+            <Pressable
+                onPress={openJustWatch}
+                hitSlop={spacing.sm}
+                style={({ pressed }) => [
+                    styles.wtwCta,
+                    { borderColor: palette.border },
+                    pressed && { opacity: 0.6 },
+                ]}
+                accessibilityRole="link"
+                accessibilityLabel="See all watch options on JustWatch"
+            >
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        { color: palette.accent },
+                    ]}
+                >
+                    See all options on JustWatch
+                </Text>
+                <ExternalLink
+                    color={palette.accent}
+                    size={16}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+            </Pressable>
+        </View>
+    );
+}
+
+function WhereToWatchGroup({
+    label,
+    providers,
+    palette,
+}: {
+    label: string;
+    providers: { provider_id: number; provider_name: string; logo_path: string; display_priority: number }[];
+    palette: Palette;
+}) {
+    // TMDB returns providers in arbitrary order; display_priority is
+    // their recommended ranking (lower = more prominent).
+    const ordered = [...providers].sort(
+        (a, b) => a.display_priority - b.display_priority,
+    );
+    return (
+        <View style={styles.wtwGroup}>
+            <Text
+                style={[
+                    typography.caption,
+                    styles.wtwGroupLabel,
+                    { color: palette.text },
+                ]}
+            >
+                {label}
+            </Text>
+            <View style={styles.wtwLogoRow}>
+                {ordered.map((p) => (
+                    <View
+                        key={p.provider_id}
+                        style={[
+                            styles.wtwLogoChip,
+                            { borderColor: palette.border },
+                        ]}
+                        accessibilityLabel={p.provider_name}
+                        accessible
+                    >
+                        <Image
+                            source={{ uri: imageUrl(p.logo_path, 'original') }}
+                            style={styles.wtwLogo}
+                            contentFit="cover"
+                            transition={150}
+                        />
+                    </View>
+                ))}
+            </View>
+        </View>
+    );
+}
+
 const styles = StyleSheet.create({
     root: { flex: 1 },
     fillCenter: { alignItems: 'center', justifyContent: 'center' },
@@ -818,6 +1038,70 @@ const styles = StyleSheet.create({
     overview: {
         paddingHorizontal: spacing.base,
         marginTop: spacing.base,
+    },
+    sectionLabel: {
+        // Consistent micro-caps treatment used by other section labels
+        // (Recommend modal mirrors this). Letter-spacing makes the
+        // all-caps read as a label rather than a shouty header.
+        letterSpacing: 0.5,
+    },
+    wtw: {
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        gap: spacing.md,
+    },
+    wtwHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    wtwRegion: {
+        // Pill-styled region badge sitting opposite the section label.
+        // surfaceAlt background keeps it quiet against the section.
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+        letterSpacing: 0.5,
+    },
+    wtwGroup: {
+        gap: spacing.sm,
+    },
+    wtwGroupLabel: {
+        fontWeight: '600',
+    },
+    wtwLogoRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.sm,
+    },
+    wtwLogoChip: {
+        // Square-ish chip wrapping the provider's square logo. Border
+        // gives the logos a consistent frame whether their backgrounds
+        // are transparent, white, or dark.
+        width: 44,
+        height: 44,
+        borderRadius: radius.sm,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: 'hidden',
+    },
+    wtwLogo: {
+        width: '100%',
+        height: '100%',
+    },
+    wtwAttribution: {
+        // Required attribution caption. Kept visible and adjacent to the
+        // data it credits per TMDB's terms for the watch providers
+        // endpoint. Do NOT move into a tooltip or "info" sheet.
+        marginTop: spacing.xs,
+    },
+    wtwCta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.xs,
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        borderWidth: 1,
     },
     actions: {
         flexDirection: 'row',

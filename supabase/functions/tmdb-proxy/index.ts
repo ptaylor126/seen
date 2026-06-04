@@ -25,6 +25,11 @@ const ALLOWED_PATH_PATTERNS: RegExp[] = [
     /^search\/(movie|tv|multi)$/,
     /^movie\/\d+$/,
     /^tv\/\d+$/,
+    // /watch/providers returns JustWatch-sourced availability data per
+    // region. Display requirements (attribution to JustWatch + use of
+    // the provider link) live on the client where this data is rendered.
+    /^movie\/\d+\/watch\/providers$/,
+    /^tv\/\d+\/watch\/providers$/,
     /^configuration$/,
 ];
 

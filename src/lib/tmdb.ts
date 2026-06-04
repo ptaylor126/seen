@@ -120,6 +120,40 @@ export interface TMDBTV {
     status: string;
 }
 
+// Watch providers — JustWatch-sourced availability data per region.
+// IMPORTANT LICENSING: the `link` field on each region's entry is the
+// canonical JustWatch deep link for the title in that region and is the
+// ONLY URL we may navigate users to from this data. Per TMDB's terms,
+// fabricating direct deep-links into individual provider apps (Netflix,
+// Apple TV, etc.) is not permitted, and any UI that surfaces this data
+// must visibly attribute JustWatch. Provider logos can be rendered as
+// decorative identifiers but must not be tappable to any URL other than
+// the JustWatch link below.
+export interface TMDBWatchProvider {
+    provider_id: number;
+    provider_name: string;
+    logo_path: string;
+    display_priority: number;
+}
+
+export interface TMDBWatchProvidersRegion {
+    link: string;
+    flatrate?: TMDBWatchProvider[];
+    rent?: TMDBWatchProvider[];
+    buy?: TMDBWatchProvider[];
+    // `ads` and `free` also appear on some titles. Not surfaced for v1
+    // to keep the section focused on the three buckets the user cares
+    // about (subscription vs rent vs buy).
+}
+
+export interface TMDBWatchProviders {
+    id: number;
+    // Region key is an ISO 3166-1 alpha-2 code ('US', 'GB', 'DE', …).
+    // Empty object {} for titles with no availability anywhere — handle
+    // that as "no providers" in the UI rather than an error.
+    results: Record<string, TMDBWatchProvidersRegion>;
+}
+
 export interface TMDBConfiguration {
     images: {
         base_url: string;
@@ -231,6 +265,18 @@ export function getMovie(tmdbId: number): Promise<TMDBMovie> {
 
 export function getTV(tmdbId: number): Promise<TMDBTV> {
     return callProxy(`tv/${tmdbId}`);
+}
+
+export function getMovieWatchProviders(
+    tmdbId: number,
+): Promise<TMDBWatchProviders> {
+    return callProxy(`movie/${tmdbId}/watch/providers`);
+}
+
+export function getTVWatchProviders(
+    tmdbId: number,
+): Promise<TMDBWatchProviders> {
+    return callProxy(`tv/${tmdbId}/watch/providers`);
 }
 
 // Configuration changes very rarely; caller is expected to fetch this once
