@@ -76,6 +76,18 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 *Next*
 - Cut a new EAS build with all of the above, supersede the build currently in External Beta, then share the TestFlight link.
 
+**Follow-up — same day**
+
+*Done*
+- Friends tab: surfaced Add-friend (handle search → sends a friend request) and Invite-link as two buttons on the populated Friends tab. The handle-search flow already existed (`friends/add.tsx`) but was only reachable from empty states — discoverability fix, not a new feature.
+- Verified on device: handle-search add and friend-request flow work end-to-end (no longer code-verified-only — confirmed with two accounts).
+
+*Workflow change — important*
+- **Project has outgrown Expo Go.** Native modules (Google Sign-In, `expo-notifications`) can't run in Expo Go. Now using a **development build** (`eas build --profile development`, installed via internal distribution) for live testing. Open the dev build + `npx expo start` to test changes live. Only rebuild the dev client when **native** deps change; JS/UI changes show up live over the Metro connection. Dev build and TestFlight build share the same bundle id, so only one installs at a time — switching between them means uninstalling the other.
+
+*Open / tech debt*
+- `assets/images/app-icon-off-white.png` referenced but missing — dev server logs an asset-not-found error. Fix before the next production build.
+
 ---
 
 ## 2026-05-21
