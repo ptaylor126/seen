@@ -96,11 +96,23 @@ const REC_POSTER_W = 120;
 const REC_POSTER_H = 180;
 const REC_AVATAR_SIZE = 40;
 
-// Friends grid — 4 posters per row, square crop. Pure visual scan;
-// no labels. 8 items (2 rows of 4). justify-content: 'space-between'
-// in the grid style distributes them evenly regardless of device width.
-const FRIENDS_GRID_POSTER_W = 80;
-const FRIENDS_GRID_POSTER_H = 80;
+// Friends are watching — horizontal scrolling row of 2:3 posters, no
+// labels. Pure visual scan with the half-poster peek at the right edge
+// signalling there's more to swipe.
+//
+// Sizing math: visible budget = HERO_SCREEN_W - left inset. We want
+// 3.5 posters + 3 inter-poster gaps to fit in that budget. Solving for
+// posterW:
+//   3.5 * posterW + 3 * gap = HERO_SCREEN_W - inset
+//   posterW = (HERO_SCREEN_W - inset - 3 * gap) / 3.5
+// Math.floor keeps us strictly within the visible width (any pixel of
+// drift would push the 4th poster's edge off-screen).
+const FRIENDS_ROW_GAP = spacing.base;
+const FRIENDS_ROW_INSET = spacing.base;
+const FRIENDS_ROW_POSTER_W = Math.floor(
+    (HERO_SCREEN_W - FRIENDS_ROW_INSET - 3 * FRIENDS_ROW_GAP) / 3.5,
+);
+const FRIENDS_ROW_POSTER_H = Math.floor(FRIENDS_ROW_POSTER_W * 1.5);
 const FRIENDS_GRID_LIMIT = 8;
 
 // Currently watching — compact list row. Smaller poster than the
@@ -114,16 +126,19 @@ const WATCHING_POSTER_H = 60;
 // "tiny floating thing waiting for siblings."
 const REC_CARD_SOLO_W = HERO_SCREEN_W - spacing.base * 2;
 
-// Friends grid stacked-avatar overlay — small social-proof row on
-// each poster's bottom-right corner showing every friend currently
-// watching this title (cap-then-overflow). 18 px lets a cap of 5 +
-// "+N" fit comfortably across an 80 px tile at 60% overlap.
-const FRIENDS_GRID_AVATAR_SIZE = 18;
+// Friends row stacked-avatar overlay — small social-proof row on each
+// poster's bottom-right corner showing every friend currently watching
+// this title (cap-then-overflow). 20 px tuned to the row's ~93 pt
+// posters so the chip reads proportionally to the cell (matches the
+// ~26% chip-to-cell ratio the previous 18 px gave on the old 80 pt
+// squares). At 5 chips + "+N" with 50% overlap, the stack is ~84 pt
+// wide and fits the cell comfortably with room to spare.
+const FRIENDS_GRID_AVATAR_SIZE = 20;
 const FRIENDS_GRID_MAX_AVATARS = 5;
 // Negative marginLeft applied to every chip after the first so each
-// overlaps its left neighbour by ~60%. Tighter overlap = stack fits
-// within tile bounds even at the 5-avatar + "+N" max.
-const FRIENDS_GRID_STACK_OVERLAP = 11;
+// overlaps its left neighbour. Scales with the chip outer (avatar +
+// 4 pt of border on each side = 24 pt outer, half = 12 pt overlap).
+const FRIENDS_GRID_STACK_OVERLAP = 12;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -837,7 +852,11 @@ export default function HomeScreen() {
                     Friends are watching
                 </Text>
                 {gridItems.length > 0 ? (
-                    <View style={styles.friendsGrid}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.friendsRowContent}
+                    >
                         {gridItems.map((card) => {
                             const shown = card.watchers.slice(
                                 0,
@@ -940,7 +959,7 @@ export default function HomeScreen() {
                                 </Pressable>
                             );
                         })}
-                    </View>
+                    </ScrollView>
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
@@ -1348,25 +1367,16 @@ const styles = StyleSheet.create({
         lineHeight: 20,
         fontStyle: 'italic',
     },
-    // Friends are watching — 4 square posters per row, no labels.
-    // space-between distributes the row evenly regardless of device
-    // width; rowGap controls vertical space between rows of two.
-    friendsGrid: {
-        // Wrapping grid packed from the left with a fixed gap. Using
-        // space-between previously meant rows with <4 items (e.g. the
-        // last row of an odd count) stretched edge-to-edge with a huge
-        // visual gap between two posters; columnGap holds the spacing
-        // constant regardless of how many items land on a row.
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        paddingHorizontal: spacing.base,
-        // Symmetric column + row gap. rowGap matches columnGap so the
-        // grid reads as evenly spaced, and the 16 px vertical gap
-        // gives the sender-avatar overlay (which extends 4 px past
-        // each poster's bottom-right corner) clear breathing room
-        // before the next row's poster.
-        columnGap: spacing.base,
-        rowGap: spacing.base,
+    // Friends are watching — horizontal scrolling row, no labels.
+    // contentContainerStyle for the ScrollView; paddingHorizontal gives
+    // both the comfortable left inset matching the section header and a
+    // matching trailing breath after the last poster when scrolled to
+    // the end. `gap` handles even between-poster spacing — works on
+    // horizontal ScrollView contentContainer because RN lays children
+    // in a flex row internally.
+    friendsRowContent: {
+        paddingHorizontal: FRIENDS_ROW_INSET,
+        gap: FRIENDS_ROW_GAP,
     },
     friendsGridCell: {
         // Cell wraps the poster + the absolute avatar overlay so the
@@ -1374,18 +1384,20 @@ const styles = StyleSheet.create({
         position: 'relative',
     },
     friendsGridPoster: {
-        width: FRIENDS_GRID_POSTER_W,
-        height: FRIENDS_GRID_POSTER_H,
+        width: FRIENDS_ROW_POSTER_W,
+        height: FRIENDS_ROW_POSTER_H,
         borderRadius: radius.sm,
     },
     friendsGridStack: {
-        // Stack is anchored at the bottom-right of the tile and extends
-        // leftward through its children. -4 nudge keeps the front chip
-        // just outside the poster corner (matches the prior single-
-        // avatar overlay aesthetic).
+        // Anchored inside the poster's bottom-right corner. The previous
+        // -4 / -4 overhang worked on the wrapping grid (no parent clipping)
+        // but the horizontal ScrollView native-clips at its cross-axis
+        // bound, chopping the chip off below the cell. Insetting by
+        // spacing.xs (4 pt) sits the chip cleanly inside the rounded
+        // corner — same visual idiom we use on the Library grid corners.
         position: 'absolute',
-        bottom: -4,
-        right: -4,
+        bottom: spacing.xs,
+        right: spacing.xs,
         flexDirection: 'row',
         alignItems: 'center',
     },
@@ -1411,7 +1423,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     friendsGridOverflowText: {
-        fontSize: 9,
+        // Scaled up alongside the avatar bump: 10 pt in a 24 pt chip's
+        // 20 pt inner content area reads at the same proportional
+        // weight that 9 pt had inside the previous 22 pt chip.
+        fontSize: 10,
         fontWeight: '700',
     },
     // Currently watching — compact list rows: small poster + inline
