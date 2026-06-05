@@ -4,6 +4,7 @@ import { ChevronLeft, Send, UserPlus } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
+    Dimensions,
     FlatList,
     Pressable,
     StyleSheet,
@@ -14,6 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { ViewControls } from '@/components/view-controls';
+import {
+    type LibraryGridCols,
+    useLibraryView,
+} from '@/lib/library-view';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
@@ -66,6 +72,30 @@ const TAB_LABELS: Record<ItemStatus, string> = {
 const POSTER_W = 56;
 const POSTER_H = 84;
 const AVATAR_SIZE = 80;
+
+// Grid sizing — mirrors the Library tab so a friend's grid looks
+// identical to your own at the same density setting. Kept locally
+// rather than imported so this screen stays a self-contained route;
+// the numbers would only diverge if the Library tweaks them, and
+// noticing that drift on review is fine.
+const POSTER_ASPECT = 1.5; // 2:3 poster
+const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
+    2: spacing.base,
+    3: spacing.sm,
+    4: spacing.sm,
+};
+
+function getGridCellWidth(cols: LibraryGridCols, screenWidth: number): number {
+    const gap = GRID_GAP_BY_COLS[cols];
+    const usable = screenWidth - 2 * spacing.base;
+    return Math.floor((usable - (cols - 1) * gap) / cols);
+}
+
+// Leading-star variant — "★4.5" reads tighter at small chip sizes than
+// the trailing-star "4.5★" used in list rows. Mirrors the Library tab.
+function compactRatingStars(rating: number): string {
+    return `★${rating / 2}`;
+}
 
 // "Friends since May 2026" — a single coarse line is enough; specific
 // days feel surveillance-y for a casual social product.
@@ -120,6 +150,13 @@ export default function FriendDetailScreen() {
     const [items, setItems] = useState<ItemRow[]>([]);
     const [itemsLoading, setItemsLoading] = useState(false);
     const [itemsError, setItemsError] = useState<string | null>(null);
+
+    // Global library view mode (persisted via AsyncStorage). Switching
+    // here updates the same setting Library tab reads from — flipping
+    // grid/list on a friend's profile changes it on your own library
+    // too. Density (gridCols) is part of the same shared setting.
+    const { mode, gridCols, setMode, setGridCols } = useLibraryView();
+    const screenWidth = Dimensions.get('window').width;
 
     // ---- Phase 1: resolve friend by handle + friendship status.
     // useFocusEffect so we re-resolve on return (e.g. user accepted a
@@ -274,6 +311,71 @@ export default function FriendDetailScreen() {
             active = false;
         };
     }, [state, activeTab]);
+
+    function renderGridCell({ item }: { item: ItemRow }) {
+        const cellWidth = getGridCellWidth(gridCols, screenWidth);
+        const cellHeight = Math.floor(cellWidth * POSTER_ASPECT);
+        const showRating = activeTab === 'watched' && item.rating !== null;
+        return (
+            <Pressable
+                onPress={() =>
+                    router.push({
+                        pathname: '/title/[mediaType]/[tmdbId]',
+                        params: {
+                            mediaType: item.mediaType,
+                            tmdbId: String(item.tmdbId),
+                        },
+                    })
+                }
+                style={({ pressed }) => [
+                    { width: cellWidth, height: cellHeight },
+                    styles.gridCell,
+                    pressed && { opacity: 0.6 },
+                ]}
+                accessibilityLabel={item.title}
+            >
+                {item.posterPath ? (
+                    <Image
+                        source={{ uri: imageUrl(item.posterPath, 'w342') }}
+                        style={[
+                            styles.gridPoster,
+                            { width: cellWidth, height: cellHeight },
+                        ]}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : (
+                    <View
+                        style={[
+                            styles.gridPoster,
+                            {
+                                width: cellWidth,
+                                height: cellHeight,
+                                backgroundColor: palette.surfaceAlt,
+                            },
+                        ]}
+                    />
+                )}
+                {showRating && item.rating !== null ? (
+                    <View
+                        style={[
+                            styles.gridRatingChip,
+                            { backgroundColor: palette.bg },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                styles.gridRatingText,
+                                { color: palette.text },
+                            ]}
+                        >
+                            {compactRatingStars(item.rating)}
+                        </Text>
+                    </View>
+                ) : null}
+            </Pressable>
+        );
+    }
 
     function renderRow({ item }: { item: ItemRow }) {
         const mediaLabel = item.mediaType === 'movie' ? 'Movie' : 'TV Show';
@@ -474,7 +576,18 @@ export default function FriendDetailScreen() {
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
-                <View style={styles.headerBar}>{backButton}</View>
+                <View style={styles.headerBar}>
+                    {backButton}
+                    <View style={styles.headerBarRight}>
+                        <ViewControls
+                            mode={mode}
+                            gridCols={gridCols}
+                            onModeChange={setMode}
+                            onGridColsChange={setGridCols}
+                            palette={palette}
+                        />
+                    </View>
+                </View>
                 <View style={styles.profileBlock}>
                     <Avatar
                         avatarUrl={profile.avatarUrl}
@@ -592,8 +705,9 @@ export default function FriendDetailScreen() {
                         {emptyMessage(activeTab, profile.displayName)}
                     </Text>
                 </View>
-            ) : (
+            ) : mode === 'list' ? (
                 <FlatList
+                    key="list"
                     data={items}
                     keyExtractor={(item) => item.id}
                     renderItem={renderRow}
@@ -605,6 +719,24 @@ export default function FriendDetailScreen() {
                                 { backgroundColor: palette.border },
                             ]}
                         />
+                    )}
+                />
+            ) : (
+                // FlatList can't change numColumns in place — key
+                // includes the column count so density changes trigger
+                // a clean unmount + remount.
+                <FlatList
+                    key={`grid-${gridCols}`}
+                    data={items}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderGridCell}
+                    numColumns={gridCols}
+                    contentContainerStyle={styles.gridContent}
+                    columnWrapperStyle={{
+                        columnGap: GRID_GAP_BY_COLS[gridCols],
+                    }}
+                    ItemSeparatorComponent={() => (
+                        <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
                     )}
                 />
             )}
@@ -619,6 +751,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.sm,
+    },
+    headerBarRight: {
+        // Push the view-controls cluster to the right edge of the
+        // header bar. The back button sits at the left; this slot is
+        // its mirror.
+        marginLeft: 'auto',
     },
     profileBlock: {
         alignItems: 'center',
@@ -700,5 +838,33 @@ const styles = StyleSheet.create({
     separator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: POSTER_W + spacing.md,
+    },
+    // Grid styles mirror the Library tab so a friend's grid looks
+    // identical at the same density. Values pulled across verbatim;
+    // diverging here would create a subtle inconsistency between
+    // "my library" and "their library" at a glance.
+    gridContent: {
+        paddingHorizontal: spacing.base,
+        paddingBottom: spacing.lg,
+        paddingTop: spacing.sm,
+    },
+    gridCell: {
+        position: 'relative',
+    },
+    gridPoster: {
+        borderRadius: radius.sm,
+    },
+    gridRatingChip: {
+        position: 'absolute',
+        bottom: spacing.xs,
+        left: spacing.xs,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 3,
+        borderRadius: radius.sm,
+        opacity: 0.92,
+    },
+    gridRatingText: {
+        ...typography.caption,
+        fontWeight: '600',
     },
 });
