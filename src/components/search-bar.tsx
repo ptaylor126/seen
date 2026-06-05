@@ -4,8 +4,8 @@ import { Search } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    FlatList,
     Pressable,
+    SectionList,
     StyleSheet,
     Text,
     TextInput,
@@ -13,7 +13,12 @@ import {
     View,
 } from 'react-native';
 
-import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
+import {
+    imageUrl,
+    searchMulti,
+    type TMDBMediaItem,
+    type TMDBPersonSummary,
+} from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -22,15 +27,34 @@ import {
     typography,
 } from '@/theme/theme';
 
-// TMDB returns plenty of rows without posters or with non-movie/tv kinds;
-// filter them out at the type level so consumers don't have to.
-export type SearchableItem =
+// TMDB returns plenty of rows without posters / profile images and a
+// mix of media types — filter at the type level so consumers don't have
+// to. People are included now (the "search by person" feature) but kept
+// as a separate variant of the union so renderers + tap-handlers branch
+// cleanly on media_type.
+export type SearchableTitle =
     | (TMDBMediaItem & { media_type: 'movie'; poster_path: string })
     | (TMDBMediaItem & { media_type: 'tv'; poster_path: string });
+
+export type SearchablePerson = TMDBPersonSummary & {
+    media_type: 'person';
+    profile_path: string; // narrowed from `string | null` after filter
+};
+
+export type SearchableItem = SearchableTitle | SearchablePerson;
 
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_RESULT_POSTER_W = 56;
 const SEARCH_RESULT_POSTER_H = 84;
+// Profile images render as circles, sized to match the title-row
+// poster height for a consistent visual rhythm across the blended
+// results section.
+const SEARCH_RESULT_PROFILE_SIZE = 56;
+// Cap the People section in the overlay so a query like "john" with
+// 20 matching people doesn't drown the title results. Five disambiguates
+// well in practice; a user wanting a specific actor narrows by typing
+// more.
+const PEOPLE_RESULTS_CAP = 5;
 
 // Vertical distance from the safe-area top inset to the bottom of the
 // search bar. Same on Home and Library because both screens use the
@@ -84,10 +108,23 @@ export function useSearchBar(): SearchBarState {
             try {
                 const response = await searchMulti(trimmed, 1);
                 if (!active) return;
+                // Keep titles with posters AND people with profile
+                // images. Same "no image, skip it" filter applies to
+                // both — drops the visually broken rows and the data-
+                // poor TMDB entries in one rule.
                 const filtered = response.results.filter(
-                    (item): item is SearchableItem =>
-                        (item.media_type === 'movie' || item.media_type === 'tv') &&
-                        !!item.poster_path,
+                    (item): item is SearchableItem => {
+                        if (
+                            item.media_type === 'movie' ||
+                            item.media_type === 'tv'
+                        ) {
+                            return !!item.poster_path;
+                        }
+                        if (item.media_type === 'person') {
+                            return !!item.profile_path;
+                        }
+                        return false;
+                    },
                 );
                 setResults(filtered);
                 setError(null);
@@ -121,6 +158,13 @@ export function useSearchBar(): SearchBarState {
     const handleResultTap = useCallback(
         (item: SearchableItem) => {
             dismiss();
+            if (item.media_type === 'person') {
+                router.push({
+                    pathname: '/person/[personId]',
+                    params: { personId: String(item.id) },
+                });
+                return;
+            }
             router.push({
                 pathname: '/title/[mediaType]/[tmdbId]',
                 params: {
@@ -200,6 +244,26 @@ export function SearchBarInput({ state }: { state: SearchBarState }) {
     );
 }
 
+// TMDB's known_for_department uses verb-form ("Acting", "Directing",
+// "Writing") which reads awkwardly as a row label. Map to friendly
+// nouns. Anything we don't have a mapping for falls through unchanged
+// — TMDB only really uses ~6 values here.
+function friendlyDepartment(value: string | undefined): string {
+    if (!value) return '';
+    switch (value) {
+        case 'Acting':
+            return 'Actor';
+        case 'Directing':
+            return 'Director';
+        case 'Writing':
+            return 'Writer';
+        case 'Production':
+            return 'Producer';
+        default:
+            return value;
+    }
+}
+
 export function SearchBarOverlay({
     state,
     top,
@@ -210,7 +274,7 @@ export function SearchBarOverlay({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
 
-    function renderResult({ item }: { item: SearchableItem }) {
+    function renderTitleRow(item: SearchableTitle) {
         const titleText = item.media_type === 'movie' ? item.title : item.name;
         const dateField =
             item.media_type === 'movie' ? item.release_date : item.first_air_date;
@@ -248,6 +312,61 @@ export function SearchBarOverlay({
         );
     }
 
+    function renderPersonRow(item: SearchablePerson) {
+        const department = friendlyDepartment(item.known_for_department);
+        return (
+            <Pressable
+                onPress={() => state.handleResultTap(item)}
+                style={({ pressed }) => [
+                    styles.resultRow,
+                    pressed && { opacity: 0.6 },
+                ]}
+            >
+                <Image
+                    source={{ uri: imageUrl(item.profile_path, 'w185') }}
+                    style={styles.resultProfile}
+                    contentFit="cover"
+                    transition={150}
+                />
+                <View style={styles.resultText}>
+                    <Text
+                        style={[typography.bodyEmphasis, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        {item.name}
+                    </Text>
+                    {department ? (
+                        <Text
+                            style={[typography.caption, { color: palette.textMuted }]}
+                        >
+                            {department}
+                        </Text>
+                    ) : null}
+                </View>
+            </Pressable>
+        );
+    }
+
+    // Partition the blended results into a People section (capped) and
+    // a Titles section. People appear first because a query that names
+    // a person is much more likely to be searching for them than for a
+    // title containing their name. Empty sections are dropped so the
+    // user doesn't see a "PEOPLE" header with nothing under it on a
+    // pure-title query.
+    const peopleResults = (state.results ?? [])
+        .filter((r): r is SearchablePerson => r.media_type === 'person')
+        .slice(0, PEOPLE_RESULTS_CAP);
+    const titleResults = (state.results ?? []).filter(
+        (r): r is SearchableTitle => r.media_type !== 'person',
+    );
+    const sections: { title: string; data: SearchableItem[] }[] = [];
+    if (peopleResults.length > 0) {
+        sections.push({ title: 'PEOPLE', data: peopleResults });
+    }
+    if (titleResults.length > 0) {
+        sections.push({ title: 'TITLES', data: titleResults });
+    }
+
     return (
         <View
             style={[
@@ -281,10 +400,36 @@ export function SearchBarOverlay({
                     </Text>
                 </View>
             ) : (
-                <FlatList
-                    data={state.results}
+                <SectionList
+                    sections={sections}
                     keyExtractor={(item) => `${item.media_type}-${item.id}`}
-                    renderItem={renderResult}
+                    renderItem={({ item }) =>
+                        item.media_type === 'person'
+                            ? renderPersonRow(item)
+                            : renderTitleRow(item)
+                    }
+                    renderSectionHeader={({ section }) => (
+                        <View
+                            style={[
+                                styles.sectionHeader,
+                                { backgroundColor: palette.bg },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.micro,
+                                    styles.sectionHeaderText,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {section.title}
+                            </Text>
+                        </View>
+                    )}
+                    // Sticky headers would look fine but the section
+                    // count is small (max 2) and the header
+                    // breathing room reads cleaner without them.
+                    stickySectionHeadersEnabled={false}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
                     contentContainerStyle={styles.listContent}
@@ -371,6 +516,11 @@ const styles = StyleSheet.create({
         height: SEARCH_RESULT_POSTER_H,
         borderRadius: radius.sm,
     },
+    resultProfile: {
+        width: SEARCH_RESULT_PROFILE_SIZE,
+        height: SEARCH_RESULT_PROFILE_SIZE,
+        borderRadius: SEARCH_RESULT_PROFILE_SIZE / 2,
+    },
     resultText: {
         flex: 1,
         gap: spacing.xs,
@@ -378,5 +528,12 @@ const styles = StyleSheet.create({
     separator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: SEARCH_RESULT_POSTER_W + spacing.md,
+    },
+    sectionHeader: {
+        paddingTop: spacing.md,
+        paddingBottom: spacing.sm,
+    },
+    sectionHeaderText: {
+        letterSpacing: 1.2,
     },
 });

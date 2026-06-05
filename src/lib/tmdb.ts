@@ -72,6 +72,48 @@ export interface TMDBPersonSummary {
     name: string;
     profile_path: string | null;
     popularity: number;
+    // /search/multi responses populate this on person results; it tells
+    // us what to label the row with ("Actor" / "Director" / "Writer").
+    // Optional because not every TMDB response shape includes it.
+    known_for_department?: string;
+}
+
+// /person/{id} response — slim, only the fields the filmography
+// screen renders. Biography is intentionally NOT pulled for v1;
+// adding it later is a one-field extension here.
+export interface TMDBPersonDetail {
+    id: number;
+    name: string;
+    profile_path: string | null;
+    known_for_department: string | null;
+}
+
+// A single credit row returned by /person/{id}/combined_credits. The
+// endpoint returns BOTH movie and TV credits in one response (with
+// `media_type` as the discriminator) and includes `character` on cast
+// entries / `job` on crew entries. Title fields differ by media type
+// (`title` + `release_date` for movies, `name` + `first_air_date` for
+// TV) — both included so consumers can pick.
+export interface TMDBPersonCredit {
+    id: number;
+    media_type: 'movie' | 'tv';
+    poster_path: string | null;
+    // Movie titles use `title` + `release_date`; TV uses `name` +
+    // `first_air_date`. TMDB populates whichever pair matches.
+    title?: string;
+    name?: string;
+    release_date?: string;
+    first_air_date?: string;
+    // Cast entries carry `character`; crew entries carry `job`.
+    character?: string;
+    job?: string;
+    popularity: number;
+}
+
+export interface TMDBPersonCombinedCredits {
+    id: number;
+    cast: TMDBPersonCredit[];
+    crew: TMDBPersonCredit[];
 }
 
 // Discriminated union for /search/multi results. The `media_type` field is
@@ -277,6 +319,16 @@ export function getTVWatchProviders(
     tmdbId: number,
 ): Promise<TMDBWatchProviders> {
     return callProxy(`tv/${tmdbId}/watch/providers`);
+}
+
+export function getPerson(personId: number): Promise<TMDBPersonDetail> {
+    return callProxy(`person/${personId}`);
+}
+
+export function getPersonCombinedCredits(
+    personId: number,
+): Promise<TMDBPersonCombinedCredits> {
+    return callProxy(`person/${personId}/combined_credits`);
 }
 
 // Configuration changes very rarely; caller is expected to fetch this once

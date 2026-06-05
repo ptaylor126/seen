@@ -30,6 +30,12 @@ const ALLOWED_PATH_PATTERNS: RegExp[] = [
     // the provider link) live on the client where this data is rendered.
     /^movie\/\d+\/watch\/providers$/,
     /^tv\/\d+\/watch\/providers$/,
+    // Person lookup + combined cast/crew filmography for the
+    // search-by-person feature. combined_credits returns both movie
+    // and TV credits in one response so we don't need to hit
+    // movie_credits and tv_credits separately.
+    /^person\/\d+$/,
+    /^person\/\d+\/combined_credits$/,
     /^configuration$/,
 ];
 

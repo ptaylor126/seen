@@ -119,6 +119,10 @@ function RootLayoutInner() {
                     name="library/add"
                     options={{ presentation: 'modal' }}
                 />
+                <Stack.Screen
+                    name="person/[personId]"
+                    options={{ presentation: 'modal' }}
+                />
             </Stack>
             {showLoading && (
                 <View style={[styles.loadingOverlay, { backgroundColor: palette.bg }]}>
