@@ -4,7 +4,9 @@ import {
     ArrowDownUp,
     LayoutGrid,
     LayoutList,
+    Plus,
     Search as SearchIcon,
+    X,
 } from 'lucide-react-native';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -397,16 +399,47 @@ export default function LibraryScreen() {
         return rows.filter((r) => r.title.toLowerCase().includes(q));
     }, [rows, localQuery]);
 
-    // TMDB fallback: when the local search has zero matches, the user
-    // can tap a "Search TMDB for X" affordance which pre-populates the
-    // shared SearchBar's query state. That triggers useSearchBar's
-    // debounced TMDB call and flips overlayVisible to true via its
-    // `open || query.length > 0` rule, so the overlay slides in
-    // automatically — no extra wiring needed.
-    function handleSearchTmdbFallback() {
+    // Fallback affordance: whenever the user has typed a query, give
+    // them a one-tap path to "search to add" the title via the shared
+    // SearchBar overlay. Shown as a list footer when the local filter
+    // has matches (so the partial-match case — "you have Bakshi's Lord
+    // of the Rings but want Fellowship" — still surfaces the add path)
+    // AND as the primary action in the empty-state when there are no
+    // matches. Tapping pre-populates `search` with the typed query,
+    // which fires useSearchBar's debounced TMDB call and flips
+    // overlayVisible to true via the `open || query.length > 0` rule.
+    function handleAddFallback() {
         const q = localQuery.trim();
         if (q.length === 0) return;
         search.setQuery(q);
+    }
+
+    function renderAddFallback() {
+        if (localQuery.trim().length === 0) return null;
+        return (
+            <Pressable
+                onPress={handleAddFallback}
+                hitSlop={spacing.sm}
+                style={({ pressed }) => [
+                    styles.addFallbackButton,
+                    pressed && { opacity: 0.6 },
+                ]}
+                accessibilityRole="link"
+                accessibilityLabel="Not in your library. Search to add it."
+            >
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        {
+                            color: palette.accent,
+                            textAlign: 'center',
+                        },
+                    ]}
+                >
+                    Not in your library? Search to add it →
+                </Text>
+            </Pressable>
+        );
     }
 
     function openSortMenu() {
@@ -625,42 +658,109 @@ export default function LibraryScreen() {
                 }
             />
 
-            {/* Local-filter search bar. Visually mirrors the shared
-                SearchBar (same pill shape + Search icon) for consistency
-                with Home, but typing filters the already-loaded rows by
-                title rather than firing a TMDB query. The TMDB-search
-                escape hatch is the "No matches in your library — Search
-                TMDB for X" affordance rendered below when the local
-                filter is empty-handed; tapping it pre-populates `search`
-                and slides the SearchBarOverlay in. */}
-            <View
-                style={[
-                    styles.localSearchBar,
-                    {
-                        backgroundColor: palette.surface,
-                        borderColor: palette.border,
-                    },
-                ]}
-            >
-                <SearchIcon
-                    color={palette.textMuted}
-                    size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
-                />
-                <TextInput
-                    value={localQuery}
-                    onChangeText={setLocalQuery}
-                    placeholder="Search your library"
-                    placeholderTextColor={palette.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
+            {/* Search row: local-filter bar + adjacent "+" add affordance.
+                The bar dual-modes — wired to localQuery for in-library
+                filtering most of the time, swapping to the shared
+                useSearchBar's query while the SearchBarOverlay is
+                visible so the user has somewhere to type for the add
+                flow. The toggle slot at the right is a + when the
+                overlay is closed (opens it via handleFocus + focuses
+                the bar) and an X when the overlay is open (dismisses).
+                The "Not in your library? Search to add it →" fallback
+                (renderAddFallback) is rendered as the FlatList footer
+                whenever there's a query, AND as the primary action in
+                the empty-state when there are no matches — the two
+                placements together cover the partial-match case where
+                the user has one match but wanted a different version. */}
+            <View style={styles.searchRow}>
+                <View
                     style={[
-                        styles.localSearchInput,
-                        typography.body,
-                        { color: palette.text },
+                        styles.localSearchBar,
+                        {
+                            backgroundColor: palette.surface,
+                            borderColor: palette.border,
+                        },
                     ]}
-                />
+                >
+                    <SearchIcon
+                        color={palette.textMuted}
+                        size={20}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <TextInput
+                        ref={search.inputRef}
+                        value={
+                            search.overlayVisible ? search.query : localQuery
+                        }
+                        onChangeText={
+                            search.overlayVisible
+                                ? search.setQuery
+                                : setLocalQuery
+                        }
+                        placeholder={
+                            search.overlayVisible
+                                ? 'Search to add or find anything'
+                                : 'Search your library'
+                        }
+                        placeholderTextColor={palette.textMuted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        returnKeyType="search"
+                        style={[
+                            styles.localSearchInput,
+                            typography.body,
+                            { color: palette.text },
+                        ]}
+                    />
+                </View>
+                <Pressable
+                    onPress={() => {
+                        if (search.overlayVisible) {
+                            // Toggle slot is in X mode — dismiss the
+                            // search overlay. The bar dual-modes back
+                            // to local-filter via overlayVisible going
+                            // false, and the slot reverts to Plus on
+                            // the next render.
+                            search.dismiss();
+                        } else {
+                            // Toggle slot is in + mode — open the
+                            // search overlay and focus the bar so the
+                            // keyboard comes up immediately (saves the
+                            // second tap of "now tap the bar").
+                            search.handleFocus();
+                            search.inputRef.current?.focus();
+                        }
+                    }}
+                    hitSlop={spacing.xs}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                        search.overlayVisible
+                            ? 'Cancel search'
+                            : 'Add a title'
+                    }
+                    style={({ pressed }) => [
+                        styles.addButton,
+                        {
+                            backgroundColor: palette.surface,
+                            borderColor: palette.border,
+                        },
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    {search.overlayVisible ? (
+                        <X
+                            color={palette.accent}
+                            size={22}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    ) : (
+                        <Plus
+                            color={palette.accent}
+                            size={22}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    )}
+                </Pressable>
             </View>
 
             <View style={styles.tabs}>
@@ -785,11 +885,23 @@ export default function LibraryScreen() {
                     </Text>
                 </View>
             ) : filteredRows.length === 0 ? (
-                // Three sub-cases unified into one branch:
-                //   1. Tab is empty + no search query → static empty copy.
-                //   2. Tab is empty + search query → "no matches" + TMDB fallback.
-                //   3. Tab has items + search query with no local matches → same fallback.
-                <View style={styles.statusBlock}>
+                // Two sub-cases share this branch:
+                //   1. No query → static empty copy for the tab, vertically
+                //      centered (keyboard isn't up — the user hasn't
+                //      started typing).
+                //   2. Query present → "no matches" copy + the Add
+                //      fallback, top-aligned because the keyboard is up
+                //      mid-search and a centered block + fallback would
+                //      sit behind it. Top-alignment keeps the fallback
+                //      visible and tappable without forcing the user to
+                //      dismiss the keyboard to reach it.
+                <View
+                    style={[
+                        styles.statusBlock,
+                        localQuery.trim().length > 0 &&
+                            styles.statusBlockSearching,
+                    ]}
+                >
                     <Text
                         style={[
                             typography.body,
@@ -803,30 +915,7 @@ export default function LibraryScreen() {
                                 : 'No matches in your library.'
                             : EMPTY_MESSAGES[activeTab]}
                     </Text>
-                    {localQuery.trim().length > 0 ? (
-                        <Pressable
-                            onPress={handleSearchTmdbFallback}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => [
-                                styles.tmdbFallbackButton,
-                                pressed && { opacity: 0.6 },
-                            ]}
-                            accessibilityRole="link"
-                            accessibilityLabel={`Search TMDB for ${localQuery.trim()}`}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    {
-                                        color: palette.accent,
-                                        textAlign: 'center',
-                                    },
-                                ]}
-                            >
-                                Search TMDB for &ldquo;{localQuery.trim()}&rdquo; →
-                            </Text>
-                        </Pressable>
-                    ) : null}
+                    {renderAddFallback()}
                 </View>
             ) : mode === 'list' ? (
                 <FlatList
@@ -842,6 +931,11 @@ export default function LibraryScreen() {
                             style={[styles.separator, { backgroundColor: palette.border }]}
                         />
                     )}
+                    // Footer surfaces the Add fallback whenever there's
+                    // an active query — closes the partial-match gap
+                    // where "lord" matches one library item but the
+                    // user wanted a different Lord of the Rings.
+                    ListFooterComponent={renderAddFallback()}
                 />
             ) : (
                 // FlatList can't change numColumns in place — key includes
@@ -862,6 +956,7 @@ export default function LibraryScreen() {
                     ItemSeparatorComponent={() => (
                         <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
                     )}
+                    ListFooterComponent={renderAddFallback()}
                 />
             )}
             {search.overlayVisible && (
@@ -1058,27 +1153,65 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.xl,
         gap: spacing.md,
     },
+    statusBlockSearching: {
+        // Override the centering of the default statusBlock when the
+        // user is actively searching: the keyboard is up, and a
+        // centered block would put the empty-state copy + the Add
+        // fallback link directly behind it. Top-aligned with a
+        // generous-but-bounded top padding so the content sits just
+        // below the controls row, well clear of any keyboard. Same
+        // style works portrait/landscape (app is portrait-locked, but
+        // robust regardless).
+        justifyContent: 'flex-start',
+        paddingTop: spacing.xl,
+    },
     statusBlockText: {
         textAlign: 'center',
     },
-    tmdbFallbackButton: {
-        paddingVertical: spacing.sm,
+    addFallbackButton: {
+        // Generous padding so the footer rendering sits comfortably
+        // below the last list row and reads as a deliberate "you can
+        // also add a new title from here" affordance, not a stray link.
+        paddingVertical: spacing.lg,
         paddingHorizontal: spacing.base,
     },
-    localSearchBar: {
-        // Mirrors the shared SearchBar's pill shape so the visual
-        // language matches Home, but the input wired here filters the
-        // already-loaded library rows in memory rather than firing a
-        // TMDB query.
+    searchRow: {
+        // Wraps the search bar + adjacent "+" button as one connected
+        // row. Horizontal margins live here so the bar's `flex: 1`
+        // measures the row's remaining width after the + and gap.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         marginHorizontal: spacing.base,
         marginTop: spacing.sm,
+    },
+    localSearchBar: {
+        // Mirrors the shared SearchBar's pill shape so the visual
+        // language matches Home, but the input wired here filters the
+        // already-loaded library rows in memory rather than firing a
+        // TMDB query (unless the overlay is open, in which case the
+        // bar dual-modes to drive useSearchBar's query directly).
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
         paddingHorizontal: spacing.md,
         borderRadius: radius.full,
         borderWidth: 1,
         height: 44,
+    },
+    addButton: {
+        // Circular control sized to match the search bar's pill height
+        // so the row reads as a connected pair. Outlined (surface fill
+        // + hairline border) rather than accent-filled so it doesn't
+        // upstage the primary "search your library" affordance — the
+        // accent-coloured icon stroke gives it enough weight.
+        width: 44,
+        height: 44,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     localSearchInput: {
         flex: 1,

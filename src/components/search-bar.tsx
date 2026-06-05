@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Search, X } from 'lucide-react-native';
+import { Search } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -150,32 +150,52 @@ export function SearchBarInput({ state }: { state: SearchBarState }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     return (
-        <View
-            style={[
-                styles.bar,
-                {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                },
-            ]}
-        >
-            <Search
-                color={palette.textMuted}
-                size={20}
-                strokeWidth={ICON_STROKE_WIDTH}
-            />
-            <TextInput
-                ref={state.inputRef}
-                value={state.query}
-                onChangeText={state.setQuery}
-                onFocus={state.handleFocus}
-                placeholder="Search to add or find anything"
-                placeholderTextColor={palette.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-                style={[styles.input, typography.body, { color: palette.text }]}
-            />
+        <View style={styles.row}>
+            <View
+                style={[
+                    styles.bar,
+                    {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                    },
+                ]}
+            >
+                <Search
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+                <TextInput
+                    ref={state.inputRef}
+                    value={state.query}
+                    onChangeText={state.setQuery}
+                    onFocus={state.handleFocus}
+                    placeholder="Search to add or find anything"
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    style={[styles.input, typography.body, { color: palette.text }]}
+                />
+            </View>
+            {state.overlayVisible ? (
+                <Pressable
+                    onPress={state.dismiss}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel search"
+                    style={({ pressed }) => [
+                        styles.cancelButton,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <Text
+                        style={[typography.body, { color: palette.accent }]}
+                    >
+                        Cancel
+                    </Text>
+                </Pressable>
+            ) : null}
         </View>
     );
 }
@@ -239,20 +259,6 @@ export function SearchBarOverlay({
                 },
             ]}
         >
-            <Pressable
-                onPress={state.dismiss}
-                hitSlop={spacing.sm}
-                style={({ pressed }) => [
-                    styles.closeButton,
-                    pressed && { opacity: 0.6 },
-                ]}
-            >
-                <X
-                    color={palette.textMuted}
-                    size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
-                />
-            </Pressable>
             {state.loading ? (
                 <View style={styles.statusBlock}>
                     <ActivityIndicator color={palette.accent} />
@@ -297,18 +303,33 @@ export function SearchBarOverlay({
 }
 
 const styles = StyleSheet.create({
-    bar: {
+    row: {
+        // Outer row wraps the bar + the conditional Cancel button. The
+        // bar gets `flex: 1` so it expands when Cancel is absent and
+        // shrinks to accommodate Cancel when it appears, the standard
+        // iOS Mail / Notes search-bar shape.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         marginHorizontal: spacing.base,
         marginTop: spacing.sm,
+    },
+    bar: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
         paddingHorizontal: spacing.md,
         // Fully pill-shaped — search inputs read as their own object
         // class (vs. content inputs which use radius.md).
         borderRadius: radius.full,
         borderWidth: 1,
         height: 44,
+    },
+    cancelButton: {
+        // Visible only while the overlay is open. Plain text Pressable
+        // — matches iOS standard search Cancel.
+        paddingHorizontal: spacing.xs,
     },
     input: {
         flex: 1,
@@ -327,16 +348,6 @@ const styles = StyleSheet.create({
         // bar sit above this top edge in normal flow, so the input
         // stays tappable while the overlay is open.
         zIndex: 10,
-    },
-    closeButton: {
-        position: 'absolute',
-        top: spacing.sm,
-        right: spacing.base,
-        width: 32,
-        height: 32,
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1,
     },
     statusBlock: {
         flex: 1,
