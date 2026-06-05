@@ -17,9 +17,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { AvatarStack, type AvatarStackItem } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
 import { getRegion } from '@/lib/locale';
-import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { applyWatchedRating, formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import {
     getMovie,
@@ -78,6 +79,36 @@ interface RecContext {
     note: string | null;
 }
 
+// Compact social signal for this title across the user's friends.
+// Watchers = friends with status='watching'; ratings summary aggregates
+// across friends with a non-null rating. Watchlist entries are
+// intentionally excluded — the section is about engagement, not intent,
+// and including watchlist would make it noisy without adding signal.
+// Privacy is enforced by RLS (`is_private = false` for non-self rows),
+// AND we filter is_private explicitly client-side as defence in depth.
+interface FriendActivity {
+    watchers: AvatarStackItem[];
+    // Mean of stored 1-10 values across rating-bearing friends. Convert
+    // to stars at render time via formatRatingStars-style division.
+    ratingsAverage: number | null;
+    ratingsCount: number;
+}
+
+// Map an items row to a one-line marker for the current user's
+// relationship to this title — used in the YOUR row above the
+// status pills.
+function formatYourMarker(
+    status: ItemStatus | null,
+    rating: number | null,
+): string | null {
+    if (!status) return null;
+    if (status === 'watchlist') return 'On your watchlist';
+    if (status === 'watching') return "You're watching this";
+    // status === 'watched'
+    if (rating !== null) return `You rated this ${formatRatingStars(rating)}`;
+    return "You've watched this";
+}
+
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
     const first = trimmed.split(/\s+/)[0];
@@ -129,6 +160,13 @@ export default function TitleDetailScreen() {
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
+    // Aggregated friend activity for the social block. `null` = not yet
+    // loaded; an object with empty watchers + 0 ratings = loaded but no
+    // friends have any non-private engagement (the renderer hides the
+    // whole block in that case).
+    const [friendActivity, setFriendActivity] = useState<FriendActivity | null>(
+        null,
+    );
     // Watch providers for the device's region. `null` covers loading +
     // "no data in this region" + "fetch failed" — all three should render
     // identically (hide the section), so collapsing them into one state
@@ -275,6 +313,90 @@ export default function TitleDetailScreen() {
                                 senders,
                                 totalCount: senders.length,
                                 note,
+                            });
+                        }
+                    }
+                }
+
+                // Friend activity: pull every non-private items row for
+                // this title that isn't mine. RLS scopes the result to
+                // friends only; the explicit is_private filter is
+                // defence-in-depth. Failure is silent — the social block
+                // simply hides.
+                if (userId) {
+                    const { data: friendRows, error: friendErr } = await supabase
+                        .from('items')
+                        .select('user_id, status, rating')
+                        .eq('tmdb_id', tmdbId)
+                        .eq('media_type', mediaType)
+                        .eq('is_private', false)
+                        .neq('user_id', userId);
+                    if (friendErr) {
+                        console.warn('friend activity fetch failed:', friendErr);
+                    } else if (active && friendRows) {
+                        const watcherIds: string[] = [];
+                        const watcherSeen = new Set<string>();
+                        const ratings: number[] = [];
+                        for (const row of friendRows) {
+                            if (
+                                row.status === 'watching' &&
+                                row.user_id &&
+                                !watcherSeen.has(row.user_id)
+                            ) {
+                                watcherSeen.add(row.user_id);
+                                watcherIds.push(row.user_id);
+                            }
+                            if (
+                                row.status === 'watched' &&
+                                typeof row.rating === 'number'
+                            ) {
+                                ratings.push(row.rating);
+                            }
+                        }
+
+                        // Resolve watcher profiles in one trip so the
+                        // avatar stack carries display name + image.
+                        let watcherProfiles: AvatarStackItem[] = [];
+                        if (watcherIds.length > 0) {
+                            const { data: profileRows } = await supabase
+                                .from('profiles')
+                                .select('id, display_name, avatar_url')
+                                .in('id', watcherIds);
+                            const byId = new Map(
+                                (profileRows ?? []).map((p) => [p.id, p]),
+                            );
+                            // Preserve watcherIds order — DB doesn't
+                            // promise an order on .in(), so explicit
+                            // mapping keeps the stack deterministic.
+                            watcherProfiles = watcherIds
+                                .map((id) => byId.get(id))
+                                .filter(
+                                    (
+                                        p,
+                                    ): p is {
+                                        id: string;
+                                        display_name: string;
+                                        avatar_url: string | null;
+                                    } => !!p,
+                                )
+                                .map((p) => ({
+                                    userId: p.id,
+                                    displayName: p.display_name,
+                                    avatarUrl: p.avatar_url,
+                                }));
+                        }
+
+                        const ratingsAverage =
+                            ratings.length > 0
+                                ? ratings.reduce((a, b) => a + b, 0) /
+                                  ratings.length
+                                : null;
+
+                        if (active) {
+                            setFriendActivity({
+                                watchers: watcherProfiles,
+                                ratingsAverage,
+                                ratingsCount: ratings.length,
                             });
                         }
                     }
@@ -667,11 +789,56 @@ export default function TitleDetailScreen() {
                     </Text>
                 ) : null}
 
+                <FriendActivitySection
+                    activity={friendActivity}
+                    palette={palette}
+                />
+
                 <WhereToWatch
                     region={region}
                     providers={providersForRegion}
                     palette={palette}
                 />
+
+                {/* YOUR row — singular personal marker for this title.
+                    Tappable when the current status is 'watched' so the
+                    user can edit (or first-set) their rating without
+                    going through the toggle-off / status pill flow. */}
+                {currentStatus !== null && (
+                    <Pressable
+                        onPress={() => {
+                            if (currentStatus === 'watched') {
+                                setShowRatingSheet(true);
+                            }
+                        }}
+                        disabled={currentStatus !== 'watched'}
+                        style={({ pressed }) => [
+                            styles.yourMarker,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.text },
+                            ]}
+                        >
+                            {formatYourMarker(currentStatus, currentRating)}
+                        </Text>
+                        {currentStatus === 'watched' && (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {currentRating !== null
+                                    ? 'Tap to edit'
+                                    : 'Tap to rate'}
+                            </Text>
+                        )}
+                    </Pressable>
+                )}
 
                 {/* Status pills — a choice. The selected status is
                     filled accent; the others are outline-only with a
@@ -783,6 +950,96 @@ function CloseButton({
         >
             <X color={fg} size={20} strokeWidth={ICON_STROKE_WIDTH} />
         </Pressable>
+    );
+}
+
+// Social signal block — friends watching + a one-line ratings summary.
+// Hidden entirely when no friend has any non-private engagement (no
+// "Friends" header sitting over an empty section). Watchers and
+// ratings each get their own row; both can render, either can render
+// alone, neither = block is null.
+function FriendActivitySection({
+    activity,
+    palette,
+}: {
+    activity: FriendActivity | null;
+    palette: Palette;
+}) {
+    if (!activity) return null;
+    const { watchers, ratingsAverage, ratingsCount } = activity;
+    if (watchers.length === 0 && ratingsCount === 0) return null;
+
+    // Watcher caption: "Jane watching", "Jane & Bob watching",
+    // "Jane, Bob & N others watching". Mirrors the rec-sender line
+    // pattern used at the top of this screen for consistency.
+    let watcherCaption = '';
+    if (watchers.length > 0) {
+        const names = watchers.map((w) => firstName(w.displayName));
+        const verb = 'watching';
+        if (names.length === 1) {
+            watcherCaption = `${names[0]} ${verb}`;
+        } else if (names.length === 2) {
+            watcherCaption = `${names[0]} & ${names[1]} ${verb}`;
+        } else {
+            const others = names.length - 2;
+            watcherCaption = `${names[0]}, ${names[1]} & ${others} other${
+                others === 1 ? '' : 's'
+            } ${verb}`;
+        }
+    }
+
+    // Ratings summary: convert the mean stored 1-10 value to stars (÷2)
+    // with one decimal. Suppress the trailing .0 (e.g. 4★ not 4.0★) so
+    // round-number averages read cleanly.
+    let ratingsCaption = '';
+    if (ratingsAverage !== null && ratingsCount > 0) {
+        const stars = ratingsAverage / 2;
+        const starsLabel = Number.isInteger(stars)
+            ? `${stars}★`
+            : `${stars.toFixed(1)}★`;
+        ratingsCaption = `Friends · ${starsLabel} avg · ${ratingsCount} rated`;
+    }
+
+    return (
+        <View style={styles.friendActivity}>
+            <Text
+                style={[
+                    typography.micro,
+                    styles.friendActivityHeading,
+                    { color: palette.textMuted },
+                ]}
+            >
+                FRIENDS
+            </Text>
+            {watchers.length > 0 && (
+                <View style={styles.friendActivityRow}>
+                    <AvatarStack
+                        items={watchers}
+                        limit={5}
+                        size={28}
+                        overlap={10}
+                        borderColor={palette.bg}
+                    />
+                    <Text
+                        style={[
+                            typography.caption,
+                            styles.friendActivityCaption,
+                            { color: palette.text },
+                        ]}
+                        numberOfLines={2}
+                    >
+                        {watcherCaption}
+                    </Text>
+                </View>
+            )}
+            {ratingsCaption !== '' && (
+                <Text
+                    style={[typography.caption, { color: palette.textMuted }]}
+                >
+                    {ratingsCaption}
+                </Text>
+            )}
+        </View>
     );
 }
 
@@ -1103,11 +1360,32 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
         borderWidth: 1,
     },
+    friendActivity: {
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        gap: spacing.sm,
+    },
+    friendActivityHeading: {
+        letterSpacing: 1.2,
+    },
+    friendActivityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    friendActivityCaption: {
+        flex: 1,
+    },
+    yourMarker: {
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        gap: spacing.xs,
+    },
     actions: {
         flexDirection: 'row',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
-        marginTop: spacing.lg,
+        marginTop: spacing.md,
     },
     actionButton: {
         flex: 1,
