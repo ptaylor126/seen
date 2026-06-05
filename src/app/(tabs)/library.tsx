@@ -1,15 +1,22 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { LayoutGrid, LayoutList } from 'lucide-react-native';
-import { type ReactNode, useCallback, useState } from 'react';
+import {
+    ArrowDownUp,
+    LayoutGrid,
+    LayoutList,
+    Search as SearchIcon,
+} from 'lucide-react-native';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Dimensions,
     FlatList,
     Pressable,
     StyleSheet,
     type StyleProp,
     Text,
+    TextInput,
     useColorScheme,
     View,
     type ViewStyle,
@@ -25,7 +32,6 @@ import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import {
     SEARCH_OVERLAY_TOP_OFFSET,
-    SearchBarInput,
     SearchBarOverlay,
     useSearchBar,
 } from '@/components/search-bar';
@@ -100,10 +106,43 @@ const TAB_LABELS: Record<ItemStatus, string> = {
     watching: 'Watching',
     watched: 'Watched',
 };
+// "Tap + to add" referenced a Plus icon that's been removed since the
+// shared SearchBar took over the header — copy refreshed to point at
+// the search bar as the primary add path.
 const EMPTY_MESSAGES: Record<ItemStatus, string> = {
-    watchlist: 'Your watchlist is empty. Tap + to add something.',
+    watchlist: 'Your watchlist is empty. Use the search bar above to find something to add.',
     watching: 'Nothing currently watching.',
     watched: 'No watched titles yet.',
+};
+
+type MediaFilter = 'all' | 'movie' | 'tv';
+const MEDIA_FILTERS: readonly MediaFilter[] = ['all', 'movie', 'tv'] as const;
+const MEDIA_FILTER_LABELS: Record<MediaFilter, string> = {
+    all: 'All',
+    movie: 'Movies',
+    tv: 'TV',
+};
+
+type SortOption = 'dateWatched' | 'dateAdded' | 'rating';
+const SORT_LABELS: Record<SortOption, string> = {
+    dateWatched: 'Date watched',
+    dateAdded: 'Date added',
+    rating: 'Rating',
+};
+// Map sort option → server column. NULLS LAST is applied uniformly so
+// unrated / unwatched rows don't bubble to the top when the sort field
+// doesn't apply to them (e.g. rating on Watchlist).
+const SORT_COLUMNS: Record<SortOption, string> = {
+    dateWatched: 'watched_at',
+    dateAdded: 'created_at',
+    rating: 'rating',
+};
+// Tab defaults: Watchlist / Watching emphasise recency of intent (when
+// did I add this); Watched emphasises recency of viewing.
+const DEFAULT_SORT_BY_TAB: Record<ItemStatus, SortOption> = {
+    watchlist: 'dateAdded',
+    watching: 'dateAdded',
+    watched: 'dateWatched',
 };
 
 const POSTER_WIDTH = 56;
@@ -160,11 +199,26 @@ export default function LibraryScreen() {
     const { mode, gridCols, setMode, setGridCols } = useLibraryView();
     const screenWidth = Dimensions.get('window').width;
     const insets = useSafeAreaInsets();
-    // Shared SearchBar — same TMDB-search + add flow used on Home. The
-    // old local-substring filter on already-loaded rows is gone; search
-    // now reaches the title detail screen where status (watchlist /
-    // watching / watched) is set.
+    // Library search is a LOCAL filter on the rows already fetched for
+    // the active tab — typing narrows in-memory by title substring,
+    // instant and round-trip-free. The shared `useSearchBar` instance
+    // below stays mounted but is wired ONLY to the TMDB-fallback
+    // affordance (see the "no local matches" branch), not to the local
+    // input. Two-state design: localQuery is the primary, useSearchBar
+    // is the escape hatch.
+    const [localQuery, setLocalQuery] = useState('');
+    const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+    const [sortBy, setSortBy] = useState<SortOption>(
+        DEFAULT_SORT_BY_TAB.watchlist,
+    );
     const search = useSearchBar();
+
+    // On tab switch, snap sort back to that tab's default. Keeps the
+    // user out of the "rating-desc on Watchlist sorts by NULL" trap and
+    // matches the per-tab default reasoning.
+    useEffect(() => {
+        setSortBy(DEFAULT_SORT_BY_TAB[activeTab]);
+    }, [activeTab]);
 
     useFocusEffect(
         useCallback(() => {
@@ -185,15 +239,30 @@ export default function LibraryScreen() {
                     // the whole library (not just this tab) because joining
                     // by (tmdb_id, media_type) per item is cheaper than
                     // re-querying on tab switches.
+                    // Compose the items query incrementally so the media
+                    // filter is a no-op when 'all' is selected (don't send
+                    // an unused .eq), and the sort column comes from the
+                    // sortBy state. nullsFirst: false keeps rows with NULL
+                    // in the sort column at the bottom — e.g. unwatched
+                    // items don't bubble to the top when sorting by
+                    // watched_at on the Watchlist tab.
+                    let itemsQuery = supabase
+                        .from('items')
+                        .select(
+                            'id, tmdb_id, media_type, rating, watched_at, updated_at',
+                        )
+                        .eq('user_id', userId)
+                        .eq('status', activeTab);
+                    if (mediaFilter !== 'all') {
+                        itemsQuery = itemsQuery.eq('media_type', mediaFilter);
+                    }
+                    itemsQuery = itemsQuery.order(SORT_COLUMNS[sortBy], {
+                        ascending: false,
+                        nullsFirst: false,
+                    });
+
                     const [itemsResult, recsResult] = await Promise.all([
-                        supabase
-                            .from('items')
-                            .select(
-                                'id, tmdb_id, media_type, rating, watched_at, updated_at',
-                            )
-                            .eq('user_id', userId)
-                            .eq('status', activeTab)
-                            .order('updated_at', { ascending: false }),
+                        itemsQuery,
                         supabase
                             .from('recommendations')
                             .select('from_user_id, tmdb_id, media_type, sent_at')
@@ -315,8 +384,40 @@ export default function LibraryScreen() {
             return () => {
                 active = false;
             };
-        }, [activeTab]),
+        }, [activeTab, mediaFilter, sortBy]),
     );
+
+    // Client-side title substring filter on the loaded rows. The media
+    // filter and sort live server-side (the query refetches on those
+    // state changes); the title filter is in-memory so typing feels
+    // instant for 600+-row libraries.
+    const filteredRows = useMemo(() => {
+        const q = localQuery.trim().toLowerCase();
+        if (!q) return rows;
+        return rows.filter((r) => r.title.toLowerCase().includes(q));
+    }, [rows, localQuery]);
+
+    // TMDB fallback: when the local search has zero matches, the user
+    // can tap a "Search TMDB for X" affordance which pre-populates the
+    // shared SearchBar's query state. That triggers useSearchBar's
+    // debounced TMDB call and flips overlayVisible to true via its
+    // `open || query.length > 0` rule, so the overlay slides in
+    // automatically — no extra wiring needed.
+    function handleSearchTmdbFallback() {
+        const q = localQuery.trim();
+        if (q.length === 0) return;
+        search.setQuery(q);
+    }
+
+    function openSortMenu() {
+        Alert.alert('Sort by', undefined, [
+            ...(Object.keys(SORT_LABELS) as SortOption[]).map((opt) => ({
+                text: SORT_LABELS[opt] + (sortBy === opt ? '  ✓' : ''),
+                onPress: () => setSortBy(opt),
+            })),
+            { text: 'Cancel', style: 'cancel' as const },
+        ]);
+    }
 
     // Leading-star variant for grid chips — "★4.5" reads tighter at
     // small sizes than the trailing-star "4.5★" used in list rows.
@@ -524,7 +625,43 @@ export default function LibraryScreen() {
                 }
             />
 
-            <SearchBarInput state={search} />
+            {/* Local-filter search bar. Visually mirrors the shared
+                SearchBar (same pill shape + Search icon) for consistency
+                with Home, but typing filters the already-loaded rows by
+                title rather than firing a TMDB query. The TMDB-search
+                escape hatch is the "No matches in your library — Search
+                TMDB for X" affordance rendered below when the local
+                filter is empty-handed; tapping it pre-populates `search`
+                and slides the SearchBarOverlay in. */}
+            <View
+                style={[
+                    styles.localSearchBar,
+                    {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                    },
+                ]}
+            >
+                <SearchIcon
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+                <TextInput
+                    value={localQuery}
+                    onChangeText={setLocalQuery}
+                    placeholder="Search your library"
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    style={[
+                        styles.localSearchInput,
+                        typography.body,
+                        { color: palette.text },
+                    ]}
+                />
+            </View>
 
             <View style={styles.tabs}>
                 {TABS.map((tab) => {
@@ -561,6 +698,79 @@ export default function LibraryScreen() {
                 })}
             </View>
 
+            {/* Filter (media type, segmented) + Sort (menu via Alert).
+                Filter and sort both refetch the items query (server-
+                side narrowing/ordering). Local search applies on top of
+                whatever this row produces. */}
+            <View style={styles.controlsRow}>
+                <View style={styles.mediaFilterGroup}>
+                    {MEDIA_FILTERS.map((opt) => {
+                        const isActive = mediaFilter === opt;
+                        return (
+                            <Pressable
+                                key={opt}
+                                onPress={() => setMediaFilter(opt)}
+                                hitSlop={spacing.xs}
+                                style={({ pressed }) => [
+                                    styles.mediaFilterPill,
+                                    {
+                                        backgroundColor: isActive
+                                            ? palette.accent
+                                            : 'transparent',
+                                        borderColor: isActive
+                                            ? palette.accent
+                                            : palette.border,
+                                        opacity: pressed ? 0.6 : 1,
+                                    },
+                                ]}
+                                accessibilityLabel={MEDIA_FILTER_LABELS[opt]}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: isActive }}
+                            >
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.mediaFilterText,
+                                        {
+                                            color: isActive
+                                                ? palette.textInverse
+                                                : palette.text,
+                                        },
+                                    ]}
+                                >
+                                    {MEDIA_FILTER_LABELS[opt]}
+                                </Text>
+                            </Pressable>
+                        );
+                    })}
+                </View>
+                <Pressable
+                    onPress={openSortMenu}
+                    hitSlop={spacing.xs}
+                    style={({ pressed }) => [
+                        styles.sortButton,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                    accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
+                    accessibilityRole="button"
+                >
+                    <ArrowDownUp
+                        color={palette.text}
+                        size={14}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <Text
+                        style={[
+                            typography.caption,
+                            styles.sortButtonText,
+                            { color: palette.text },
+                        ]}
+                    >
+                        {SORT_LABELS[sortBy]}
+                    </Text>
+                </Pressable>
+            </View>
+
             {loading ? (
                 <View style={styles.statusBlock}>
                     <ActivityIndicator color={palette.accent} />
@@ -574,19 +784,54 @@ export default function LibraryScreen() {
                         {error}
                     </Text>
                 </View>
-            ) : rows.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
+                // Three sub-cases unified into one branch:
+                //   1. Tab is empty + no search query → static empty copy.
+                //   2. Tab is empty + search query → "no matches" + TMDB fallback.
+                //   3. Tab has items + search query with no local matches → same fallback.
                 <View style={styles.statusBlock}>
                     <Text
-                        style={[typography.body, { color: palette.textMuted }]}
-                        numberOfLines={3}
+                        style={[
+                            typography.body,
+                            styles.statusBlockText,
+                            { color: palette.textMuted },
+                        ]}
                     >
-                        {EMPTY_MESSAGES[activeTab]}
+                        {localQuery.trim().length > 0
+                            ? rows.length === 0
+                                ? 'No matches — nothing in this tab yet.'
+                                : 'No matches in your library.'
+                            : EMPTY_MESSAGES[activeTab]}
                     </Text>
+                    {localQuery.trim().length > 0 ? (
+                        <Pressable
+                            onPress={handleSearchTmdbFallback}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                styles.tmdbFallbackButton,
+                                pressed && { opacity: 0.6 },
+                            ]}
+                            accessibilityRole="link"
+                            accessibilityLabel={`Search TMDB for ${localQuery.trim()}`}
+                        >
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    {
+                                        color: palette.accent,
+                                        textAlign: 'center',
+                                    },
+                                ]}
+                            >
+                                Search TMDB for &ldquo;{localQuery.trim()}&rdquo; →
+                            </Text>
+                        </Pressable>
+                    ) : null}
                 </View>
             ) : mode === 'list' ? (
                 <FlatList
                     key="list"
-                    data={rows}
+                    data={filteredRows}
                     keyExtractor={(item) => item.id}
                     renderItem={renderRow}
                     contentContainerStyle={styles.listContent}
@@ -604,7 +849,7 @@ export default function LibraryScreen() {
                 // unmount + remount.
                 <FlatList
                     key={`grid-${gridCols}`}
-                    data={rows}
+                    data={filteredRows}
                     keyExtractor={(item) => item.id}
                     renderItem={renderGridCell}
                     numColumns={gridCols}
@@ -811,6 +1056,72 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
+        gap: spacing.md,
+    },
+    statusBlockText: {
+        textAlign: 'center',
+    },
+    tmdbFallbackButton: {
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.base,
+    },
+    localSearchBar: {
+        // Mirrors the shared SearchBar's pill shape so the visual
+        // language matches Home, but the input wired here filters the
+        // already-loaded library rows in memory rather than firing a
+        // TMDB query.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        marginHorizontal: spacing.base,
+        marginTop: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        height: 44,
+    },
+    localSearchInput: {
+        flex: 1,
+        // padding zeroed: the parent's fixed height owns vertical
+        // sizing so the icon and text stay perfectly aligned.
+        paddingVertical: 0,
+    },
+    controlsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.base,
+        paddingBottom: spacing.sm,
+        gap: spacing.sm,
+    },
+    mediaFilterGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    mediaFilterPill: {
+        // Outlined pill when inactive, filled accent when active.
+        // borderWidth always present (transparent → accent) so the
+        // layout doesn't jitter as the selection moves.
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
+        borderWidth: 1,
+    },
+    mediaFilterText: {
+        fontWeight: '600',
+    },
+    sortButton: {
+        // Right-aligned tappable cluster: icon + current sort label.
+        // Tap opens the Alert.alert menu — known v1 shape; refine to a
+        // proper menu/bottom-sheet later (see journal).
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        paddingVertical: spacing.xs,
+    },
+    sortButtonText: {
+        fontWeight: '600',
     },
     listContent: {
         paddingHorizontal: spacing.base,
