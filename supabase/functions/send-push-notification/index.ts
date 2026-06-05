@@ -41,7 +41,9 @@ type NotificationKind =
     | 'rec_received'
     | 'rec_watched'
     | 'friend_request'
-    | 'friend_accepted';
+    | 'friend_accepted'
+    | 'rec_reacted'
+    | 'rec_commented';
 
 interface NotificationRow {
     id: string;
@@ -293,6 +295,61 @@ async function buildMessage(
                 data,
             };
         }
+        case 'rec_reacted': {
+            // payload.from_user_id is the reactor (other party to the
+            // rec). Title fetch is best-effort — if it fails we still
+            // push a useful message without the title.
+            const reactorId = stringField(notif.payload, 'from_user_id');
+            const emoji = stringField(notif.payload, 'emoji');
+            const tmdbId = numberField(notif.payload, 'tmdb_id');
+            const mediaType = stringField(notif.payload, 'media_type');
+            if (!reactorId || !emoji) return null;
+
+            const [reactorName, title] = await Promise.all([
+                fetchDisplayName(supabase, reactorId),
+                tmdbId !== null && mediaType
+                    ? fetchTmdbTitle(tmdbId, mediaType)
+                    : Promise.resolve(null),
+            ]);
+            if (!reactorName) return null;
+            return {
+                title: title
+                    ? `${reactorName} reacted ${emoji} to ${title}`
+                    : `${reactorName} reacted ${emoji} to your rec`,
+                data,
+            };
+        }
+        case 'rec_commented': {
+            // payload.from_user_id is the commenter. Pull the comment
+            // body for the push body field; truncate to keep the
+            // notification readable on the lock screen.
+            const commenterId = stringField(notif.payload, 'from_user_id');
+            const commentId = stringField(notif.payload, 'comment_id');
+            const tmdbId = numberField(notif.payload, 'tmdb_id');
+            const mediaType = stringField(notif.payload, 'media_type');
+            if (!commenterId || !commentId) return null;
+
+            const [commenterName, title, body] = await Promise.all([
+                fetchDisplayName(supabase, commenterId),
+                tmdbId !== null && mediaType
+                    ? fetchTmdbTitle(tmdbId, mediaType)
+                    : Promise.resolve(null),
+                fetchCommentBody(supabase, commentId),
+            ]);
+            if (!commenterName) return null;
+            const bodyPreview = body
+                ? body.length > 80
+                    ? `${body.slice(0, 80)}…`
+                    : body
+                : undefined;
+            return {
+                title: title
+                    ? `${commenterName} commented on ${title}`
+                    : `${commenterName} commented on your rec`,
+                body: bodyPreview,
+                data,
+            };
+        }
         default:
             return null;
     }
@@ -339,6 +396,20 @@ async function fetchRecNote(
     if (error) return null;
     const note = (data as { note?: string | null } | null)?.note;
     return typeof note === 'string' && note.length > 0 ? note : null;
+}
+
+async function fetchCommentBody(
+    supabase: SupabaseClient,
+    commentId: string,
+): Promise<string | null> {
+    const { data, error } = await supabase
+        .from('recommendation_comments')
+        .select('body')
+        .eq('id', commentId)
+        .maybeSingle();
+    if (error) return null;
+    const body = (data as { body?: string | null } | null)?.body;
+    return typeof body === 'string' && body.length > 0 ? body : null;
 }
 
 async function fetchTmdbTitle(

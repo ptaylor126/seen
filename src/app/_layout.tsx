@@ -123,6 +123,10 @@ function RootLayoutInner() {
                     name="person/[personId]"
                     options={{ presentation: 'modal' }}
                 />
+                <Stack.Screen
+                    name="rec/[recId]"
+                    options={{ presentation: 'modal' }}
+                />
             </Stack>
             {showLoading && (
                 <View style={[styles.loadingOverlay, { backgroundColor: palette.bg }]}>

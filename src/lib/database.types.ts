@@ -308,6 +308,84 @@ export type Database = {
           },
         ]
       }
+      recommendation_comments: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          recommendation_id: string
+          user_id: string | null
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          recommendation_id: string
+          user_id?: string | null
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          recommendation_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recommendation_comments_recommendation_id_fkey"
+            columns: ["recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "recommendations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendation_comments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recommendation_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          recommendation_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          recommendation_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          recommendation_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recommendation_reactions_recommendation_id_fkey"
+            columns: ["recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "recommendations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendation_reactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recommendations: {
         Row: {
           dismiss_reason: string | null
@@ -385,6 +463,7 @@ export type Database = {
       }
       generate_invite_token: { Args: never; Returns: string }
       is_friend_of_auth: { Args: { other_user: string }; Returns: boolean }
+      is_party_to_rec: { Args: { rec_id: string }; Returns: boolean }
       send_recommendation: {
         Args: {
           media_type: string

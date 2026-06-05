@@ -66,11 +66,38 @@ interface FriendAcceptedItem {
     friend: ProfileSummary;
 }
 
+interface RecReactedItem {
+    kind: 'notification_rec_reacted';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    reactor: ProfileSummary;
+    recId: string;
+    emoji: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+}
+
+interface RecCommentedItem {
+    kind: 'notification_rec_commented';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    commenter: ProfileSummary;
+    recId: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+}
+
 type InboxItem =
     | IncomingRecItem
     | FriendRequestItem
     | RecWatchedItem
-    | FriendAcceptedItem;
+    | FriendAcceptedItem
+    | RecReactedItem
+    | RecCommentedItem;
 
 const AVATAR_SIZE = 44;
 const NOTE_PREVIEW_CHARS = 120;
@@ -157,7 +184,12 @@ export default function InboxScreen() {
                         .from('notifications')
                         .select('id, kind, payload, created_at')
                         .eq('user_id', userId)
-                        .in('kind', ['rec_watched', 'friend_accepted'])
+                        .in('kind', [
+                            'rec_watched',
+                            'friend_accepted',
+                            'rec_reacted',
+                            'rec_commented',
+                        ])
                         .order('created_at', { ascending: false })
                         .limit(MAX_ITEMS),
                     supabase
@@ -190,6 +222,14 @@ export default function InboxScreen() {
                     const id = pickString(payload, 'to_user_id');
                     if (id) otherUserIds.add(id);
                 } else if (n.kind === 'friend_accepted') {
+                    const id = pickString(payload, 'from_user_id');
+                    if (id) otherUserIds.add(id);
+                } else if (
+                    n.kind === 'rec_reacted' ||
+                    n.kind === 'rec_commented'
+                ) {
+                    // Reactor / commenter is the other party on the
+                    // rec — payload.from_user_id per the trigger.
                     const id = pickString(payload, 'from_user_id');
                     if (id) otherUserIds.add(id);
                 }
@@ -228,7 +268,13 @@ export default function InboxScreen() {
                 titleKeys.add(`${r.media_type}:${r.tmdb_id}`);
             }
             for (const n of notifications) {
-                if (n.kind !== 'rec_watched') continue;
+                if (
+                    n.kind !== 'rec_watched' &&
+                    n.kind !== 'rec_reacted' &&
+                    n.kind !== 'rec_commented'
+                ) {
+                    continue;
+                }
                 const payload = asRecord(n.payload);
                 const mt = pickMediaType(payload, 'media_type');
                 const tid = pickNumber(payload, 'tmdb_id');
@@ -319,6 +365,54 @@ export default function InboxScreen() {
                         notificationId: n.id,
                         friend,
                     });
+                } else if (n.kind === 'rec_reacted') {
+                    const reactorId = pickString(payload, 'from_user_id');
+                    const reactor = reactorId
+                        ? profilesById.get(reactorId) ?? placeholderProfile
+                        : placeholderProfile;
+                    const recId = pickString(payload, 'recommendation_id');
+                    const emoji = pickString(payload, 'emoji') ?? '';
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (!recId) continue;
+                    inboxItems.push({
+                        kind: 'notification_rec_reacted',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        reactor,
+                        recId,
+                        emoji,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`) ?? null
+                                : null,
+                    });
+                } else if (n.kind === 'rec_commented') {
+                    const commenterId = pickString(payload, 'from_user_id');
+                    const commenter = commenterId
+                        ? profilesById.get(commenterId) ?? placeholderProfile
+                        : placeholderProfile;
+                    const recId = pickString(payload, 'recommendation_id');
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (!recId) continue;
+                    inboxItems.push({
+                        kind: 'notification_rec_commented',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        commenter,
+                        recId,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`) ?? null
+                                : null,
+                    });
                 }
             }
 
@@ -404,11 +498,7 @@ export default function InboxScreen() {
                 : item.note;
         return (
             <Pressable
-                onPress={() =>
-                    router.push(
-                        `/title/${item.mediaType}/${item.tmdbId}?fromRec=${item.recId}`,
-                    )
-                }
+                onPress={() => router.push(`/rec/${item.recId}`)}
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
                 <Avatar
@@ -593,6 +683,70 @@ export default function InboxScreen() {
         );
     }
 
+    function renderRecReacted(item: RecReactedItem) {
+        const title = item.titleName ?? 'your rec';
+        return (
+            <Pressable
+                onPress={() => router.push(`/rec/${item.recId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <Avatar
+                    avatarUrl={item.reactor.avatarUrl}
+                    displayName={item.reactor.displayName}
+                    seedId={item.reactor.userId}
+                    size={AVATAR_SIZE}
+                />
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text style={typography.bodyEmphasis}>
+                            {item.reactor.displayName}
+                        </Text>{' '}
+                        reacted {item.emoji} to{' '}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
+    function renderRecCommented(item: RecCommentedItem) {
+        const title = item.titleName ?? 'your rec';
+        return (
+            <Pressable
+                onPress={() => router.push(`/rec/${item.recId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <Avatar
+                    avatarUrl={item.commenter.avatarUrl}
+                    displayName={item.commenter.displayName}
+                    seedId={item.commenter.userId}
+                    size={AVATAR_SIZE}
+                />
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text style={typography.bodyEmphasis}>
+                            {item.commenter.displayName}
+                        </Text>{' '}
+                        commented on{' '}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRow({ item }: { item: InboxItem }) {
         switch (item.kind) {
             case 'incoming_rec':
@@ -603,6 +757,10 @@ export default function InboxScreen() {
                 return renderRecWatched(item);
             case 'notification_friend_accepted':
                 return renderFriendAccepted(item);
+            case 'notification_rec_reacted':
+                return renderRecReacted(item);
+            case 'notification_rec_commented':
+                return renderRecCommented(item);
         }
     }
 
