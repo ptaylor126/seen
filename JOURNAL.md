@@ -15,6 +15,7 @@ Cleanup items deferred from other work — not blocking, but don't lose track.
 - Library leak bug: items RLS is permissive (own + friends' public rows) by design. Any "just my stuff" query must filter user_id explicitly — never rely on RLS as the scoping filter.
 - Un-watching drifts the rec out of sync: when a user un-watches an item (Watched → Watching/Watchlist), the recommendation that prompted it stays at `status='watched'` and the sender's `rec_watched` notification has already fired — so the sender's view of "they watched my rec" can drift away from the recipient's actual state. Deferred: un-watching is rare, and resetting the rec touches the notification system (would we un-send the notification? mark the rec as `accepted` again silently?). Revisit if it matters.
 - Recommend "Send to" friend list (`src/app/title/[mediaType]/[tmdbId]/recommend.tsx`) uses a bespoke `renderAvatar` with a hardcoded `palette.accent` fill, bypassing the shared color-by-id `<Avatar>`. **Third place this pattern has appeared** (also Friends tab — previously fixed by replacing with the shared component). Sweep all bespoke avatar implementations onto the shared `<Avatar>` (seeded on `userId`) in one cleanup pass so every screen renders the same person in the same color.
+- `service_role` has no privileges on `public.*` tables. Supabase's newer project templates dropped the legacy auto-`GRANT ALL TO service_role` bootstrap, and our migrations only granted to `authenticated`. Worked around for the Letterboxd import with a temp grant + revoke (production privileges back to baseline now), but the `delete_account` Edge Function and any other planned service_role admin work will hit `42501`. Fix with a tracked migration when those land. See 2026-06-05 entry for the full finding.
 
 ---
 
@@ -24,6 +25,25 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 - Toggle-off replaced the re-tap-to-re-rate path on title detail. No way to change an existing rating now without removing and re-adding. Add a dedicated "edit rating" affordance — decide placement (tap stars / long-press / pencil) so it doesn't conflict with the toggle-off tap.
 - Splash fix (preventAutoHideAsync timing + imageWidth) committed but UNVERIFIED — only observable in a dev/EAS build, not Expo Go. Confirm it actually shows correctly next time a build is cut. Low priority.
+
+---
+
+## 2026-06-05
+
+**Done**
+- Library: search-within-library + media filter + sort. The Library search bar now filters the already-loaded rows by title substring in memory (instant, no round-trip — appropriate for the 600+-item library after the Letterboxd import). When the local query has zero matches, a `Search TMDB for "<query>" →` affordance pre-populates the shared `useSearchBar` state and slides the `SearchBarOverlay` in — adding from TMDB stays one tap away. Media filter (All / Movies / TV) and sort (Date watched / Date added / Rating) live in a new control row between the tabs and the body. Both refetch the items query server-side: `.eq('media_type', mediaFilter)` (skipped when 'all') and `.order(SORT_COLUMNS[sortBy], { ascending: false, nullsFirst: false })`. Per-tab default sort: Watchlist/Watching = Date added desc, Watched = Date watched desc; sort snaps back to the tab default on tab switch (avoids the "rating-desc on Watchlist sorts by NULL" trap). Also refreshed the stale `Tap + to add` empty-state copy that referenced the long-removed Plus icon.
+- Letterboxd import: ~760 films bulk-imported into my own library (one-off, personal data migration). Ad-hoc script lives in `~/letterboxd-import`, OUTSIDE this repo — deliberately not source-controlled because it's a single-user data migration tool, not app infrastructure. Most rows landed as `status='watched'` with a small set as `status='watchlist'`. Ratings doubled (Letterboxd's 0.5–5 half-star scale → `items.rating` 1–10 half-star scale). `watched_at` stamped from Letterboxd's `Watched Date` column so chronological "what did I watch when" survives the import. Direct REST insert via Supabase; `service_role` privileges noted under tech debt below.
+
+**Decisions worth remembering**
+- **`service_role` has no privileges on `public.*` by default in this project.** Supabase's newer project templates DON'T run the legacy `GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role` auto-bootstrap. Our migrations granted only to `authenticated` (`20260519102336_grant_authenticated_privileges_on_public_tables.sql`); `service_role` was implicitly assumed to be unrestricted (multiple migration comments anticipate "future Edge Function running as service_role writes here" without ever issuing the grant), but the assumption was never validated against the live project. This isn't a deliberate security posture — just an untested assumption inherited from older Supabase defaults. The same gap exists on every public table (profiles / friendships / friend_requests / recommendations / notifications / push_tokens / handle_history), not just items.
+
+**Tech debt / known edges (carry forward)**
+- Library sort menu uses `Alert.alert` as a v1 shape — functional but heavy for a benign sort pick. Refine to a proper inline menu or compact bottom-sheet later. Inline source comment on the `sortButton` style flags it.
+- Letterboxd auto-match picked wrong-version titles in a handful of cases: **Lion**, **Little**, **The Circle**, **Inside**, and the three **Mummy** films. Fix in-app by re-searching to the correct TMDB id and re-adding with the right metadata. Personal cleanup; not blocking, but the rating/watched_at on the wrong row is misleading until corrected.
+- `service_role` permission grants on `public.*` are missing (see Decisions above). Worked around for the Letterboxd import with a temp `GRANT SELECT, INSERT, UPDATE ON public.items TO service_role` + `REVOKE` after the import — production privileges are back to baseline. The planned `delete_account` Edge Function and any other server-side admin operation will hit the same `42501`; fix with a tracked migration when those are built (grant `service_role` what the design has always assumed across the relevant tables).
+
+**Feature ideas**
+- **Search by cast / crew (actors, directors)** — promised to tester Glenn. TMDB has `/search/person` and per-person filmography (`/person/{id}/movie_credits` / `/tv_credits`). "Saw a show with that guy" use case — type an actor's name, see their filmography, jump to the title. Real tester commitment, not just a wishlist. Plan when picked up: extend `tmdb-proxy` allowlist with the person paths, decide UI shape (toggle title/person modes inside the existing SearchBar overlay? Unified mixed-results sheet? Separate tab?) — worth a planning pass before building.
 
 ---
 
