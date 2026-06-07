@@ -6,6 +6,7 @@ import {
     ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     Pressable,
     ScrollView,
@@ -110,7 +111,26 @@ export default function RecScreen() {
     const [recipient, setRecipient] = useState<PartyProfile | null>(null);
     const [reactions, setReactions] = useState<ReactionRow[]>([]);
     const [comments, setComments] = useState<CommentRow[]>([]);
+    // commentReactions: comment_id → reactions on that comment.
+    // Stored as a Map so per-comment lookups in the render path are O(1).
+    const [commentReactions, setCommentReactions] = useState<
+        Map<string, ReactionRow[]>
+    >(new Map());
     const [reactionBusy, setReactionBusy] = useState(false);
+    // Tracks which comment's reaction write is in flight so we only
+    // disable that comment's picker, not every comment's.
+    const [commentReactionBusy, setCommentReactionBusy] = useState<
+        string | null
+    >(null);
+    // Long-press popover anchored at the touch point of the comment
+    // the user pressed. `anchorY` is from the long-press event's
+    // nativeEvent.pageY (screen Y); `isOwn` controls whether the
+    // actions menu appears below the emoji row.
+    const [commentMenuFor, setCommentMenuFor] = useState<{
+        commentId: string;
+        anchorY: number;
+        isOwn: boolean;
+    } | null>(null);
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
     const scrollRef = useRef<ScrollView | null>(null);
@@ -289,6 +309,30 @@ export default function RecScreen() {
             }));
             setComments(resolvedComments);
 
+            // Comment reactions: one round-trip after comments resolve
+            // because we need the comment ids to filter. RLS gates by
+            // is_party_to_comment so the .in() is the only narrowing
+            // we actually need (party scope is enforced server-side),
+            // but filtering explicitly avoids pulling reactions on
+            // unrelated recs through a single round-trip.
+            const commentIds = resolvedComments.map((c) => c.id);
+            const commentReactionsMap = new Map<string, ReactionRow[]>();
+            if (commentIds.length > 0) {
+                const { data: cReactionRows, error: cReactionsError } =
+                    await supabase
+                        .from('recommendation_comment_reactions')
+                        .select('comment_id, user_id, emoji')
+                        .in('comment_id', commentIds);
+                if (cReactionsError) throw cReactionsError;
+                for (const r of cReactionRows ?? []) {
+                    if (!r.user_id || !isReactionEmoji(r.emoji)) continue;
+                    const list = commentReactionsMap.get(r.comment_id) ?? [];
+                    list.push({ userId: r.user_id, emoji: r.emoji });
+                    commentReactionsMap.set(r.comment_id, list);
+                }
+            }
+            setCommentReactions(commentReactionsMap);
+
             setTitleMeta(titleResult);
         } catch (err) {
             console.error('rec detail load failed:', err);
@@ -315,9 +359,14 @@ export default function RecScreen() {
         if (otherReaction.userId === rec.toUserId) return recipient;
         return null;
     })();
+    // Only the recipient can write a reaction (RLS in
+    // 20260607120000_restrict_rec_reactions_writes_to_recipient enforces
+    // the same rule server-side). The sender still sees the full row +
+    // the recipient's caption underneath, but the picker cells are inert.
+    const isRecipient = !!myUserId && !!rec && myUserId === rec.toUserId;
 
     async function handleReactionTap(emoji: ReactionEmoji) {
-        if (!myUserId || !rec || reactionBusy) return;
+        if (!myUserId || !rec || reactionBusy || !isRecipient) return;
         setReactionBusy(true);
         try {
             if (myReaction === emoji) {
@@ -362,6 +411,77 @@ export default function RecScreen() {
             );
         } finally {
             setReactionBusy(false);
+        }
+    }
+
+    // Mirrors handleReactionTap one layer down. Same delete-on-active /
+    // upsert-on-change/add semantics. Per-comment busy flag so the rest
+    // of the thread stays interactive while one comment's write is in
+    // flight. Server-side RLS gates this on is_party_to_comment, so a
+    // non-party tap would surface here as a write error — we don't
+    // pre-gate on a sender flag the way the rec-level picker does,
+    // because both parties can react to comments.
+    async function handleCommentReactionTap(
+        commentId: string,
+        emoji: ReactionEmoji,
+    ) {
+        if (!myUserId || !rec || commentReactionBusy) return;
+        setCommentReactionBusy(commentId);
+        try {
+            const list = commentReactions.get(commentId) ?? [];
+            const myCurrent =
+                list.find((r) => r.userId === myUserId)?.emoji ?? null;
+            if (myCurrent === emoji) {
+                const { error: delErr } = await supabase
+                    .from('recommendation_comment_reactions')
+                    .delete()
+                    .eq('comment_id', commentId)
+                    .eq('user_id', myUserId);
+                if (delErr) throw delErr;
+                setCommentReactions((prev) => {
+                    const next = new Map(prev);
+                    const withoutMine = (next.get(commentId) ?? []).filter(
+                        (r) => r.userId !== myUserId,
+                    );
+                    if (withoutMine.length > 0) {
+                        next.set(commentId, withoutMine);
+                    } else {
+                        next.delete(commentId);
+                    }
+                    return next;
+                });
+            } else {
+                const { error: upsertErr } = await supabase
+                    .from('recommendation_comment_reactions')
+                    .upsert(
+                        {
+                            comment_id: commentId,
+                            user_id: myUserId,
+                            emoji,
+                        },
+                        { onConflict: 'comment_id,user_id' },
+                    );
+                if (upsertErr) throw upsertErr;
+                setCommentReactions((prev) => {
+                    const next = new Map(prev);
+                    const withoutMine = (next.get(commentId) ?? []).filter(
+                        (r) => r.userId !== myUserId,
+                    );
+                    next.set(commentId, [
+                        ...withoutMine,
+                        { userId: myUserId, emoji },
+                    ]);
+                    return next;
+                });
+            }
+        } catch (err) {
+            console.error('comment reaction update failed:', err);
+            Alert.alert(
+                "Couldn't react",
+                err instanceof Error ? err.message : 'Unknown error',
+            );
+        } finally {
+            setCommentReactionBusy(null);
         }
     }
 
@@ -662,18 +782,26 @@ export default function RecScreen() {
                                 <Pressable
                                     key={emoji}
                                     onPress={() => handleReactionTap(emoji)}
-                                    disabled={reactionBusy}
+                                    disabled={reactionBusy || !isRecipient}
                                     accessibilityRole="button"
                                     accessibilityLabel={`React with ${emoji}`}
-                                    accessibilityState={{ selected: isActive }}
+                                    accessibilityState={{
+                                        selected: isActive,
+                                        disabled: !isRecipient,
+                                    }}
                                     style={({ pressed }) => [
                                         styles.reactionCell,
                                         {
                                             backgroundColor: isActive
                                                 ? palette.accent
                                                 : palette.surfaceAlt,
-                                            opacity:
-                                                pressed || reactionBusy
+                                            // Read-only for the sender: dim the
+                                            // whole picker so the inertness is
+                                            // visible, distinct from the active
+                                            // accent on the recipient's pick.
+                                            opacity: !isRecipient
+                                                ? 0.4
+                                                : pressed || reactionBusy
                                                     ? 0.6
                                                     : 1,
                                         },
@@ -743,13 +871,23 @@ export default function RecScreen() {
                                 const isMine = c.userId === myUserId;
                                 const authorName =
                                     c.author?.displayName ?? 'Deleted user';
+                                // Full reaction list for this comment —
+                                // rendered as a persistent badge under the
+                                // body, one chip per (user, emoji). Tap
+                                // semantics live in the long-press popover;
+                                // the badge is display-only.
+                                const cReactionList =
+                                    commentReactions.get(c.id) ?? [];
                                 return (
                                     <Pressable
                                         key={c.id}
-                                        onLongPress={() =>
-                                            isMine
-                                                ? handleDeleteComment(c.id)
-                                                : undefined
+                                        onLongPress={(e) =>
+                                            setCommentMenuFor({
+                                                commentId: c.id,
+                                                anchorY:
+                                                    e.nativeEvent.pageY,
+                                                isOwn: isMine,
+                                            })
                                         }
                                         style={styles.commentRow}
                                     >
@@ -799,17 +937,40 @@ export default function RecScreen() {
                                             >
                                                 {c.body}
                                             </Text>
-                                            {isMine ? (
-                                                <Text
-                                                    style={[
-                                                        typography.micro,
-                                                        {
-                                                            color: palette.textMuted,
-                                                        },
-                                                    ]}
+                                            {cReactionList.length > 0 ? (
+                                                <View
+                                                    style={
+                                                        styles.commentReactionsBadge
+                                                    }
                                                 >
-                                                    Long-press to delete
-                                                </Text>
+                                                    {cReactionList.map((r) => {
+                                                        const mine =
+                                                            r.userId ===
+                                                            myUserId;
+                                                        return (
+                                                            <View
+                                                                key={r.userId}
+                                                                style={[
+                                                                    styles.commentReactionChip,
+                                                                    {
+                                                                        backgroundColor:
+                                                                            mine
+                                                                                ? palette.accent
+                                                                                : palette.surfaceAlt,
+                                                                    },
+                                                                ]}
+                                                            >
+                                                                <Text
+                                                                    style={
+                                                                        styles.commentReactionChipEmoji
+                                                                    }
+                                                                >
+                                                                    {r.emoji}
+                                                                </Text>
+                                                            </View>
+                                                        );
+                                                    })}
+                                                </View>
                                             ) : null}
                                         </View>
                                     </Pressable>
@@ -882,6 +1043,132 @@ export default function RecScreen() {
                     </Pressable>
                 </View>
             </KeyboardAvoidingView>
+            {/* Long-press popover for comment reactions + per-comment
+                actions. Lean version: no full-screen dim, no spring
+                animation, no haptics. The backdrop Pressable is a
+                sibling of the popover (NOT a parent) so taps on the
+                popover's emoji / action Pressables capture first; taps
+                outside the popover land on the backdrop and dismiss. */}
+            <Modal
+                transparent
+                visible={!!commentMenuFor}
+                animationType="none"
+                onRequestClose={() => setCommentMenuFor(null)}
+            >
+                <Pressable
+                    style={StyleSheet.absoluteFillObject}
+                    onPress={() => setCommentMenuFor(null)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close menu"
+                />
+                {commentMenuFor ? (
+                    <View
+                        pointerEvents="box-none"
+                        style={[
+                            styles.commentMenuContainer,
+                            { top: commentMenuFor.anchorY },
+                        ]}
+                    >
+                        <View
+                            style={[
+                                styles.commentMenu,
+                                {
+                                    backgroundColor: palette.surface,
+                                    borderColor: palette.border,
+                                },
+                            ]}
+                        >
+                            <View style={styles.commentMenuEmojiRow}>
+                                {REACTION_EMOJIS.map((emoji) => (
+                                    <Pressable
+                                        key={emoji}
+                                        onPress={() => {
+                                            const cid =
+                                                commentMenuFor.commentId;
+                                            setCommentMenuFor(null);
+                                            void handleCommentReactionTap(
+                                                cid,
+                                                emoji,
+                                            );
+                                        }}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`React with ${emoji}`}
+                                        style={({ pressed }) => [
+                                            styles.commentMenuEmojiCell,
+                                            {
+                                                backgroundColor:
+                                                    palette.surfaceAlt,
+                                                opacity: pressed ? 0.6 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Text style={styles.reactionEmoji}>
+                                            {emoji}
+                                        </Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+                            {/* Actions menu — only for own comments. Built
+                                as a mapped array so adding Edit (or any
+                                future item) is one line, not a refactor.
+                                Each item dismisses the popover before
+                                calling its handler so any follow-up
+                                dialog (Alert) lands on a clean screen. */}
+                            {commentMenuFor.isOwn ? (
+                                <View
+                                    style={[
+                                        styles.commentMenuActions,
+                                        { borderTopColor: palette.border },
+                                    ]}
+                                >
+                                    {(
+                                        [
+                                            {
+                                                label: 'Delete',
+                                                destructive: true,
+                                                onPress: () => {
+                                                    const cid =
+                                                        commentMenuFor.commentId;
+                                                    setCommentMenuFor(null);
+                                                    handleDeleteComment(cid);
+                                                },
+                                            },
+                                        ] as Array<{
+                                            label: string;
+                                            destructive?: boolean;
+                                            onPress: () => void;
+                                        }>
+                                    ).map((action) => (
+                                        <Pressable
+                                            key={action.label}
+                                            onPress={action.onPress}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={action.label}
+                                            style={({ pressed }) => [
+                                                styles.commentMenuActionItem,
+                                                { opacity: pressed ? 0.6 : 1 },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    typography.body,
+                                                    {
+                                                        color: action.destructive
+                                                            ? palette.error
+                                                            : palette.text,
+                                                    },
+                                                ]}
+                                            >
+                                                {action.label}
+                                            </Text>
+                                        </Pressable>
+                                    ))}
+                                </View>
+                            ) : null}
+                        </View>
+                    </View>
+                ) : null}
+            </Modal>
         </View>
     );
 }
@@ -1011,5 +1298,66 @@ const styles = StyleSheet.create({
         borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    // Container spans the full width at the anchored Y so its child
+    // popover can self-center horizontally. pointerEvents='box-none' on
+    // the container lets backdrop taps fall through any empty space
+    // around the popover sheet itself.
+    commentMenuContainer: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        paddingHorizontal: spacing.base,
+    },
+    commentMenu: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: radius.md,
+        paddingVertical: spacing.sm,
+        minWidth: 240,
+        maxWidth: 320,
+    },
+    commentMenuEmojiRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        paddingHorizontal: spacing.sm,
+    },
+    commentMenuEmojiCell: {
+        width: REACTION_PICKER_SIZE,
+        height: REACTION_PICKER_SIZE,
+        borderRadius: radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    commentMenuActions: {
+        marginTop: spacing.sm,
+        paddingTop: spacing.sm,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    commentMenuActionItem: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+    },
+    // Resting-state badge under each comment body. `commentText` has
+    // gap: spacing.xs between siblings, so no marginTop here. flexWrap
+    // so a future widening of the emoji set or multi-party threads
+    // can grow vertically without overflowing the row.
+    commentReactionsBadge: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+    },
+    commentReactionChip: {
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+        minHeight: 22,
+        minWidth: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    commentReactionChipEmoji: {
+        fontSize: 14,
+        lineHeight: 16,
     },
 });

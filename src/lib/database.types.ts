@@ -308,6 +308,45 @@ export type Database = {
           },
         ]
       }
+      recommendation_comment_reactions: {
+        Row: {
+          comment_id: string
+          created_at: string
+          emoji: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          comment_id: string
+          created_at?: string
+          emoji: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          comment_id?: string
+          created_at?: string
+          emoji?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recommendation_comment_reactions_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "recommendation_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendation_comment_reactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recommendation_comments: {
         Row: {
           body: string
@@ -463,7 +502,9 @@ export type Database = {
       }
       generate_invite_token: { Args: never; Returns: string }
       is_friend_of_auth: { Args: { other_user: string }; Returns: boolean }
+      is_party_to_comment: { Args: { comment_id: string }; Returns: boolean }
       is_party_to_rec: { Args: { rec_id: string }; Returns: boolean }
+      is_recipient_of_rec: { Args: { rec_id: string }; Returns: boolean }
       send_recommendation: {
         Args: {
           media_type: string
