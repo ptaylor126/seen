@@ -15,8 +15,9 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
@@ -57,6 +58,12 @@ export default function RecommendScreen() {
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
+    const insets = useSafeAreaInsets();
+    // Bottom bar floats above the keyboard via the KeyboardAvoidingView,
+    // but we still toggle its own paddingBottom on open/close so the
+    // home-indicator inset doesn't leave a 34px gap above the keyboard
+    // when it rises.
+    const keyboard = useKeyboard();
 
     const mediaType: MediaType | null =
         params.mediaType === 'movie' || params.mediaType === 'tv'
@@ -391,25 +398,16 @@ export default function RecommendScreen() {
                 <Text style={[typography.heading, { color: palette.text }]}>
                     Recommend
                 </Text>
-                <Pressable
-                    onPress={handleSend}
-                    disabled={!canSend}
-                    hitSlop={spacing.sm}
-                    style={({ pressed }) => [
-                        pressed && { opacity: 0.6 },
-                        !canSend && { opacity: 0.4 },
-                    ]}
-                >
-                    {sending ? (
-                        <ActivityIndicator color={palette.accent} />
-                    ) : (
-                        <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
-                            {selectedCount > 1
-                                ? `Send (${selectedCount})`
-                                : 'Send'}
-                        </Text>
-                    )}
-                </Pressable>
+                {/* Invisible spacer to preserve the title's centering
+                    inside the space-between header. Width matches the
+                    Cancel text's optical width closely enough for the
+                    title to stay centered without a manual measurement.
+                    Send used to live here and moved to the bottom bar. */}
+                <View
+                    style={styles.headerSpacer}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                />
             </View>
 
             <KeyboardAvoidingView
@@ -418,6 +416,7 @@ export default function RecommendScreen() {
                 keyboardVerticalOffset={0}
             >
                 <ScrollView
+                    style={styles.flex}
                     keyboardShouldPersistTaps="handled"
                     contentContainerStyle={styles.scrollContent}
                 >
@@ -489,54 +488,110 @@ export default function RecommendScreen() {
                             <View style={styles.friendList}>
                                 {friends.map(renderFriendRow)}
                             </View>
-
-                            <Text
-                                style={[
-                                    typography.micro,
-                                    styles.sectionLabel,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                ADD A NOTE (OPTIONAL)
-                            </Text>
-                            <View
-                                style={[
-                                    styles.noteBox,
-                                    {
-                                        backgroundColor: palette.surface,
-                                        borderColor: palette.border,
-                                    },
-                                ]}
-                            >
-                                <TextInput
-                                    value={note}
-                                    onChangeText={(v) =>
-                                        setNote(v.slice(0, NOTE_MAX_LENGTH))
-                                    }
-                                    placeholder="What did you love about it?"
-                                    placeholderTextColor={palette.textMuted}
-                                    multiline
-                                    maxLength={NOTE_MAX_LENGTH}
-                                    editable={!sending}
-                                    style={[
-                                        styles.noteInput,
-                                        typography.body,
-                                        { color: palette.text },
-                                    ]}
-                                />
-                            </View>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    styles.charCount,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {note.length}/{NOTE_MAX_LENGTH}
-                            </Text>
                         </>
                     )}
                 </ScrollView>
+
+                {/* Pinned bottom bar: note input + send button. Stays
+                    visible regardless of friend-list scroll position so
+                    the note is never below the fold. paddingBottom drops
+                    the home-indicator inset when the keyboard rises so
+                    the bar sits flush against the keyboard top. */}
+                {!loading && !error && friends.length > 0 ? (
+                    <View
+                        style={[
+                            styles.bottomBar,
+                            {
+                                backgroundColor: palette.bg,
+                                borderTopColor: palette.border,
+                                paddingBottom: keyboard.open
+                                    ? spacing.sm
+                                    : insets.bottom + spacing.sm,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.micro,
+                                styles.bottomBarLabel,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            ADD A NOTE (OPTIONAL)
+                        </Text>
+                        <View
+                            style={[
+                                styles.noteBox,
+                                {
+                                    backgroundColor: palette.surface,
+                                    borderColor: palette.border,
+                                },
+                            ]}
+                        >
+                            <TextInput
+                                value={note}
+                                onChangeText={(v) =>
+                                    setNote(v.slice(0, NOTE_MAX_LENGTH))
+                                }
+                                placeholder="Why are you recommending this?"
+                                placeholderTextColor={palette.textMuted}
+                                multiline
+                                maxLength={NOTE_MAX_LENGTH}
+                                editable={!sending}
+                                style={[
+                                    styles.noteInput,
+                                    typography.body,
+                                    { color: palette.text },
+                                ]}
+                            />
+                        </View>
+                        <Text
+                            style={[
+                                typography.caption,
+                                styles.charCount,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            {note.length}/{NOTE_MAX_LENGTH}
+                        </Text>
+                        <Pressable
+                            onPress={handleSend}
+                            disabled={!canSend}
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                                selectedCount === 0
+                                    ? 'Send'
+                                    : `Send to ${selectedCount}`
+                            }
+                            style={({ pressed }) => [
+                                styles.sendButton,
+                                {
+                                    backgroundColor: palette.accent,
+                                    opacity: !canSend
+                                        ? 0.4
+                                        : pressed
+                                            ? 0.6
+                                            : 1,
+                                },
+                            ]}
+                        >
+                            {sending ? (
+                                <ActivityIndicator color={palette.textInverse} />
+                            ) : (
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textInverse },
+                                    ]}
+                                >
+                                    {selectedCount === 0
+                                        ? 'Send'
+                                        : `Send to ${selectedCount}`}
+                                </Text>
+                            )}
+                        </Pressable>
+                    </View>
+                ) : null}
             </KeyboardAvoidingView>
         </SafeAreaView>
     );
@@ -580,6 +635,13 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingBottom: spacing.xl,
+    },
+    // Roughly matches the optical width of the "Cancel" text in the
+    // header so the centered title stays centered under
+    // justifyContent: 'space-between'. Tweak if the Cancel label ever
+    // changes length.
+    headerSpacer: {
+        width: 60,
     },
     titleContext: {
         flexDirection: 'row',
@@ -642,20 +704,38 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     noteBox: {
-        marginHorizontal: spacing.lg,
         borderRadius: radius.sm,
         borderWidth: 1,
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
-        minHeight: 100,
+        minHeight: 80,
     },
     noteInput: {
-        minHeight: 80,
+        minHeight: 60,
         textAlignVertical: 'top',
     },
     charCount: {
         textAlign: 'right',
-        paddingHorizontal: spacing.lg,
         marginTop: spacing.xs,
+    },
+    // Pinned-bottom container. Top border separates it from the
+    // scrolling friend list above. Horizontal padding matches the
+    // modal's lg inset so the note box and send button edge-align with
+    // the friend list above.
+    bottomBar: {
+        paddingHorizontal: spacing.lg,
+        paddingTop: spacing.md,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    bottomBarLabel: {
+        marginBottom: spacing.sm,
+        letterSpacing: 0.5,
+    },
+    sendButton: {
+        marginTop: spacing.md,
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });
