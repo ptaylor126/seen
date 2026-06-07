@@ -84,8 +84,9 @@ interface RecContext {
 // across friends with a non-null rating. Watchlist entries are
 // intentionally excluded — the section is about engagement, not intent,
 // and including watchlist would make it noisy without adding signal.
-// Privacy is enforced by RLS (`is_private = false` for non-self rows),
-// AND we filter is_private explicitly client-side as defence in depth.
+// Privacy is enforced by RLS (`visibility = 'friends'` for non-self
+// rows), AND we filter visibility explicitly client-side as defence
+// in depth.
 interface FriendActivity {
     watchers: AvatarStackItem[];
     // Mean of stored 1-10 values across rating-bearing friends. Convert
@@ -318,9 +319,9 @@ export default function TitleDetailScreen() {
                     }
                 }
 
-                // Friend activity: pull every non-private items row for
-                // this title that isn't mine. RLS scopes the result to
-                // friends only; the explicit is_private filter is
+                // Friend activity: pull every friends-visible items row
+                // for this title that isn't mine. RLS scopes the result
+                // to friends only; the explicit visibility filter is
                 // defence-in-depth. Failure is silent — the social block
                 // simply hides.
                 if (userId) {
@@ -329,7 +330,7 @@ export default function TitleDetailScreen() {
                         .select('user_id, status, rating')
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
-                        .eq('is_private', false)
+                        .eq('visibility', 'friends')
                         .neq('user_id', userId);
                     if (friendErr) {
                         console.warn('friend activity fetch failed:', friendErr);

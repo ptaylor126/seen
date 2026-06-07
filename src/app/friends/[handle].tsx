@@ -245,7 +245,7 @@ export default function FriendDetailScreen() {
     );
 
     // ---- Phase 2: fetch items for the active tab (only when friends).
-    // is_private is filtered both client-side (explicit) and by RLS
+    // visibility is filtered both client-side (explicit) and by RLS
     // (defence in depth); RLS is the authoritative check.
     useEffect(() => {
         if (state.kind !== 'friends') return;
@@ -259,7 +259,7 @@ export default function FriendDetailScreen() {
                     .select('id, tmdb_id, media_type, rating, watched_at, updated_at')
                     .eq('user_id', state.profile.id)
                     .eq('status', activeTab)
-                    .eq('is_private', false)
+                    .eq('visibility', 'friends')
                     .order('updated_at', { ascending: false })
                     .limit(100);
                 if (!active) return;

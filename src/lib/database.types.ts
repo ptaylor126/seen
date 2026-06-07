@@ -159,37 +159,37 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          is_private: boolean
           media_type: string
           rating: number | null
           status: string
           tmdb_id: number
           updated_at: string
           user_id: string
+          visibility: string
           watched_at: string | null
         }
         Insert: {
           created_at?: string
           id?: string
-          is_private?: boolean
           media_type: string
           rating?: number | null
           status: string
           tmdb_id: number
           updated_at?: string
           user_id: string
+          visibility?: string
           watched_at?: string | null
         }
         Update: {
           created_at?: string
           id?: string
-          is_private?: boolean
           media_type?: string
           rating?: number | null
           status?: string
           tmdb_id?: number
           updated_at?: string
           user_id?: string
+          visibility?: string
           watched_at?: string | null
         }
         Relationships: [
@@ -485,6 +485,44 @@ export type Database = {
           },
         ]
       }
+      reviews: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          media_type: string
+          tmdb_id: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          media_type: string
+          tmdb_id: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          tmdb_id?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reviews_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -502,6 +540,10 @@ export type Database = {
       }
       generate_invite_token: { Args: never; Returns: string }
       is_friend_of_auth: { Args: { other_user: string }; Returns: boolean }
+      is_item_visible_to_auth: {
+        Args: { item_user_id: string; item_visibility: string }
+        Returns: boolean
+      }
       is_party_to_comment: { Args: { comment_id: string }; Returns: boolean }
       is_party_to_rec: { Args: { rec_id: string }; Returns: boolean }
       is_recipient_of_rec: { Args: { rec_id: string }; Returns: boolean }
