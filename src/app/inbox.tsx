@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
@@ -15,7 +16,7 @@ import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV } from '@/lib/tmdb';
+import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 type MediaType = 'movie' | 'tv';
@@ -99,7 +100,34 @@ type InboxItem =
     | RecReactedItem
     | RecCommentedItem;
 
+// Sent recs are NOT unioned into InboxItem — different render path, no
+// notification semantics, no badge effects. Multi-recipient sends create
+// one recommendations row per recipient, which surfaces here as one row
+// per recipient by design (no grouping by title).
+interface SentRecItem {
+    id: string;
+    sentAt: string;
+    recId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    titleName: string | null;
+    posterPath: string | null;
+    recipient: ProfileSummary;
+}
+
+// titleByKey holds title + poster path so Sent rows can render a poster
+// thumbnail. Received call sites only read .title — they're updated in
+// place to use .title ?? null.
+interface TitleMeta {
+    title: string;
+    posterPath: string | null;
+}
+
+type InboxView = 'received' | 'sent';
+
 const AVATAR_SIZE = 44;
+const SENT_POSTER_WIDTH = 56;
+const SENT_POSTER_HEIGHT = 84;
 const NOTE_PREVIEW_CHARS = 120;
 const MAX_ITEMS = 50;
 
@@ -148,6 +176,8 @@ export default function InboxScreen() {
     const router = useRouter();
 
     const [items, setItems] = useState<InboxItem[]>([]);
+    const [sentItems, setSentItems] = useState<SentRecItem[]>([]);
+    const [view, setView] = useState<InboxView>('received');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState<string | null>(null);
@@ -162,59 +192,86 @@ export default function InboxScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            // Three sources, in parallel. Mark notifications read at the
-            // same time so the bell badge drops the moment the user opens
-            // this screen (tabs refetch on focus and pick up the change).
-            const [recsResult, requestsResult, notificationsResult, _markReadResult] =
-                await Promise.all([
-                    supabase
-                        .from('recommendations')
-                        .select('id, from_user_id, tmdb_id, media_type, note, sent_at')
-                        .eq('to_user_id', userId)
-                        .eq('status', 'pending')
-                        .order('sent_at', { ascending: false })
-                        .limit(MAX_ITEMS),
-                    supabase
-                        .from('friend_requests')
-                        .select('id, from_user_id, created_at')
-                        .eq('to_user_id', userId)
-                        .order('created_at', { ascending: false })
-                        .limit(MAX_ITEMS),
-                    supabase
-                        .from('notifications')
-                        .select('id, kind, payload, created_at')
-                        .eq('user_id', userId)
-                        .in('kind', [
-                            'rec_watched',
-                            'friend_accepted',
-                            'rec_reacted',
-                            'rec_commented',
-                        ])
-                        .order('created_at', { ascending: false })
-                        .limit(MAX_ITEMS),
-                    supabase
-                        .from('notifications')
-                        .update({ read_at: new Date().toISOString() })
-                        .eq('user_id', userId)
-                        .is('read_at', null),
-                ]);
+            // Four read sources + one notifications-read sweep, in
+            // parallel. The Sent query is unconditional even when the
+            // toggle is on Received so flipping to Sent is instant; the
+            // network cost is one extra small query + any new title /
+            // recipient lookups, which fold into the existing batches.
+            // Mark notifications read at the same time so the bell badge
+            // drops the moment the user opens this screen (tabs refetch
+            // on focus and pick up the change).
+            const [
+                recsResult,
+                requestsResult,
+                notificationsResult,
+                sentRecsResult,
+                _markReadResult,
+            ] = await Promise.all([
+                supabase
+                    .from('recommendations')
+                    .select('id, from_user_id, tmdb_id, media_type, note, sent_at')
+                    .eq('to_user_id', userId)
+                    .eq('status', 'pending')
+                    .order('sent_at', { ascending: false })
+                    .limit(MAX_ITEMS),
+                supabase
+                    .from('friend_requests')
+                    .select('id, from_user_id, created_at')
+                    .eq('to_user_id', userId)
+                    .order('created_at', { ascending: false })
+                    .limit(MAX_ITEMS),
+                supabase
+                    .from('notifications')
+                    .select('id, kind, payload, created_at')
+                    .eq('user_id', userId)
+                    .in('kind', [
+                        'rec_watched',
+                        'friend_accepted',
+                        'rec_reacted',
+                        'rec_commented',
+                    ])
+                    .order('created_at', { ascending: false })
+                    .limit(MAX_ITEMS),
+                // Sent recs — no status filter; one row per (title, recipient)
+                // by construction, which is the desired "one line per recipient"
+                // semantic. Recipient profile + title meta hydrate via the
+                // existing shared batches below.
+                supabase
+                    .from('recommendations')
+                    .select('id, to_user_id, tmdb_id, media_type, sent_at')
+                    .eq('from_user_id', userId)
+                    .order('sent_at', { ascending: false })
+                    .limit(MAX_ITEMS),
+                supabase
+                    .from('notifications')
+                    .update({ read_at: new Date().toISOString() })
+                    .eq('user_id', userId)
+                    .is('read_at', null),
+            ]);
 
             if (recsResult.error) throw recsResult.error;
             if (requestsResult.error) throw requestsResult.error;
             if (notificationsResult.error) throw notificationsResult.error;
+            if (sentRecsResult.error) throw sentRecsResult.error;
 
             const recs = recsResult.data ?? [];
             const requests = requestsResult.data ?? [];
             const notifications = notificationsResult.data ?? [];
+            const sentRecs = sentRecsResult.data ?? [];
 
-            // Collect every other-party userId across the three sources
-            // and batch the profile lookup into one query.
+            // Collect every other-party userId across all sources
+            // (including Sent recipients) and batch the profile lookup
+            // into one query. Sent recipients land in profilesById right
+            // alongside Received senders for free.
             const otherUserIds = new Set<string>();
             for (const r of recs) {
                 if (r.from_user_id) otherUserIds.add(r.from_user_id);
             }
             for (const r of requests) {
                 otherUserIds.add(r.from_user_id);
+            }
+            for (const r of sentRecs) {
+                otherUserIds.add(r.to_user_id);
             }
             for (const n of notifications) {
                 const payload = asRecord(n.payload);
@@ -259,12 +316,17 @@ export default function InboxScreen() {
                 avatarUrl: null,
             };
 
-            // TMDB title fetches for incoming recs + rec_watched
-            // notifications, in parallel via Promise.allSettled so one
-            // failure doesn't break the whole inbox.
+            // TMDB title + poster fetches for incoming recs, sent recs,
+            // and title-bearing notifications, in parallel via
+            // Promise.allSettled so one failure doesn't break the whole
+            // inbox. Sent rows need posterPath; Received rows only read
+            // .title — both flow through the same shared cache.
             type TitleKey = string; // `${mediaType}:${tmdbId}`
             const titleKeys = new Set<TitleKey>();
             for (const r of recs) {
+                titleKeys.add(`${r.media_type}:${r.tmdb_id}`);
+            }
+            for (const r of sentRecs) {
                 titleKeys.add(`${r.media_type}:${r.tmdb_id}`);
             }
             for (const n of notifications) {
@@ -281,17 +343,21 @@ export default function InboxScreen() {
                 if (mt && tid) titleKeys.add(`${mt}:${tid}`);
             }
 
-            const titleByKey = new Map<TitleKey, string>();
+            const titleByKey = new Map<TitleKey, TitleMeta>();
             if (titleKeys.size > 0) {
                 const keys = Array.from(titleKeys);
                 const results = await Promise.allSettled(
-                    keys.map(async (key) => {
+                    keys.map(async (key): Promise<TitleMeta | null> => {
                         const [mt, tidStr] = key.split(':');
                         const tid = Number.parseInt(tidStr ?? '', 10);
                         if (!Number.isFinite(tid)) return null;
                         const data =
                             mt === 'movie' ? await getMovie(tid) : await getTV(tid);
-                        return 'title' in data ? data.title : data.name;
+                        return {
+                            title:
+                                'title' in data ? data.title : data.name,
+                            posterPath: data.poster_path,
+                        };
                     }),
                 );
                 results.forEach((res, i) => {
@@ -318,7 +384,9 @@ export default function InboxScreen() {
                     mediaType: r.media_type as MediaType,
                     note: r.note,
                     sender,
-                    titleName: titleByKey.get(`${r.media_type}:${r.tmdb_id}`) ?? null,
+                    titleName:
+                        titleByKey.get(`${r.media_type}:${r.tmdb_id}`)?.title ??
+                        null,
                 });
             }
 
@@ -351,7 +419,9 @@ export default function InboxScreen() {
                         tmdbId: tid,
                         mediaType: mt,
                         titleName:
-                            mt && tid ? titleByKey.get(`${mt}:${tid}`) ?? null : null,
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
+                                : null,
                     });
                 } else if (n.kind === 'friend_accepted') {
                     const friendId = pickString(payload, 'from_user_id');
@@ -387,7 +457,7 @@ export default function InboxScreen() {
                         mediaType: mt,
                         titleName:
                             mt && tid
-                                ? titleByKey.get(`${mt}:${tid}`) ?? null
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
                     });
                 } else if (n.kind === 'rec_commented') {
@@ -410,7 +480,7 @@ export default function InboxScreen() {
                         mediaType: mt,
                         titleName:
                             mt && tid
-                                ? titleByKey.get(`${mt}:${tid}`) ?? null
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
                     });
                 }
@@ -418,6 +488,33 @@ export default function InboxScreen() {
 
             inboxItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
             setItems(inboxItems.slice(0, MAX_ITEMS));
+
+            // Sent items. Query is already ordered newest-first, so a
+            // second sort is redundant — but keep it defensive in case
+            // recipient hydration ever reshuffles. Recipient profile is
+            // ALWAYS resolvable for sent rows: to_user_id is non-null
+            // per schema, and friends are RLS-readable; missing profile
+            // means the recipient was deleted.
+            const sentList: SentRecItem[] = [];
+            for (const r of sentRecs) {
+                const meta = titleByKey.get(`${r.media_type}:${r.tmdb_id}`);
+                const recipient =
+                    profilesById.get(r.to_user_id) ?? {
+                        ...placeholderProfile,
+                        displayName: 'Former user',
+                    };
+                sentList.push({
+                    id: `sent:${r.id}`,
+                    sentAt: r.sent_at,
+                    recId: r.id,
+                    tmdbId: r.tmdb_id,
+                    mediaType: r.media_type as MediaType,
+                    titleName: meta?.title ?? null,
+                    posterPath: meta?.posterPath ?? null,
+                    recipient,
+                });
+            }
+            setSentItems(sentList.slice(0, MAX_ITEMS));
         } catch (err) {
             console.error('inbox fetch failed:', err);
             setError(err instanceof Error ? err.message : 'Failed to load inbox');
@@ -764,9 +861,97 @@ export default function InboxScreen() {
         }
     }
 
+    function renderSentRec({ item }: { item: SentRecItem }) {
+        const title = item.titleName ?? 'Untitled';
+        return (
+            <Pressable
+                onPress={() => router.push(`/rec/${item.recId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                {item.posterPath ? (
+                    <Image
+                        source={{ uri: imageUrl(item.posterPath, 'w185') }}
+                        style={styles.sentPoster}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : (
+                    <View
+                        style={[
+                            styles.sentPoster,
+                            { backgroundColor: palette.surfaceAlt },
+                        ]}
+                    />
+                )}
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.bodyEmphasis, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        {title}
+                    </Text>
+                    <Text
+                        style={[typography.caption, { color: palette.textMuted }]}
+                        numberOfLines={1}
+                    >
+                        To{' '}
+                        <Text style={{ color: palette.text }}>
+                            {item.recipient.displayName}
+                        </Text>{' '}
+                        (@{item.recipient.handle})
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.sentAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader title="Inbox" showBackButton hideBell />
+
+            {/* Segmented toggle. Doesn't refetch — both lists are
+                already in state, so switching is instant. */}
+            <View style={styles.segmentRow}>
+                {(['received', 'sent'] as const).map((v) => {
+                    const active = view === v;
+                    return (
+                        <Pressable
+                            key={v}
+                            onPress={() => setView(v)}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            style={({ pressed }) => [
+                                styles.segmentButton,
+                                {
+                                    backgroundColor: active
+                                        ? palette.accent
+                                        : 'transparent',
+                                    borderColor: active
+                                        ? palette.accent
+                                        : palette.border,
+                                    opacity: pressed ? 0.6 : 1,
+                                },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    {
+                                        color: active
+                                            ? palette.textInverse
+                                            : palette.textMuted,
+                                    },
+                                ]}
+                            >
+                                {v === 'received' ? 'Received' : 'Sent'}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
+            </View>
 
             {loading ? (
                 <View style={styles.fillCenter}>
@@ -781,25 +966,55 @@ export default function InboxScreen() {
                         {error}
                     </Text>
                 </View>
-            ) : items.length === 0 ? (
+            ) : view === 'received' ? (
+                items.length === 0 ? (
+                    <View style={styles.fillCenter}>
+                        <Text
+                            style={[typography.body, { color: palette.textMuted }]}
+                            numberOfLines={3}
+                        >
+                            Nothing here yet. Recs and friend requests will show up
+                            when they come in.
+                        </Text>
+                    </View>
+                ) : (
+                    <FlatList
+                        data={items}
+                        keyExtractor={(item) => item.id}
+                        renderItem={renderRow}
+                        contentContainerStyle={styles.listContent}
+                        ItemSeparatorComponent={() => (
+                            <View
+                                style={[
+                                    styles.separator,
+                                    { backgroundColor: palette.border },
+                                ]}
+                            />
+                        )}
+                    />
+                )
+            ) : sentItems.length === 0 ? (
                 <View style={styles.fillCenter}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={3}
                     >
-                        Nothing here yet. Recs and friend requests will show up when
-                        they come in.
+                        No recs sent yet. Find something to recommend and share it
+                        with a friend.
                     </Text>
                 </View>
             ) : (
                 <FlatList
-                    data={items}
+                    data={sentItems}
                     keyExtractor={(item) => item.id}
-                    renderItem={renderRow}
+                    renderItem={renderSentRec}
                     contentContainerStyle={styles.listContent}
                     ItemSeparatorComponent={() => (
                         <View
-                            style={[styles.separator, { backgroundColor: palette.border }]}
+                            style={[
+                                styles.separator,
+                                { backgroundColor: palette.border },
+                            ]}
                         />
                     )}
                 />
@@ -852,5 +1067,25 @@ const styles = StyleSheet.create({
     separator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: AVATAR_SIZE + spacing.md,
+    },
+    segmentRow: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.sm,
+        paddingBottom: spacing.md,
+    },
+    segmentButton: {
+        flex: 1,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.sm,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    sentPoster: {
+        width: SENT_POSTER_WIDTH,
+        height: SENT_POSTER_HEIGHT,
+        borderRadius: radius.sm,
     },
 });
