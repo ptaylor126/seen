@@ -79,6 +79,42 @@ interface RecContext {
     note: string | null;
 }
 
+// One review row + its author profile, rendered in the Reviews
+// section. `author` can be null in the defensive case where the
+// author's profile row wasn't returned by the batch lookup — RLS on
+// profiles is permissive, but the column is null-typed to keep the
+// renderer robust.
+interface ReviewItem {
+    id: string;
+    userId: string;
+    body: string;
+    containsSpoilers: boolean;
+    updatedAt: string;
+    author: {
+        displayName: string;
+        avatarUrl: string | null;
+    } | null;
+}
+
+// Relative timestamp matching the style used in inbox.tsx /
+// rec/[recId].tsx. Kept local rather than extracted to a shared
+// helper since the three callers all want slightly different
+// behaviour at their boundaries (this one falls back to a date string
+// after a week; review timestamps that are years old still want to
+// read as dates, not "104w").
+function reviewTimestamp(iso: string): string {
+    const date = new Date(iso);
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = diffMs / (1000 * 60);
+    const diffHours = diffMinutes / 60;
+    const diffDays = diffHours / 24;
+    if (diffMinutes < 1) return 'just now';
+    if (diffMinutes < 60) return `${Math.floor(diffMinutes)}m`;
+    if (diffHours < 24) return `${Math.floor(diffHours)}h`;
+    if (diffDays < 7) return `${Math.floor(diffDays)}d`;
+    return date.toLocaleDateString();
+}
+
 // Compact social signal for this title across the user's friends.
 // Watchers = friends with status='watching'; ratings summary aggregates
 // across friends with a non-null rating. Watchlist entries are
@@ -159,10 +195,21 @@ export default function TitleDetailScreen() {
     const [currentRating, setCurrentRating] = useState<number | null>(null);
     const [updating, setUpdating] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
-    // Current-user review body for this title. `null` distinguishes
-    // "no review yet" from "load not done yet" (kept as null in both —
-    // the affordance hides while loading anyway via currentStatus).
-    const [currentReview, setCurrentReview] = useState<string | null>(null);
+    // All reviews this user is allowed to see for this title (RLS does
+    // the gating — author sees own; a friend sees a review only when
+    // the parent item is friends-visible AND friendship holds). Own
+    // review and friends' reviews live in the same array; the Reviews
+    // section splits them in render via myUserId.
+    const [reviews, setReviews] = useState<ReviewItem[]>([]);
+    const [myUserId, setMyUserId] = useState<string | null>(null);
+    // Session-scoped reveal state for spoiler-flagged reviews. Once a
+    // user taps "tap to reveal" the row stays open for the rest of the
+    // session, but we deliberately don't persist (server-side or
+    // locally) — the cover should reappear on a fresh visit so a
+    // re-read doesn't auto-spoil.
+    const [revealedSpoilers, setRevealedSpoilers] = useState<Set<string>>(
+        () => new Set(),
+    );
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
     // Aggregated friend activity for the social block. `null` = not yet
@@ -418,12 +465,13 @@ export default function TitleDetailScreen() {
         };
     }, [mediaType, tmdbId, fromRec]);
 
-    // Refresh the current user's review on every screen focus so that
-    // returning from the /review modal lands on a title screen that
-    // reflects the just-saved body without a manual refresh. Mount
-    // also fires useFocusEffect, so this is the only fetch path for
-    // the review — keeping it out of the big useEffect above means
-    // edits don't trigger the entire title-screen reload.
+    // Refresh ALL reviews for this title on every screen focus.
+    // Returning from the /review modal lands here and gets the
+    // just-saved body without a manual refresh; the same fetch also
+    // populates other users' reviews. RLS does the visibility check
+    // (author + friends-of-author when item is friends-visible), so
+    // the client sends only the title filter and trusts what comes
+    // back — no client-side visibility filtering, by design.
     useFocusEffect(
         useCallback(() => {
             if (!mediaType || !Number.isFinite(tmdbId)) return;
@@ -435,21 +483,65 @@ export default function TitleDetailScreen() {
                     } = await supabase.auth.getSession();
                     const userId = session?.user.id;
                     if (!userId || !active) return;
-                    const { data, error: reviewError } = await supabase
-                        .from('reviews')
-                        .select('body')
-                        .eq('user_id', userId)
-                        .eq('tmdb_id', tmdbId)
-                        .eq('media_type', mediaType)
-                        .maybeSingle();
+                    setMyUserId(userId);
+
+                    const { data: reviewRows, error: reviewError } =
+                        await supabase
+                            .from('reviews')
+                            .select(
+                                'id, user_id, body, contains_spoilers, updated_at',
+                            )
+                            .eq('tmdb_id', tmdbId)
+                            .eq('media_type', mediaType)
+                            .order('updated_at', { ascending: false });
                     if (!active) return;
                     if (reviewError) {
-                        console.warn('review fetch failed:', reviewError);
+                        console.warn('reviews fetch failed:', reviewError);
                         return;
                     }
-                    setCurrentReview(data?.body ?? null);
+
+                    // Batch profile lookup for the distinct author ids,
+                    // matching the rec/[recId].tsx comments pattern.
+                    // Avoids both a per-row N+1 and the supabase-js
+                    // joined-query typing weirdness.
+                    const authorIds = Array.from(
+                        new Set(
+                            (reviewRows ?? [])
+                                .map((r) => r.user_id)
+                                .filter((id): id is string => !!id),
+                        ),
+                    );
+                    const profileById = new Map<
+                        string,
+                        { displayName: string; avatarUrl: string | null }
+                    >();
+                    if (authorIds.length > 0) {
+                        const { data: profileRows } = await supabase
+                            .from('profiles')
+                            .select('id, display_name, avatar_url')
+                            .in('id', authorIds);
+                        if (!active) return;
+                        for (const p of profileRows ?? []) {
+                            profileById.set(p.id, {
+                                displayName: p.display_name,
+                                avatarUrl: p.avatar_url,
+                            });
+                        }
+                    }
+
+                    const items: ReviewItem[] = (reviewRows ?? []).map(
+                        (r) => ({
+                            id: r.id,
+                            userId: r.user_id,
+                            body: r.body,
+                            containsSpoilers: r.contains_spoilers,
+                            updatedAt: r.updated_at,
+                            author: profileById.get(r.user_id) ?? null,
+                        }),
+                    );
+                    setReviews(items);
                 } catch (err) {
-                    console.warn('review fetch failed:', err);
+                    console.warn('reviews fetch failed:', err);
                 }
             })();
             return () => {
@@ -839,6 +931,24 @@ export default function TitleDetailScreen() {
                     palette={palette}
                 />
 
+                <ReviewsSection
+                    reviews={reviews}
+                    myUserId={myUserId}
+                    canWrite={currentStatus === 'watched'}
+                    revealedSpoilers={revealedSpoilers}
+                    onReveal={(reviewId) =>
+                        setRevealedSpoilers((prev) => {
+                            const next = new Set(prev);
+                            next.add(reviewId);
+                            return next;
+                        })
+                    }
+                    onOpenWriteModal={() =>
+                        router.push(`/title/${mediaType}/${tmdbId}/review`)
+                    }
+                    palette={palette}
+                />
+
                 <WhereToWatch
                     region={region}
                     providers={providersForRegion}
@@ -881,58 +991,6 @@ export default function TitleDetailScreen() {
                                     ? 'Tap to edit'
                                     : 'Tap to rate'}
                             </Text>
-                        )}
-                    </Pressable>
-                )}
-
-                {/* Review affordance — sits with the rating because the
-                    two are personal-after-watching surfaces. Gated on
-                    currentStatus === 'watched' to match the product
-                    rule that you review what you've seen. The same
-                    Pressable routes to the /review modal in both
-                    write-new and edit modes; the modal pre-fills on
-                    load when a review exists. */}
-                {currentStatus === 'watched' && (
-                    <Pressable
-                        onPress={() =>
-                            router.push(
-                                `/title/${mediaType}/${tmdbId}/review`,
-                            )
-                        }
-                        style={({ pressed }) => [
-                            styles.reviewAffordance,
-                            pressed && { opacity: 0.6 },
-                        ]}
-                    >
-                        {currentReview === null ? (
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.accent },
-                                ]}
-                            >
-                                Write a review
-                            </Text>
-                        ) : (
-                            <>
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        { color: palette.text },
-                                    ]}
-                                    numberOfLines={4}
-                                >
-                                    {currentReview}
-                                </Text>
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    Tap to edit
-                                </Text>
-                            </>
                         )}
                     </Pressable>
                 )}
@@ -1047,6 +1105,167 @@ function CloseButton({
         >
             <X color={fg} size={20} strokeWidth={ICON_STROKE_WIDTH} />
         </Pressable>
+    );
+}
+
+// Reviews list under a "Reviews" heading. Combines the user's own
+// review (with tap-to-edit) and friends' reviews into a single
+// chronologically-aware list (own first if present, then others by
+// updated_at desc — the load query already orders desc, so we just
+// hoist own to the front in the render).
+//
+// Hidden entirely when there are no reviews to show AND the user
+// can't write one (not 'watched'). When the user can write but
+// hasn't yet, a "Write a review" link appears as the first row.
+//
+// Spoiler handling: for non-own reviews flagged contains_spoilers,
+// the body is replaced with a "May contain spoilers — tap to reveal"
+// cover until tapped. The user's own review is exempt — they wrote
+// it, they know the spoilers. Reveal state is session-only via the
+// parent's revealedSpoilers Set.
+function ReviewsSection({
+    reviews,
+    myUserId,
+    canWrite,
+    revealedSpoilers,
+    onReveal,
+    onOpenWriteModal,
+    palette,
+}: {
+    reviews: ReviewItem[];
+    myUserId: string | null;
+    canWrite: boolean;
+    revealedSpoilers: Set<string>;
+    onReveal: (reviewId: string) => void;
+    onOpenWriteModal: () => void;
+    palette: ReturnType<typeof getPalette>;
+}) {
+    const ownReview = myUserId
+        ? reviews.find((r) => r.userId === myUserId) ?? null
+        : null;
+    const others = myUserId
+        ? reviews.filter((r) => r.userId !== myUserId)
+        : reviews;
+    const ordered = ownReview ? [ownReview, ...others] : others;
+
+    if (ordered.length === 0 && !canWrite) {
+        return null;
+    }
+
+    return (
+        <View style={styles.reviewsSection}>
+            <Text
+                style={[
+                    typography.micro,
+                    styles.reviewsHeading,
+                    { color: palette.textMuted },
+                ]}
+            >
+                REVIEWS
+            </Text>
+            {canWrite && !ownReview ? (
+                <Pressable
+                    onPress={onOpenWriteModal}
+                    style={({ pressed }) => [
+                        styles.writeReviewLink,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.accent },
+                        ]}
+                    >
+                        Write a review
+                    </Text>
+                </Pressable>
+            ) : null}
+            {ordered.map((r) => {
+                const isOwn = !!myUserId && r.userId === myUserId;
+                const revealed = revealedSpoilers.has(r.id);
+                const shouldHide = !isOwn && r.containsSpoilers && !revealed;
+                const tapAction = isOwn
+                    ? onOpenWriteModal
+                    : shouldHide
+                        ? () => onReveal(r.id)
+                        : undefined;
+                return (
+                    <Pressable
+                        key={r.id}
+                        onPress={tapAction}
+                        disabled={!tapAction}
+                        style={({ pressed }) => [
+                            styles.reviewCard,
+                            { borderColor: palette.border },
+                            pressed && tapAction && { opacity: 0.6 },
+                        ]}
+                    >
+                        <View style={styles.reviewHeaderRow}>
+                            <Avatar
+                                avatarUrl={r.author?.avatarUrl ?? null}
+                                displayName={
+                                    r.author?.displayName ?? 'Former user'
+                                }
+                                seedId={r.userId}
+                                size={32}
+                            />
+                            <View style={styles.reviewHeaderText}>
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.text },
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {isOwn
+                                        ? 'You'
+                                        : r.author?.displayName ?? 'Former user'}
+                                </Text>
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    {reviewTimestamp(r.updatedAt)}
+                                </Text>
+                            </View>
+                        </View>
+                        {shouldHide ? (
+                            <Text
+                                style={[
+                                    typography.body,
+                                    styles.reviewSpoilerCover,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                May contain spoilers — tap to reveal
+                            </Text>
+                        ) : (
+                            <Text
+                                style={[
+                                    typography.body,
+                                    { color: palette.text },
+                                ]}
+                            >
+                                {r.body}
+                            </Text>
+                        )}
+                        {isOwn ? (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                Tap to edit
+                            </Text>
+                        ) : null}
+                    </Pressable>
+                );
+            })}
+        </View>
     );
 }
 
@@ -1478,13 +1697,38 @@ const styles = StyleSheet.create({
         marginTop: spacing.lg,
         gap: spacing.xs,
     },
-    // Sits with the yourMarker visually — same horizontal inset, a
-    // tighter marginTop so the two read as one personal-after-watching
-    // cluster rather than separate sections.
-    reviewAffordance: {
+    // Reviews section — sits between FriendActivity and WhereToWatch
+    // so the "social text content" sits with the "social numbers"
+    // content. Horizontal inset matches the FriendActivity and YOUR
+    // row blocks for visual alignment.
+    reviewsSection: {
         paddingHorizontal: spacing.base,
-        marginTop: spacing.sm,
+        marginTop: spacing.lg,
+        gap: spacing.sm,
+    },
+    reviewsHeading: {
+        letterSpacing: 1.2,
+        marginBottom: spacing.xs,
+    },
+    writeReviewLink: {
+        paddingVertical: spacing.sm,
+    },
+    reviewCard: {
+        gap: spacing.sm,
+        paddingVertical: spacing.md,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    reviewHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    reviewHeaderText: {
+        flex: 1,
         gap: spacing.xs,
+    },
+    reviewSpoilerCover: {
+        fontStyle: 'italic',
     },
     actions: {
         flexDirection: 'row',
