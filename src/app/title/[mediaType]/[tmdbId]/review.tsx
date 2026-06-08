@@ -5,7 +5,6 @@ import {
     ActivityIndicator,
     Alert,
     Keyboard,
-    KeyboardAvoidingView,
     Platform,
     Pressable,
     StyleSheet,
@@ -286,11 +285,18 @@ export default function ReviewScreen() {
                 </Pressable>
             </View>
 
-            <KeyboardAvoidingView
-                style={styles.flex}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                keyboardVerticalOffset={0}
-            >
+            {/* No KeyboardAvoidingView — same fix the recommend modal
+                uses. KAV's `behavior='padding'` indirection was unreliable
+                about lifting the pinned bottom bar above the keyboard
+                even though Save in the header is always reachable. The
+                bottom bar (visibility toggle + spoilers toggle + char
+                counter) was sitting behind the keyboard. We now lift
+                the bar directly: on iOS, marginBottom = keyboard.height
+                via the existing useKeyboard hook, so the bar's outer
+                bottom edge sits exactly at the keyboard's top. Android
+                relies on the manifest's windowSoftInputMode="adjustResize"
+                — marginBottom: 0 there avoids double-lifting. */}
+            <View style={styles.flex}>
                 {/* Flex column wrapped in a Pressable so taps on the
                     background (title context, bodyBox border padding,
                     empty area below a short body) dismiss the keyboard.
@@ -393,6 +399,15 @@ export default function ReviewScreen() {
                                 paddingBottom: keyboard.open
                                     ? spacing.sm
                                     : insets.bottom + spacing.sm,
+                                // iOS-only direct lift via useKeyboard
+                                // — matches the recommend modal pattern.
+                                // Android relies on adjustResize from
+                                // the manifest; lifting here would
+                                // double-stack the displacement.
+                                marginBottom:
+                                    Platform.OS === 'ios' && keyboard.open
+                                        ? keyboard.height
+                                        : 0,
                             },
                         ]}
                     >
@@ -487,7 +502,7 @@ export default function ReviewScreen() {
                         </Text>
                     </View>
                 ) : null}
-            </KeyboardAvoidingView>
+            </View>
         </SafeAreaView>
     );
 }
@@ -556,6 +571,14 @@ const styles = StyleSheet.create({
         // we don't need an outer ScrollView fighting for height.
     },
     bodyInput: {
+        // Matches the recommend modal's noteInput maxHeight pattern.
+        // Bodyflex:1 already caps growth at the available space when
+        // the keyboard is open, but the explicit maxHeight is a
+        // safety net so a very long review scrolls internally instead
+        // of having any chance to fight the bottom-bar's layout. Sized
+        // generously so the body still feels like the primary surface
+        // when there's room.
+        maxHeight: 400,
         textAlignVertical: 'top',
     },
     bottomBar: {
