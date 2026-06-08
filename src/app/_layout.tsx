@@ -116,6 +116,10 @@ function RootLayoutInner() {
                     options={{ presentation: 'modal' }}
                 />
                 <Stack.Screen
+                    name="title/[mediaType]/[tmdbId]/review"
+                    options={{ presentation: 'modal' }}
+                />
+                <Stack.Screen
                     name="library/add"
                     options={{ presentation: 'modal' }}
                 />

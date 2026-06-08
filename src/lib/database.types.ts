@@ -488,6 +488,7 @@ export type Database = {
       reviews: {
         Row: {
           body: string
+          contains_spoilers: boolean
           created_at: string
           id: string
           media_type: string
@@ -497,6 +498,7 @@ export type Database = {
         }
         Insert: {
           body: string
+          contains_spoilers?: boolean
           created_at?: string
           id?: string
           media_type: string
@@ -506,6 +508,7 @@ export type Database = {
         }
         Update: {
           body?: string
+          contains_spoilers?: boolean
           created_at?: string
           id?: string
           media_type?: string

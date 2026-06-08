@@ -1,9 +1,9 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ExternalLink, Send, X } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -159,6 +159,10 @@ export default function TitleDetailScreen() {
     const [currentRating, setCurrentRating] = useState<number | null>(null);
     const [updating, setUpdating] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
+    // Current-user review body for this title. `null` distinguishes
+    // "no review yet" from "load not done yet" (kept as null in both —
+    // the affordance hides while loading anyway via currentStatus).
+    const [currentReview, setCurrentReview] = useState<string | null>(null);
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
     // Aggregated friend activity for the social block. `null` = not yet
@@ -413,6 +417,46 @@ export default function TitleDetailScreen() {
             active = false;
         };
     }, [mediaType, tmdbId, fromRec]);
+
+    // Refresh the current user's review on every screen focus so that
+    // returning from the /review modal lands on a title screen that
+    // reflects the just-saved body without a manual refresh. Mount
+    // also fires useFocusEffect, so this is the only fetch path for
+    // the review — keeping it out of the big useEffect above means
+    // edits don't trigger the entire title-screen reload.
+    useFocusEffect(
+        useCallback(() => {
+            if (!mediaType || !Number.isFinite(tmdbId)) return;
+            let active = true;
+            (async () => {
+                try {
+                    const {
+                        data: { session },
+                    } = await supabase.auth.getSession();
+                    const userId = session?.user.id;
+                    if (!userId || !active) return;
+                    const { data, error: reviewError } = await supabase
+                        .from('reviews')
+                        .select('body')
+                        .eq('user_id', userId)
+                        .eq('tmdb_id', tmdbId)
+                        .eq('media_type', mediaType)
+                        .maybeSingle();
+                    if (!active) return;
+                    if (reviewError) {
+                        console.warn('review fetch failed:', reviewError);
+                        return;
+                    }
+                    setCurrentReview(data?.body ?? null);
+                } catch (err) {
+                    console.warn('review fetch failed:', err);
+                }
+            })();
+            return () => {
+                active = false;
+            };
+        }, [mediaType, tmdbId]),
+    );
 
     async function setStatus(newStatus: ItemStatus) {
         // Block re-entry: while a status update is in flight, or while the
@@ -837,6 +881,58 @@ export default function TitleDetailScreen() {
                                     ? 'Tap to edit'
                                     : 'Tap to rate'}
                             </Text>
+                        )}
+                    </Pressable>
+                )}
+
+                {/* Review affordance — sits with the rating because the
+                    two are personal-after-watching surfaces. Gated on
+                    currentStatus === 'watched' to match the product
+                    rule that you review what you've seen. The same
+                    Pressable routes to the /review modal in both
+                    write-new and edit modes; the modal pre-fills on
+                    load when a review exists. */}
+                {currentStatus === 'watched' && (
+                    <Pressable
+                        onPress={() =>
+                            router.push(
+                                `/title/${mediaType}/${tmdbId}/review`,
+                            )
+                        }
+                        style={({ pressed }) => [
+                            styles.reviewAffordance,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
+                        {currentReview === null ? (
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.accent },
+                                ]}
+                            >
+                                Write a review
+                            </Text>
+                        ) : (
+                            <>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.text },
+                                    ]}
+                                    numberOfLines={4}
+                                >
+                                    {currentReview}
+                                </Text>
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    Tap to edit
+                                </Text>
+                            </>
                         )}
                     </Pressable>
                 )}
@@ -1380,6 +1476,14 @@ const styles = StyleSheet.create({
     yourMarker: {
         paddingHorizontal: spacing.base,
         marginTop: spacing.lg,
+        gap: spacing.xs,
+    },
+    // Sits with the yourMarker visually — same horizontal inset, a
+    // tighter marginTop so the two read as one personal-after-watching
+    // cluster rather than separate sections.
+    reviewAffordance: {
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.sm,
         gap: spacing.xs,
     },
     actions: {
