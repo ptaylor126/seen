@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
+    Keyboard,
     Platform,
     Pressable,
     ScrollView,
@@ -398,28 +398,80 @@ export default function RecommendScreen() {
                 <Text style={[typography.heading, { color: palette.text }]}>
                     Recommend
                 </Text>
-                {/* Invisible spacer to preserve the title's centering
-                    inside the space-between header. Width matches the
-                    Cancel text's optical width closely enough for the
-                    title to stay centered without a manual measurement.
-                    Send used to live here and moved to the bottom bar. */}
-                <View
-                    style={styles.headerSpacer}
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                />
+                {/* Send lives in the header (top-right, opposite Cancel)
+                    rather than the pinned bottom bar — the header never
+                    moves with the keyboard, so Send is always reachable
+                    while typing the note. Same canSend gate as before
+                    (at least one friend selected). Label keeps the
+                    recipient count so multi-friend selection stays
+                    visually obvious; spinner replaces the label while
+                    the send fan-out is in flight. */}
+                <Pressable
+                    onPress={handleSend}
+                    disabled={!canSend}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                        selectedCount === 0
+                            ? 'Send'
+                            : `Send to ${selectedCount}`
+                    }
+                    style={({ pressed }) => [
+                        pressed && { opacity: 0.6 },
+                        !canSend && { opacity: 0.4 },
+                    ]}
+                >
+                    {sending ? (
+                        <ActivityIndicator color={palette.accent} />
+                    ) : (
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.accent },
+                            ]}
+                        >
+                            {selectedCount === 0
+                                ? 'Send'
+                                : `Send to ${selectedCount}`}
+                        </Text>
+                    )}
+                </Pressable>
             </View>
 
-            <KeyboardAvoidingView
-                style={styles.flex}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                keyboardVerticalOffset={0}
-            >
+            {/* No KeyboardAvoidingView. KAV's 'padding' behavior was
+                only partially lifting the note field above the
+                keyboard — the multiline TextInput could grow as the
+                user typed, and KAV's indirect padding calculation
+                didn't always land the bar fully above the keyboard.
+                Now that Send moved to the header (the part that has
+                to be reachable while typing), we only need to lift
+                the note field + char counter, which we do directly:
+                the bar's marginBottom = keyboard.height on iOS when
+                the keyboard is open, so the bar's outer bottom sits
+                exactly at the keyboard's top. On Android the
+                manifest's windowSoftInputMode=adjustResize shrinks
+                the window when the keyboard rises, which keeps the
+                bar at the (now-shorter) screen bottom — no manual
+                marginBottom needed. */}
+            <View style={styles.flex}>
                 <ScrollView
                     style={styles.flex}
                     keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
                     contentContainerStyle={styles.scrollContent}
                 >
+                    {/* Pressable wraps the scroll contents so taps on the
+                        background (title context, "SEND TO" label, gaps
+                        around friend rows) dismiss the keyboard. Friend
+                        rows are themselves Pressables and capture their
+                        own taps before the wrapper sees them, so
+                        selection still works. Dragging the friend list
+                        also dismisses via keyboardDismissMode above. */}
+                    <Pressable
+                        onPress={() => Keyboard.dismiss()}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                    >
                     {/* Title context — keeps the modal grounded in what's
                         being recommended without needing to scroll back. */}
                     {titleCtx && (
@@ -490,13 +542,16 @@ export default function RecommendScreen() {
                             </View>
                         </>
                     )}
+                    </Pressable>
                 </ScrollView>
 
-                {/* Pinned bottom bar: note input + send button. Stays
-                    visible regardless of friend-list scroll position so
-                    the note is never below the fold. paddingBottom drops
-                    the home-indicator inset when the keyboard rises so
-                    the bar sits flush against the keyboard top. */}
+                {/* Pinned bottom bar: note input + char count. Send
+                    moved to the header so it stays reachable above the
+                    keyboard. The bar still pins to the bottom (visible
+                    regardless of friend-list scroll position so the
+                    note is never below the fold) and its paddingBottom
+                    drops the home-indicator inset when the keyboard
+                    rises so the bar sits flush against the keyboard. */}
                 {!loading && !error && friends.length > 0 ? (
                     <View
                         style={[
@@ -507,6 +562,14 @@ export default function RecommendScreen() {
                                 paddingBottom: keyboard.open
                                     ? spacing.sm
                                     : insets.bottom + spacing.sm,
+                                // iOS-only direct lift via useKeyboard.
+                                // Android relies on adjustResize from the
+                                // manifest; double-lifting would push the
+                                // bar above the now-shorter window.
+                                marginBottom:
+                                    Platform.OS === 'ios' && keyboard.open
+                                        ? keyboard.height
+                                        : 0,
                             },
                         ]}
                     >
@@ -554,45 +617,9 @@ export default function RecommendScreen() {
                         >
                             {note.length}/{NOTE_MAX_LENGTH}
                         </Text>
-                        <Pressable
-                            onPress={handleSend}
-                            disabled={!canSend}
-                            accessibilityRole="button"
-                            accessibilityLabel={
-                                selectedCount === 0
-                                    ? 'Send'
-                                    : `Send to ${selectedCount}`
-                            }
-                            style={({ pressed }) => [
-                                styles.sendButton,
-                                {
-                                    backgroundColor: palette.accent,
-                                    opacity: !canSend
-                                        ? 0.4
-                                        : pressed
-                                            ? 0.6
-                                            : 1,
-                                },
-                            ]}
-                        >
-                            {sending ? (
-                                <ActivityIndicator color={palette.textInverse} />
-                            ) : (
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        { color: palette.textInverse },
-                                    ]}
-                                >
-                                    {selectedCount === 0
-                                        ? 'Send'
-                                        : `Send to ${selectedCount}`}
-                                </Text>
-                            )}
-                        </Pressable>
                     </View>
                 ) : null}
-            </KeyboardAvoidingView>
+            </View>
         </SafeAreaView>
     );
 }
@@ -635,13 +662,6 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingBottom: spacing.xl,
-    },
-    // Roughly matches the optical width of the "Cancel" text in the
-    // header so the centered title stays centered under
-    // justifyContent: 'space-between'. Tweak if the Cancel label ever
-    // changes length.
-    headerSpacer: {
-        width: 60,
     },
     titleContext: {
         flexDirection: 'row',
@@ -712,6 +732,11 @@ const styles = StyleSheet.create({
     },
     noteInput: {
         minHeight: 60,
+        // Cap so the bar's height is bounded as the user types — the
+        // multiline TextInput scrolls internally for content beyond
+        // this height. Without a cap, the bar could grow tall enough
+        // to push its bottom edge below the keyboard top.
+        maxHeight: 120,
         textAlignVertical: 'top',
     },
     charCount: {
@@ -730,12 +755,5 @@ const styles = StyleSheet.create({
     bottomBarLabel: {
         marginBottom: spacing.sm,
         letterSpacing: 0.5,
-    },
-    sendButton: {
-        marginTop: spacing.md,
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 });
