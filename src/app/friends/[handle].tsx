@@ -1,6 +1,11 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronLeft, Send, UserPlus } from 'lucide-react-native';
+import {
+    ChevronLeft,
+    Search as SearchIcon,
+    Send,
+    UserPlus,
+} from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -9,6 +14,7 @@ import {
     Pressable,
     StyleSheet,
     Text,
+    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -20,10 +26,13 @@ import {
     type LibraryGridCols,
     useLibraryView,
 } from '@/lib/library-view';
+import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
+import { useLibraryFilters } from '@/lib/use-library-filters';
+import { LibraryFilterControls } from '@/components/library-filter-controls';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -136,6 +145,14 @@ export default function FriendDetailScreen() {
     const [itemsLoading, setItemsLoading] = useState(false);
     const [itemsError, setItemsError] = useState<string | null>(null);
 
+    // Shared filter / sort / search state — same hook the own library
+    // (src/app/(tabs)/library.tsx) uses, so the two screens stay in
+    // lockstep. Called at the top so the hook is invoked
+    // unconditionally regardless of the resolution state below; when
+    // items is still [] (loading / not-found / not-friends branches),
+    // the hook's memos return empty arrays and its effects no-op.
+    const filters = useLibraryFilters<ItemRow>(items, activeTab);
+
     // Global library view mode (persisted via AsyncStorage). Switching
     // here updates the same setting Library tab reads from — flipping
     // grid/list on a friend's profile changes it on your own library
@@ -245,8 +262,13 @@ export default function FriendDetailScreen() {
                     .eq('user_id', state.profile.id)
                     .eq('status', activeTab)
                     .eq('visibility', 'friends')
-                    .order('updated_at', { ascending: false })
-                    .limit(100);
+                    .order('updated_at', { ascending: false });
+                // .limit(100) removed (step 4 parity work): the cap
+                // would silently truncate filter / sort / genre
+                // results to "the first 100 by recency", which is
+                // wrong now that filtering moved client-side. Items
+                // rows are small (~80 bytes); the titles join is
+                // already batched. Alpha-scale safe.
                 if (!active) return;
                 if (error) throw error;
 
@@ -626,6 +648,40 @@ export default function FriendDetailScreen() {
                 </View>
             </SafeAreaView>
 
+            {/* Local title search — mirrors the library tab's local-
+                filter bar, minus the `+` button + add-overlay (you
+                can't add to someone else's library). Wired to the
+                shared hook's localQuery state. */}
+            <View
+                style={[
+                    styles.searchBar,
+                    {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                    },
+                ]}
+            >
+                <SearchIcon
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+                <TextInput
+                    value={filters.localQuery}
+                    onChangeText={filters.setLocalQuery}
+                    placeholder={`Search ${profile.displayName}'s library`}
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    style={[
+                        styles.searchInput,
+                        typography.body,
+                        { color: palette.text },
+                    ]}
+                />
+            </View>
+
             <View style={styles.tabs}>
                 {TABS.map((tab) => {
                     const isActive = activeTab === tab;
@@ -661,6 +717,23 @@ export default function FriendDetailScreen() {
                 })}
             </View>
 
+            {/* Shared filter / sort / genre controls — same component
+                the own library uses (src/components/library-filter-
+                controls.tsx). State + filtering logic in
+                useLibraryFilters above; this is pure presentation. */}
+            <LibraryFilterControls
+                palette={palette}
+                mediaFilter={filters.mediaFilter}
+                setMediaFilter={filters.setMediaFilter}
+                sortBy={filters.sortBy}
+                setSortBy={filters.setSortBy}
+                genreFilter={filters.genreFilter}
+                setGenreFilter={filters.setGenreFilter}
+                genreStripOpen={filters.genreStripOpen}
+                setGenreStripOpen={filters.setGenreStripOpen}
+                availableGenres={filters.availableGenres}
+            />
+
             {itemsLoading ? (
                 <View style={styles.fillCenter}>
                     <ActivityIndicator color={palette.accent} />
@@ -674,7 +747,17 @@ export default function FriendDetailScreen() {
                         {itemsError}
                     </Text>
                 </View>
-            ) : items.length === 0 ? (
+            ) : filters.visibleRows.length === 0 ? (
+                // Three sub-cases share this branch, in priority order:
+                //   1. Local query present → "no matches in @handle's
+                //      library" (covers the typed-search empty case).
+                //   2. Genre filter active → "No {genre} titles."
+                //   3. Otherwise → the existing per-tab default copy
+                //      (also covers an empty media-filter combination,
+                //      same as the own library does — the active media
+                //      filter is visible in the controls row, so the
+                //      copy doesn't need to spell out which filter is
+                //      narrowing the view).
                 <View style={styles.fillCenter}>
                     <Text
                         style={[
@@ -683,13 +766,17 @@ export default function FriendDetailScreen() {
                             { color: palette.textMuted },
                         ]}
                     >
-                        {emptyMessage(activeTab, profile.displayName)}
+                        {filters.localQuery.trim().length > 0
+                            ? `No matches in @${profile.handle}'s library.`
+                            : filters.genreFilter !== null
+                              ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
+                              : emptyMessage(activeTab, profile.displayName)}
                     </Text>
                 </View>
             ) : mode === 'list' ? (
                 <FlatList
                     key="list"
-                    data={items}
+                    data={filters.visibleRows}
                     keyExtractor={(item) => item.id}
                     renderItem={renderRow}
                     contentContainerStyle={styles.listContent}
@@ -708,7 +795,7 @@ export default function FriendDetailScreen() {
                 // a clean unmount + remount.
                 <FlatList
                     key={`grid-${gridCols}`}
-                    data={items}
+                    data={filters.visibleRows}
                     keyExtractor={(item) => item.id}
                     renderItem={renderGridCell}
                     numColumns={gridCols}
@@ -745,6 +832,27 @@ const styles = StyleSheet.create({
         paddingTop: spacing.md,
         paddingBottom: spacing.lg,
         gap: spacing.xs,
+    },
+    searchBar: {
+        // Local title-filter input. Mirrors the own library's
+        // .localSearchBar pill shape so the two screens read the
+        // same, minus the `+` button wrapper / row flex — friend
+        // libraries have no add affordance, so this stands alone.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        height: 44,
+        marginHorizontal: spacing.base,
+        marginBottom: spacing.md,
+    },
+    searchInput: {
+        flex: 1,
+        // padding zeroed: the parent's fixed height owns vertical
+        // sizing so the icon and text stay aligned.
+        paddingVertical: 0,
     },
     notFriendsBlock: {
         paddingHorizontal: spacing.xl,
