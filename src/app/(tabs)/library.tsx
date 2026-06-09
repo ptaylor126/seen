@@ -13,6 +13,7 @@ import {
     Dimensions,
     FlatList,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -34,6 +35,7 @@ import {
     type LibraryGridCols,
     useLibraryView,
 } from '@/lib/library-view';
+import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
@@ -191,6 +193,18 @@ export default function LibraryScreen() {
     const [sortBy, setSortBy] = useState<SortOption>(
         DEFAULT_SORT_BY_TAB.watchlist,
     );
+    // Genre filter — client-side, single-select, applied on already-
+    // loaded rows. `null` = no filter. Composes with localQuery (title
+    // search) above, AND with the server-side media filter + sort. A
+    // row with empty/missing genre_ids naturally falls out when a
+    // genre is selected.
+    const [genreFilter, setGenreFilter] = useState<number | null>(null);
+    // Whether the genre chip strip is revealed. The "Genre" pill in
+    // the controls row toggles this; selecting / clearing a chip also
+    // collapses the strip (the active state surfaces through the
+    // pill's label + accent fill, so the strip's job is done once a
+    // choice is made and re-opening is one tap away).
+    const [genreStripOpen, setGenreStripOpen] = useState(false);
     const search = useSearchBar();
 
     // On tab switch, snap sort back to that tab's default. Keeps the
@@ -369,15 +383,61 @@ export default function LibraryScreen() {
         }, [activeTab, mediaFilter, sortBy]),
     );
 
-    // Client-side title substring filter on the loaded rows. The media
-    // filter and sort live server-side (the query refetches on those
-    // state changes); the title filter is in-memory so typing feels
-    // instant for 600+-row libraries.
+    // Client-side title substring + genre filter on the loaded rows.
+    // The media filter and sort live server-side (the query refetches
+    // on those state changes); the title filter and genre filter are
+    // in-memory so typing / genre selection feels instant for 600+-row
+    // libraries. A row with empty/missing genre_ids naturally fails
+    // the includes check when a genre is selected — that's the
+    // intended behaviour (unreleased / catalogue-incomplete titles
+    // fall out of a genre filter, surface again when none is active).
     const filteredRows = useMemo(() => {
         const q = localQuery.trim().toLowerCase();
-        if (!q) return rows;
-        return rows.filter((r) => r.title.toLowerCase().includes(q));
-    }, [rows, localQuery]);
+        return rows.filter((r) => {
+            if (q && !r.title.toLowerCase().includes(q)) return false;
+            if (genreFilter !== null) {
+                if (!r.genreIds || !r.genreIds.includes(genreFilter)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }, [rows, localQuery, genreFilter]);
+
+    // Genre options to surface in the picker — only the genres
+    // actually present in the user's loaded library, deduped, sorted
+    // alphabetically by display name. Re-derives when the loaded set
+    // changes (tab swap, media-filter swap, sort swap, fresh focus).
+    // Map.get falls back to `#${id}` for the (unlikely) case TMDB
+    // adds a new genre id before this constant is updated — keeps the
+    // picker functional without crashing.
+    const availableGenres = useMemo(() => {
+        const ids = new Set<number>();
+        for (const row of rows) {
+            if (row.genreIds) {
+                for (const id of row.genreIds) ids.add(id);
+            }
+        }
+        return Array.from(ids)
+            .map((id) => ({
+                id,
+                name: TMDB_GENRE_NAMES.get(id) ?? `#${id}`,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [rows]);
+
+    // Drop a stale genre selection when the loaded rows no longer
+    // contain it — e.g. swap from 'all' → 'tv' media filter, the row
+    // set changes, and the previously-selected genre may not be in
+    // any of the new rows. Without this the UI shows "No {genre}
+    // titles" with no obvious way out other than tapping the chip.
+    useEffect(() => {
+        if (genreFilter === null) return;
+        const stillPresent = availableGenres.some(
+            (g) => g.id === genreFilter,
+        );
+        if (!stillPresent) setGenreFilter(null);
+    }, [availableGenres, genreFilter]);
 
     // Fallback affordance: whenever the user has typed a query, give
     // them a one-tap path to "search to add" the title via the shared
@@ -824,32 +884,222 @@ export default function LibraryScreen() {
                         );
                     })}
                 </View>
-                <Pressable
-                    onPress={openSortMenu}
-                    hitSlop={spacing.xs}
-                    style={({ pressed }) => [
-                        styles.sortButton,
-                        pressed && { opacity: 0.6 },
-                    ]}
-                    accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
-                    accessibilityRole="button"
-                >
-                    <ArrowDownUp
-                        color={palette.text}
-                        size={14}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text
-                        style={[
-                            typography.caption,
-                            styles.sortButtonText,
-                            { color: palette.text },
+                <View style={styles.rightControls}>
+                    {/* Genre toggle pill — reveals/collapses the
+                        chip strip below. Default state: outlined,
+                        label = "Genre". Active state (genreFilter is
+                        set): accent-filled, label = the selected
+                        genre's name. The strip's visibility is purely
+                        a UI affordance — collapsed-with-active-filter
+                        is a valid state because the accent pill
+                        carries the "filtering by Comedy" signal on
+                        its own. Active visuals are derived from one
+                        boolean (`isGenreActive`) so bg / border /
+                        text colour / label can't drift out of sync. */}
+                    {(() => {
+                        const isGenreActive = genreFilter !== null;
+                        const activeGenreLabel = isGenreActive
+                            ? TMDB_GENRE_NAMES.get(genreFilter) ??
+                              `#${genreFilter}`
+                            : null;
+                        return (
+                            <Pressable
+                                onPress={() =>
+                                    setGenreStripOpen((open) => !open)
+                                }
+                                hitSlop={spacing.xs}
+                                style={({ pressed }) => [
+                                    styles.mediaFilterPill,
+                                    {
+                                        backgroundColor: isGenreActive
+                                            ? palette.accent
+                                            : 'transparent',
+                                        borderColor: isGenreActive
+                                            ? palette.accent
+                                            : palette.border,
+                                        opacity: pressed ? 0.6 : 1,
+                                    },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                    isGenreActive
+                                        ? `Genre filter: ${activeGenreLabel}. Tap to ${genreStripOpen ? 'hide' : 'show'} options.`
+                                        : `${genreStripOpen ? 'Hide' : 'Show'} genre options`
+                                }
+                                accessibilityState={{
+                                    selected: isGenreActive,
+                                    expanded: genreStripOpen,
+                                }}
+                            >
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.mediaFilterText,
+                                        {
+                                            color: isGenreActive
+                                                ? palette.textInverse
+                                                : palette.text,
+                                        },
+                                    ]}
+                                >
+                                    {isGenreActive
+                                        ? activeGenreLabel
+                                        : 'Genre'}
+                                </Text>
+                            </Pressable>
+                        );
+                    })()}
+                    <Pressable
+                        onPress={openSortMenu}
+                        hitSlop={spacing.xs}
+                        style={({ pressed }) => [
+                            styles.sortButton,
+                            pressed && { opacity: 0.6 },
                         ]}
+                        accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
+                        accessibilityRole="button"
                     >
-                        {SORT_LABELS[sortBy]}
-                    </Text>
-                </Pressable>
+                        <ArrowDownUp
+                            color={palette.text}
+                            size={14}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                        <Text
+                            style={[
+                                typography.caption,
+                                styles.sortButtonText,
+                                { color: palette.text },
+                            ]}
+                        >
+                            {SORT_LABELS[sortBy]}
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
+
+            {/* Genre chip strip — revealed by the Genre pill above.
+                Horizontal scroll, full width. Populated from
+                availableGenres (only genres present in the loaded
+                library, sorted alphabetically). Same chip styling as
+                the media filter pills so the two rows read as one
+                visual family. Tap an inactive chip to filter; tap
+                the active chip to clear. Either tap also collapses
+                the strip — the active state is preserved on the
+                Genre pill above. */}
+            {genreStripOpen && availableGenres.length > 0 ? (
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.genreScrollRow}
+                    contentContainerStyle={styles.genreScrollContent}
+                    keyboardShouldPersistTaps="handled"
+                >
+                    {/* "All genres" sentinel chip — first in the
+                        strip. Active (accent) when no genre filter is
+                        set; selecting it clears the filter and
+                        collapses the strip, same shape as tapping the
+                        currently-active genre chip. Deliberately
+                        labelled "All genres" not "All" to avoid
+                        colliding with the media-filter row's "All"
+                        (All / Movies / TV) directly above. The
+                        controls-row Genre toggle pill stays in its
+                        default outlined "Genre" state when this is
+                        active — that pill only flips to accent when
+                        a SPECIFIC genre is selected. */}
+                    {(() => {
+                        const isAllActive = genreFilter === null;
+                        return (
+                            <Pressable
+                                key="__all_genres"
+                                onPress={() => {
+                                    setGenreFilter(null);
+                                    setGenreStripOpen(false);
+                                }}
+                                hitSlop={spacing.xs}
+                                style={({ pressed }) => [
+                                    styles.mediaFilterPill,
+                                    {
+                                        backgroundColor: isAllActive
+                                            ? palette.accent
+                                            : 'transparent',
+                                        borderColor: isAllActive
+                                            ? palette.accent
+                                            : palette.border,
+                                        opacity: pressed ? 0.6 : 1,
+                                    },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                    isAllActive
+                                        ? 'All genres (current)'
+                                        : 'Show all genres'
+                                }
+                                accessibilityState={{ selected: isAllActive }}
+                            >
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.mediaFilterText,
+                                        {
+                                            color: isAllActive
+                                                ? palette.textInverse
+                                                : palette.text,
+                                        },
+                                    ]}
+                                >
+                                    All genres
+                                </Text>
+                            </Pressable>
+                        );
+                    })()}
+                    {availableGenres.map((g) => {
+                        const isActive = genreFilter === g.id;
+                        return (
+                            <Pressable
+                                key={g.id}
+                                onPress={() => {
+                                    setGenreFilter(isActive ? null : g.id);
+                                    setGenreStripOpen(false);
+                                }}
+                                hitSlop={spacing.xs}
+                                style={({ pressed }) => [
+                                    styles.mediaFilterPill,
+                                    {
+                                        backgroundColor: isActive
+                                            ? palette.accent
+                                            : 'transparent',
+                                        borderColor: isActive
+                                            ? palette.accent
+                                            : palette.border,
+                                        opacity: pressed ? 0.6 : 1,
+                                    },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                    isActive
+                                        ? `Clear ${g.name} filter`
+                                        : `Filter by ${g.name}`
+                                }
+                                accessibilityState={{ selected: isActive }}
+                            >
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.mediaFilterText,
+                                        {
+                                            color: isActive
+                                                ? palette.textInverse
+                                                : palette.text,
+                                        },
+                                    ]}
+                                >
+                                    {g.name}
+                                </Text>
+                            </Pressable>
+                        );
+                    })}
+                </ScrollView>
+            ) : null}
 
             {loading ? (
                 <View style={styles.statusBlock}>
@@ -893,7 +1143,9 @@ export default function LibraryScreen() {
                             ? rows.length === 0
                                 ? 'No matches — nothing in this tab yet.'
                                 : 'No matches in your library.'
-                            : EMPTY_MESSAGES[activeTab]}
+                            : genreFilter !== null
+                              ? `No ${TMDB_GENRE_NAMES.get(genreFilter) ?? 'matching'} titles.`
+                              : EMPTY_MESSAGES[activeTab]}
                     </Text>
                     {renderAddFallback()}
                 </View>
@@ -1064,6 +1316,56 @@ const styles = StyleSheet.create({
     },
     mediaFilterText: {
         fontWeight: '600',
+    },
+    rightControls: {
+        // Sub-group on the right of controlsRow holding the Genre
+        // toggle + Sort button. Sits opposite the media filter pills
+        // on the left side of the parent's space-between.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    genreScrollRow: {
+        // Horizontal chip strip below controlsRow when revealed.
+        //
+        // `flexShrink: 0` + explicit `height` are load-bearing: without
+        // them the FlatList below (which has no `flex: 1` and instead
+        // uses its intrinsic content height) competes for vertical
+        // space in the parent column-flex. On a near-empty tab the
+        // FlatList's intrinsic height is small and there's slack for
+        // the chip strip to keep its natural ~36px; on a full tab the
+        // FlatList wants the whole screen, the column-flex shrinks
+        // every sibling with `flexShrink: 1` (the default), and the
+        // ScrollView collapses — chips clip to empty outlines because
+        // the contentContainer is taller than the now-squeezed outer
+        // ScrollView frame.
+        //
+        // `height: 36` matches the intrinsic content height (chip:
+        // typography.caption lineHeight 18 + pill paddingVertical
+        // 2×4 + border 2×1 = 28; plus contentContainer paddingVertical
+        // 2×4 = 36). Pinning the outer ScrollView to that exact value
+        // and refusing to shrink immunises the strip against grid
+        // size. Belt-and-braces; either alone would suffice, both
+        // together makes the intent obvious to future readers.
+        height: 36,
+        flexGrow: 0,
+        flexShrink: 0,
+        marginBottom: spacing.sm,
+    },
+    genreScrollContent: {
+        // Horizontal padding so the first / last chip don't sit
+        // flush against the screen edge. `gap` spaces chips evenly
+        // without per-chip margins. paddingVertical is the bit that
+        // matters for clipping: the pill's borderWidth + lineHeight
+        // can extend past the contentContainer's measured height in
+        // a horizontal ScrollView with alignItems: center, leaving
+        // the top sliver visible and the bottom clipped. A few px
+        // of vertical breathing room makes the contentContainer
+        // measure tall enough for the full chip.
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.xs,
+        gap: spacing.xs,
+        alignItems: 'center',
     },
     sortButton: {
         // Right-aligned tappable cluster: icon + current sort label.
