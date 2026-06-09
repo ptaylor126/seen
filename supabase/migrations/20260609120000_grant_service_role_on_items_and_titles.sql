@@ -1,0 +1,47 @@
+-- Scoped service_role grants for the titles backfill and future
+-- titles-maintenance jobs. Deliberately narrow.
+--
+-- Context: a privilege audit found that service_role has NO DML
+-- (SELECT/INSERT/UPDATE/DELETE) on any table in public. Every user
+-- table shows the same shape:
+--
+--     service_role=Dxtm/postgres   (TRUNCATE / REFERENCES / TRIGGER / MAINTAIN)
+--
+-- This is the absence of a grant, not a REVOKE — the project's
+-- grants migration (20260519102336) deliberately scoped its work to
+-- the `authenticated` role per TECHNICAL §2, and the standard
+-- Supabase "GRANT ALL on public to service_role" default privileges
+-- were never in place here. The result is a locked-down posture with
+-- a useful security property: a leaked service-role key cannot reach
+-- user data via the REST API, because the GRANT layer rejects every
+-- DML attempt before RLS-bypass even matters.
+--
+-- That posture is worth preserving. This migration opens only the
+-- minimum surface the upcoming public.titles backfill needs:
+--
+--   - items.SELECT   → the backfill walks distinct (tmdb_id, media_type)
+--                      pairs across all users' libraries (cross-user
+--                      read, RLS-bypass needed). It never writes items.
+--   - titles.SELECT  → the backfill subtracts already-populated titles
+--                      from the work queue; later "refresh from TMDB"
+--                      jobs would also read.
+--   - titles.INSERT  → the backfill writes one row per unique title.
+--   - titles.UPDATE  → reserved for a future "refresh stale metadata"
+--                      job (poster swaps, retitles). Cheaper to grant
+--                      now than chase another migration later.
+--
+-- Deliberately NOT granted:
+--   - items.{INSERT, UPDATE, DELETE} — the backfill never writes items,
+--     and no current or planned server-side job mutates user library
+--     rows out-of-band. Keeps that surface locked.
+--   - titles.DELETE — titles are catalogue data; we never delete
+--     entries (a removed TMDB id just stays orphaned, which is fine).
+--   - Any other table. Untouched here on purpose.
+--   - ALTER DEFAULT PRIVILEGES on schema public. Future tables stay
+--     locked-down-by-default; whoever adds a new table considers
+--     whether service_role needs access, the same way they consider
+--     RLS policies. Standing default would silently widen the surface.
+
+grant select on table public.items to service_role;
+
+grant select, insert, update on table public.titles to service_role;

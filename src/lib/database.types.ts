@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       friend_requests: {
@@ -526,6 +501,42 @@ export type Database = {
           },
         ]
       }
+      titles: {
+        Row: {
+          created_at: string
+          genre_ids: number[] | null
+          media_type: string
+          original_language: string | null
+          poster_path: string | null
+          release_date: string | null
+          title: string | null
+          tmdb_id: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          genre_ids?: number[] | null
+          media_type: string
+          original_language?: string | null
+          poster_path?: string | null
+          release_date?: string | null
+          title?: string | null
+          tmdb_id: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          genre_ids?: number[] | null
+          media_type?: string
+          original_language?: string | null
+          poster_path?: string | null
+          release_date?: string | null
+          title?: string | null
+          tmdb_id?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -688,9 +699,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {},
   },

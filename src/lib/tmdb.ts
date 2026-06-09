@@ -53,6 +53,12 @@ export interface TMDBMovieSummary {
     backdrop_path: string | null;
     vote_average: number;
     popularity: number;
+    // genre_ids + original_language are present on every /search/* and
+    // /discover/* response. Exposed here so insert sites and the
+    // backfill can stamp items.genre_ids / items.original_language
+    // without an extra detail round-trip.
+    genre_ids: number[];
+    original_language: string;
 }
 
 export interface TMDBTVSummary {
@@ -65,6 +71,8 @@ export interface TMDBTVSummary {
     backdrop_path: string | null;
     vote_average: number;
     popularity: number;
+    genre_ids: number[];
+    original_language: string;
 }
 
 export interface TMDBPersonSummary {
@@ -143,6 +151,10 @@ export interface TMDBMovie {
     runtime: number | null;
     vote_average: number;
     genres: Array<{ id: number; name: string }>;
+    // ISO 639-1 code (e.g. 'en', 'ja', 'ko'). Stored as-is on
+    // items.original_language; displayed via Intl.DisplayNames at
+    // render time so we don't have to maintain a hand-rolled map.
+    original_language: string;
 }
 
 export interface TMDBTV {
@@ -160,6 +172,7 @@ export interface TMDBTV {
     vote_average: number;
     genres: Array<{ id: number; name: string }>;
     status: string;
+    original_language: string;
 }
 
 // Watch providers — JustWatch-sourced availability data per region.
