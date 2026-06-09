@@ -47,9 +47,12 @@ interface ItemRow {
     mediaType: MediaType;
     rating: number | null;
     watchedAt: string | null;
+    createdAt: string;
     title: string;
     posterPath: string | null;
     year: string;
+    originalLanguage: string | null;
+    genreIds: number[] | null;
 }
 
 // Three-state resolution machine. Renders the whole screen off this:
@@ -238,7 +241,7 @@ export default function FriendDetailScreen() {
             try {
                 const { data: rows, error } = await supabase
                     .from('items')
-                    .select('id, tmdb_id, media_type, rating, watched_at, updated_at')
+                    .select('id, tmdb_id, media_type, rating, watched_at, updated_at, created_at')
                     .eq('user_id', state.profile.id)
                     .eq('status', activeTab)
                     .eq('visibility', 'friends')
@@ -264,11 +267,14 @@ export default function FriendDetailScreen() {
                         mediaType: r.media_type as MediaType,
                         rating: typeof r.rating === 'number' ? r.rating : null,
                         watchedAt: r.watched_at,
+                        createdAt: r.created_at,
                         title: titleRow?.title ?? '',
                         posterPath: titleRow?.poster_path ?? null,
                         year: titleRow?.release_date
                             ? titleRow.release_date.slice(0, 4)
                             : '',
+                        originalLanguage: titleRow?.original_language ?? null,
+                        genreIds: titleRow?.genre_ids ?? null,
                     };
                 });
                 setItems(resolved);

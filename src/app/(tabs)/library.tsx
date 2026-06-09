@@ -58,6 +58,7 @@ interface LibraryRow {
     rating: number | null;
     watchedAt: string | null;
     updatedAt: string;
+    createdAt: string;
     title: string;
     posterPath: string | null;
     year: string;
@@ -243,7 +244,7 @@ export default function LibraryScreen() {
                     let itemsQuery = supabase
                         .from('items')
                         .select(
-                            'id, tmdb_id, media_type, rating, watched_at, updated_at',
+                            'id, tmdb_id, media_type, rating, watched_at, updated_at, created_at',
                         )
                         .eq('user_id', userId)
                         .eq('status', activeTab);
@@ -348,6 +349,7 @@ export default function LibraryScreen() {
                             rating: row.rating,
                             watchedAt: row.watched_at,
                             updatedAt: row.updated_at,
+                            createdAt: row.created_at,
                             title: titleRow?.title ?? 'Unable to load title',
                             posterPath: titleRow?.poster_path ?? null,
                             year: titleRow?.release_date
