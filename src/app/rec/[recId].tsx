@@ -981,15 +981,22 @@ export default function RecScreen() {
                 </ScrollView>
 
                 {/* Composer pinned to the bottom of the keyboard
-                    avoidance container. Disabled state mirrors the
-                    button's enable rule so the affordance stays
-                    obvious. */}
+                    avoidance container. Reads as its own zone via a
+                    palette.surface fill + 1pt borderStrong top edge +
+                    a soft upward shadow (iOS) / elevation (Android),
+                    since surface and bg are too close in tone for the
+                    fill alone to register. paddingBottom adds breathing
+                    room ABOVE the safe-area inset so the controls
+                    aren't glued to the screen edge when the keyboard
+                    is dismissed. Disabled state mirrors the button's
+                    enable rule so the affordance stays obvious. */}
                 <View
                     style={[
                         styles.composer,
                         {
-                            backgroundColor: palette.bg,
-                            borderTopColor: palette.border,
+                            backgroundColor: palette.surface,
+                            borderTopColor: palette.borderStrong,
+                            paddingBottom: insets.bottom + spacing.sm,
                         },
                     ]}
                 >
@@ -1006,7 +1013,8 @@ export default function RecScreen() {
                             typography.body,
                             {
                                 color: palette.text,
-                                backgroundColor: palette.surfaceAlt,
+                                backgroundColor: palette.bg,
+                                borderColor: palette.borderStrong,
                             },
                         ]}
                     />
@@ -1022,9 +1030,14 @@ export default function RecScreen() {
                         style={({ pressed }) => [
                             styles.composerSend,
                             {
+                                // Always accent-tinted so the button reads
+                                // as actionable. Empty state uses the
+                                // subtle accent wash + accent icon; with
+                                // content it flips to a filled accent
+                                // pill with inverse icon.
                                 backgroundColor:
                                     composer.trim().length === 0
-                                        ? palette.surfaceAlt
+                                        ? palette.accentSubtle
                                         : palette.accent,
                                 opacity:
                                     pressed || composerBusy ? 0.6 : 1,
@@ -1034,7 +1047,7 @@ export default function RecScreen() {
                         <Send
                             color={
                                 composer.trim().length === 0
-                                    ? palette.textMuted
+                                    ? palette.accent
                                     : palette.textInverse
                             }
                             size={18}
@@ -1282,8 +1295,18 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
-        paddingVertical: spacing.sm,
-        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: spacing.sm,
+        // paddingBottom is set inline (safe-area inset + spacing).
+        borderTopWidth: 1,
+        // Soft upward shadow so the bar floats above the scrolling
+        // content. iOS supports negative shadowOffset directly; Android
+        // ignores negative offsets but still draws elevation, which
+        // gives us a thin separation line — good enough as a fallback.
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 8,
     },
     composerInput: {
         flex: 1,
@@ -1291,6 +1314,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
         borderRadius: radius.sm,
+        borderWidth: StyleSheet.hairlineWidth,
     },
     composerSend: {
         width: 40,
