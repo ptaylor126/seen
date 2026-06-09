@@ -27,7 +27,8 @@ import {
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { fetchTitlesByItems } from '@/lib/titles';
+import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -308,11 +309,14 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         new Set(friendItems.map((i) => i.user_id)),
     );
 
-    // ---- Wave 3: friend owner display names + TMDB metadata (parallel)
+    // ---- Wave 3: friend owner display names + batched title metadata
     //
-    // TMDB requests are wrapped in Promise.allSettled so a single failed
-    // lookup doesn't take down the whole Home dashboard — the section
-    // just won't render that card.
+    // Stage 4: replaced three separate Promise.allSettled-of-TMDB
+    // arrays (recs / friend groups / watching) with one batched read
+    // from the shared public.titles catalogue. All three sections
+    // resolve from the same Map keyed by (media_type, tmdb_id). Cards
+    // whose titles row is missing are skipped per section, matching
+    // the prior "TMDB call failed → skip the card" semantics.
     const friendProfilesPromise =
         friendItemOwnerIds.length > 0
             ? supabase
@@ -321,54 +325,21 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
                   .in('id', friendItemOwnerIds)
             : Promise.resolve({ data: [], error: null });
 
-    const recTitlePromises = recs.map((r) =>
-        r.media_type === 'movie'
-            ? getMovie(r.tmdb_id).then((m) => ({
-                  title: m.title,
-                  posterPath: m.poster_path,
-              }))
-            : getTV(r.tmdb_id).then((t) => ({
-                  title: t.name,
-                  posterPath: t.poster_path,
-              })),
-    );
+    const titleLookupItems = [
+        ...recs.map((r) => ({ tmdb_id: r.tmdb_id, media_type: r.media_type })),
+        ...friendShowGroups.map((g) => ({
+            tmdb_id: g.tmdbId,
+            media_type: g.mediaType,
+        })),
+        ...watchingRows.map((w) => ({
+            tmdb_id: w.tmdb_id,
+            media_type: w.media_type,
+        })),
+    ];
 
-    const friendTitlePromises = friendShowGroups.map((g) =>
-        g.mediaType === 'movie'
-            ? getMovie(g.tmdbId).then((m) => ({
-                  title: m.title,
-                  posterPath: m.poster_path,
-              }))
-            : getTV(g.tmdbId).then((t) => ({
-                  title: t.name,
-                  posterPath: t.poster_path,
-              })),
-    );
-
-    const watchingTitlePromises = watchingRows.map((w) =>
-        w.media_type === 'movie'
-            ? getMovie(w.tmdb_id).then((m) => ({
-                  title: m.title,
-                  posterPath: m.poster_path,
-                  year: m.release_date ? m.release_date.slice(0, 4) : '',
-              }))
-            : getTV(w.tmdb_id).then((t) => ({
-                  title: t.name,
-                  posterPath: t.poster_path,
-                  year: t.first_air_date ? t.first_air_date.slice(0, 4) : '',
-              })),
-    );
-
-    const [
-        friendProfilesResult,
-        recTitleResults,
-        friendTitleResults,
-        watchingTitleResults,
-    ] = await Promise.all([
+    const [friendProfilesResult, titleByKey] = await Promise.all([
         friendProfilesPromise,
-        Promise.allSettled(recTitlePromises),
-        Promise.allSettled(friendTitlePromises),
-        Promise.allSettled(watchingTitlePromises),
+        fetchTitlesByItems(titleLookupItems),
     ]);
 
     if (friendProfilesResult.error) throw friendProfilesResult.error;
@@ -389,9 +360,9 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     // ---- Build sections
 
     const recsForYou: RecForYou[] = [];
-    recs.forEach((r, i) => {
-        const titleResult = recTitleResults[i];
-        if (titleResult.status !== 'fulfilled') return;
+    recs.forEach((r) => {
+        const titleRow = titleByKey.get(`${r.media_type}:${r.tmdb_id}`);
+        if (!titleRow) return;
         const senderProfile = r.from_user_id
             ? senderProfileById.get(r.from_user_id)
             : null;
@@ -399,8 +370,8 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             id: r.id,
             tmdbId: r.tmdb_id,
             mediaType: r.media_type as MediaType,
-            title: titleResult.value.title,
-            posterPath: titleResult.value.posterPath,
+            title: titleRow.title ?? '',
+            posterPath: titleRow.poster_path,
             note: typeof r.note === 'string' && r.note.length > 0 ? r.note : null,
             sender: {
                 // Fallback to the rec id when the sender's profile is
@@ -416,9 +387,9 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     });
 
     const friendCards: FriendCard[] = [];
-    friendShowGroups.forEach((group, i) => {
-        const titleResult = friendTitleResults[i];
-        if (titleResult.status !== 'fulfilled') return;
+    friendShowGroups.forEach((group) => {
+        const titleRow = titleByKey.get(`${group.mediaType}:${group.tmdbId}`);
+        if (!titleRow) return;
         const watchers = group.watcherIds.map((id) => {
             const profile = friendProfileById.get(id);
             return {
@@ -430,24 +401,26 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         friendCards.push({
             tmdbId: group.tmdbId,
             mediaType: group.mediaType,
-            title: titleResult.value.title,
-            posterPath: titleResult.value.posterPath,
+            title: titleRow.title ?? '',
+            posterPath: titleRow.poster_path,
             watchers,
             totalWatchers: watchers.length,
         });
     });
 
     const currentlyWatching: WatchingItem[] = [];
-    watchingRows.forEach((w, i) => {
-        const titleResult = watchingTitleResults[i];
-        if (titleResult.status !== 'fulfilled') return;
+    watchingRows.forEach((w) => {
+        const titleRow = titleByKey.get(`${w.media_type}:${w.tmdb_id}`);
+        if (!titleRow) return;
         currentlyWatching.push({
             tmdbId: w.tmdb_id,
             mediaType: w.media_type as MediaType,
             rating: typeof w.rating === 'number' ? w.rating : null,
-            title: titleResult.value.title,
-            posterPath: titleResult.value.posterPath,
-            year: titleResult.value.year,
+            title: titleRow.title ?? '',
+            posterPath: titleRow.poster_path,
+            year: titleRow.release_date
+                ? titleRow.release_date.slice(0, 4)
+                : '',
             addedAt: typeof w.created_at === 'string' ? w.created_at : '',
         });
     });

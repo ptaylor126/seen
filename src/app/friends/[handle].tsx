@@ -22,7 +22,8 @@ import {
 } from '@/lib/library-view';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { fetchTitlesByItems } from '@/lib/titles';
+import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -114,25 +115,6 @@ function emptyMessage(status: ItemStatus, displayName: string): string {
         case 'watched':
             return `${displayName} hasn't marked anything watched yet.`;
     }
-}
-
-// N+1 TMDB metadata fetch — same trade-off as Library. expo-image
-// caches posters by URL; only the JSON metadata is the real cost.
-async function fetchItemMeta(tmdbId: number, mediaType: MediaType) {
-    if (mediaType === 'movie') {
-        const m = await getMovie(tmdbId);
-        return {
-            title: m.title,
-            posterPath: m.poster_path,
-            year: m.release_date ? m.release_date.slice(0, 4) : '',
-        };
-    }
-    const t = await getTV(tmdbId);
-    return {
-        title: t.name,
-        posterPath: t.poster_path,
-        year: t.first_air_date ? t.first_air_date.slice(0, 4) : '',
-    };
 }
 
 export default function FriendDetailScreen() {
@@ -265,38 +247,31 @@ export default function FriendDetailScreen() {
                 if (!active) return;
                 if (error) throw error;
 
-                const placeholders: ItemRow[] = (rows ?? []).map((r) => ({
-                    id: r.id,
-                    tmdbId: r.tmdb_id,
-                    mediaType: r.media_type as MediaType,
-                    rating: typeof r.rating === 'number' ? r.rating : null,
-                    watchedAt: r.watched_at,
-                    title: '',
-                    posterPath: null,
-                    year: '',
-                }));
-                setItems(placeholders);
-
-                // Resolve TMDB metadata in parallel. allSettled so one
-                // bad lookup doesn't blank the whole list.
-                const metas = await Promise.allSettled(
-                    placeholders.map((r) => fetchItemMeta(r.tmdbId, r.mediaType)),
-                );
+                // Stage 4: pull title metadata from the shared
+                // public.titles catalogue in one batched query (down
+                // from N per-item TMDB calls). Missing key → empty
+                // strings + null poster, the same placeholder shape
+                // the prior per-item TMDB-failure path landed on.
+                const titleByKey = await fetchTitlesByItems(rows ?? []);
                 if (!active) return;
-                setItems(
-                    placeholders.map((r, i) => {
-                        const meta = metas[i];
-                        if (meta.status === 'fulfilled') {
-                            return {
-                                ...r,
-                                title: meta.value.title,
-                                posterPath: meta.value.posterPath,
-                                year: meta.value.year,
-                            };
-                        }
-                        return r;
-                    }),
-                );
+                const resolved: ItemRow[] = (rows ?? []).map((r) => {
+                    const titleRow = titleByKey.get(
+                        `${r.media_type}:${r.tmdb_id}`,
+                    );
+                    return {
+                        id: r.id,
+                        tmdbId: r.tmdb_id,
+                        mediaType: r.media_type as MediaType,
+                        rating: typeof r.rating === 'number' ? r.rating : null,
+                        watchedAt: r.watched_at,
+                        title: titleRow?.title ?? '',
+                        posterPath: titleRow?.poster_path ?? null,
+                        year: titleRow?.release_date
+                            ? titleRow.release_date.slice(0, 4)
+                            : '',
+                    };
+                });
+                setItems(resolved);
             } catch (err) {
                 if (!active) return;
                 console.error('friend items fetch failed:', err);

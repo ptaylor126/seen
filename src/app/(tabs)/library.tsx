@@ -36,7 +36,8 @@ import {
 } from '@/lib/library-view';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { fetchTitlesByItems } from '@/lib/titles';
+import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -58,7 +59,12 @@ interface LibraryRow {
     title: string;
     posterPath: string | null;
     year: string;
-    metaLoaded: boolean;
+    // Read from the titles row for stage-5 genre / language filters
+    // (GIN index on titles.genre_ids exists already). Not rendered by
+    // the current library UI; carried on the row so the future filter
+    // is a render-side change, not another loader rewrite.
+    originalLanguage: string | null;
+    genreIds: number[] | null;
     // Populated when one or more friends have recommended this title.
     // Senders are deduped; totalCount === senders.length today but kept
     // separate so we can later cap the displayed list.
@@ -158,25 +164,6 @@ function getGridCellWidth(cols: LibraryGridCols, screenWidth: number): number {
     const gap = GRID_GAP_BY_COLS[cols];
     const usable = screenWidth - 2 * spacing.base;
     return Math.floor((usable - (cols - 1) * gap) / cols);
-}
-
-// N+1 metadata fetch — see prior journal entry for the trade-off. Posters
-// cache at the expo-image layer; only the JSON metadata is the real cost.
-async function fetchItemMeta(tmdbId: number, mediaType: MediaType) {
-    if (mediaType === 'movie') {
-        const m = await getMovie(tmdbId);
-        return {
-            title: m.title,
-            posterPath: m.poster_path,
-            year: m.release_date ? m.release_date.slice(0, 4) : '',
-        };
-    }
-    const t = await getTV(tmdbId);
-    return {
-        title: t.name,
-        posterPath: t.poster_path,
-        year: t.first_air_date ? t.first_air_date.slice(0, 4) : '',
-    };
 }
 
 export default function LibraryScreen() {
@@ -320,23 +307,20 @@ export default function LibraryScreen() {
                         ]),
                     );
 
-                    const metaResults = await Promise.allSettled(
-                        itemList.map((row) =>
-                            fetchItemMeta(row.tmdb_id, row.media_type as MediaType),
-                        ),
-                    );
+                    // Stage 4: title metadata now comes from the shared
+                    // public.titles catalogue in one batched query
+                    // instead of N TMDB calls. Stitched in JS by
+                    // (media_type, tmdb_id). Missing key → the same
+                    // 'Unable to load title' / null-poster fallback the
+                    // prior TMDB-failure path produced, so the render
+                    // doesn't need a new code path.
+                    const titleByKey = await fetchTitlesByItems(itemList);
                     if (!active) return;
 
-                    const combined: LibraryRow[] = itemList.map((row, i) => {
-                        const result = metaResults[i];
-                        const meta =
-                            result.status === 'fulfilled'
-                                ? result.value
-                                : {
-                                      title: 'Unable to load title',
-                                      posterPath: null,
-                                      year: '',
-                                  };
+                    const combined: LibraryRow[] = itemList.map((row) => {
+                        const titleRow = titleByKey.get(
+                            `${row.media_type}:${row.tmdb_id}`,
+                        );
                         const senderIds =
                             senderIdsByItem.get(`${row.media_type}:${row.tmdb_id}`) ??
                             [];
@@ -350,8 +334,13 @@ export default function LibraryScreen() {
                             rating: row.rating,
                             watched_at: row.watched_at,
                             updated_at: row.updated_at,
-                            ...meta,
-                            metaLoaded: result.status === 'fulfilled',
+                            title: titleRow?.title ?? 'Unable to load title',
+                            posterPath: titleRow?.poster_path ?? null,
+                            year: titleRow?.release_date
+                                ? titleRow.release_date.slice(0, 4)
+                                : '',
+                            originalLanguage: titleRow?.original_language ?? null,
+                            genreIds: titleRow?.genre_ids ?? null,
                             recAttribution:
                                 senders.length > 0
                                     ? { senders, totalCount: senders.length }
