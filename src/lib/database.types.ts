@@ -552,6 +552,18 @@ export type Database = {
         Args: { request_id: string }
         Returns: undefined
       }
+      ensure_title: {
+        Args: {
+          genre_ids: number[]
+          media_type: string
+          original_language: string
+          poster_path: string
+          release_date: string
+          title: string
+          tmdb_id: number
+        }
+        Returns: undefined
+      }
       generate_invite_token: { Args: never; Returns: string }
       is_friend_of_auth: { Args: { other_user: string }; Returns: boolean }
       is_item_visible_to_auth: {

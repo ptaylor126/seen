@@ -22,6 +22,7 @@ import { RatingSheet } from '@/components/rating-sheet';
 import { getRegion } from '@/lib/locale';
 import { applyWatchedRating, formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
+import { ensureTitle } from '@/lib/titles';
 import {
     getMovie,
     getMovieWatchProviders,
@@ -602,6 +603,35 @@ export default function TitleDetailScreen() {
                 .from('items')
                 .upsert(row, { onConflict: 'user_id,tmdb_id,media_type' });
             if (upsertError) throw upsertError;
+
+            // Stamp the shared catalogue with this title's TMDB metadata.
+            // Non-blocking — `ensureTitle` swallows its own errors. The
+            // detail screen is guaranteed to have `detail.data` populated
+            // before any status-change button is mountable (render guards
+            // on `!detail` above), so the if-guard here is for the type
+            // narrower, not a runtime branch the user can reach.
+            if (detail) {
+                const rawDate =
+                    detail.type === 'movie'
+                        ? detail.data.release_date
+                        : detail.data.first_air_date;
+                const titleText =
+                    detail.type === 'movie'
+                        ? detail.data.title
+                        : detail.data.name;
+                void ensureTitle({
+                    tmdbId,
+                    mediaType,
+                    title: titleText,
+                    posterPath: detail.data.poster_path,
+                    releaseDate:
+                        typeof rawDate === 'string' && rawDate.length > 0
+                            ? rawDate
+                            : null,
+                    originalLanguage: detail.data.original_language,
+                    genreIds: detail.data.genres.map((g) => g.id),
+                });
+            }
 
             setCurrentStatus(newStatus);
             if (newStatus === 'watched') {

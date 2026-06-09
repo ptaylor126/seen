@@ -25,6 +25,7 @@ import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
+import { ensureTitle } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
@@ -99,6 +100,29 @@ export default function CurrentlyWatchingScreen() {
                 { onConflict: 'user_id,tmdb_id,media_type' },
             );
             if (error) throw error;
+
+            // Stamp the shared catalogue. Non-blocking — `ensureTitle`
+            // swallows its own errors. Search results carry `genre_ids`
+            // and `original_language` directly (the detail endpoint isn't
+            // hit on this path), and `poster_path` is non-null by the
+            // SearchableItem narrowing.
+            const rawDate =
+                item.media_type === 'movie'
+                    ? item.release_date
+                    : item.first_air_date;
+            void ensureTitle({
+                tmdbId: item.id,
+                mediaType: item.media_type,
+                title,
+                posterPath: item.poster_path,
+                releaseDate:
+                    typeof rawDate === 'string' && rawDate.length > 0
+                        ? rawDate
+                        : null,
+                originalLanguage: item.original_language,
+                genreIds: item.genre_ids,
+            });
+
             setAdded({
                 tmdbId: item.id,
                 mediaType: item.media_type,
