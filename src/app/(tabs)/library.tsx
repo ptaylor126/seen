@@ -53,11 +53,11 @@ type MediaType = 'movie' | 'tv';
 
 interface LibraryRow {
     id: string;
-    tmdb_id: number;
-    media_type: MediaType;
+    tmdbId: number;
+    mediaType: MediaType;
     rating: number | null;
-    watched_at: string | null;
-    updated_at: string;
+    watchedAt: string | null;
+    updatedAt: string;
     title: string;
     posterPath: string | null;
     year: string;
@@ -343,11 +343,11 @@ export default function LibraryScreen() {
                             .filter((s): s is Sender => !!s);
                         return {
                             id: row.id,
-                            tmdb_id: row.tmdb_id,
-                            media_type: row.media_type as MediaType,
+                            tmdbId: row.tmdb_id,
+                            mediaType: row.media_type as MediaType,
                             rating: row.rating,
-                            watched_at: row.watched_at,
-                            updated_at: row.updated_at,
+                            watchedAt: row.watched_at,
+                            updatedAt: row.updated_at,
                             title: titleRow?.title ?? 'Unable to load title',
                             posterPath: titleRow?.poster_path ?? null,
                             year: titleRow?.release_date
@@ -515,8 +515,8 @@ export default function LibraryScreen() {
                     router.push({
                         pathname: '/title/[mediaType]/[tmdbId]',
                         params: {
-                            mediaType: item.media_type,
-                            tmdbId: String(item.tmdb_id),
+                            mediaType: item.mediaType,
+                            tmdbId: String(item.tmdbId),
                         },
                     })
                 }
@@ -602,11 +602,11 @@ export default function LibraryScreen() {
     }
 
     function renderRow({ item }: { item: LibraryRow }) {
-        const mediaLabel = item.media_type === 'movie' ? 'Movie' : 'TV Show';
+        const mediaLabel = item.mediaType === 'movie' ? 'Movie' : 'TV Show';
         const metaLine = [item.year, mediaLabel].filter(Boolean).join(' · ');
 
-        const watchedDate = item.watched_at
-            ? new Date(item.watched_at).toLocaleDateString()
+        const watchedDate = item.watchedAt
+            ? new Date(item.watchedAt).toLocaleDateString()
             : '';
         const ratingDisplay =
             item.rating !== null ? formatRatingStars(item.rating) : '';
@@ -619,8 +619,8 @@ export default function LibraryScreen() {
                     router.push({
                         pathname: '/title/[mediaType]/[tmdbId]',
                         params: {
-                            mediaType: item.media_type,
-                            tmdbId: String(item.tmdb_id),
+                            mediaType: item.mediaType,
+                            tmdbId: String(item.tmdbId),
                         },
                     })
                 }
