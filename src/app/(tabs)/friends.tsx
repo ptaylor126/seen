@@ -33,11 +33,14 @@ interface FriendRow {
 const AVATAR_SIZE = 44;
 
 // List bottom padding so the last friend isn't hidden behind the
-// floating two-button action cluster (Add friend / Invite link). The
-// cluster is still a single pill-height row, so the clear distance
-// matches a single button: ~46pt + bottom offset (spacing.base) +
+// floating Add friend button. ~46pt + bottom offset (spacing.base) +
 // breathing room. The tab bar lives outside the screen view and is
-// already cleared by React Navigation.
+// already cleared by React Navigation. (Was previously sized for a
+// two-button cluster including an Invite link affordance; that
+// affordance was removed because the invite URL doesn't deep-link
+// into the app yet — see src/app/friends/invite.tsx header. The
+// backend invite_links + claim_invite_link path stays in place for
+// when Universal Link / App Link plumbing lands.)
 const FLOATING_BUTTON_CLEAR = spacing.xxxl + spacing.base;
 
 export default function FriendsScreen() {
@@ -196,28 +199,9 @@ export default function FriendsScreen() {
                             { color: palette.textMuted },
                         ]}
                     >
-                        Share your invite link, or add someone by their handle.
+                        Add someone by their handle.
                     </Text>
                     <View style={styles.emptyActions}>
-                        <Pressable
-                            onPress={() => router.push('/friends/invite')}
-                            style={({ pressed }) => [
-                                styles.primaryButton,
-                                {
-                                    backgroundColor: palette.accent,
-                                    opacity: pressed ? 0.6 : 1,
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.textInverse },
-                                ]}
-                            >
-                                Share your invite link
-                            </Text>
-                        </Pressable>
                         <Pressable
                             onPress={() => router.push('/friends/add')}
                             style={({ pressed }) => [
@@ -283,8 +267,8 @@ export default function FriendsScreen() {
                     ) : (
                         <View style={styles.fillCenter}>
                             <Text style={[typography.body, { color: palette.textMuted }]}>
-                                No friends yet — check pending requests or invite
-                                someone.
+                                No friends yet — check pending requests or add
+                                someone by their handle.
                             </Text>
                         </View>
                     )}
@@ -293,9 +277,9 @@ export default function FriendsScreen() {
 
             {showFloatingActions && (
                 <View style={styles.floatingActions} pointerEvents="box-none">
-                    {/* Primary: find someone already on Seen and send a
-                        friend request. The request must be accepted by
-                        the recipient — not an auto-friendship. */}
+                    {/* Find someone already on Seen and send a friend
+                        request. The request must be accepted by the
+                        recipient — not an auto-friendship. */}
                     <Pressable
                         onPress={() => router.push('/friends/add')}
                         style={({ pressed }) => [
@@ -315,31 +299,6 @@ export default function FriendsScreen() {
                             ]}
                         >
                             Add friend
-                        </Text>
-                    </Pressable>
-                    {/* Secondary: share an invite link to bring someone
-                        new in. Accepting the link auto-friends, so this
-                        is the path for people not yet on Seen. */}
-                    <Pressable
-                        onPress={() => router.push('/friends/invite')}
-                        style={({ pressed }) => [
-                            styles.floatingSecondaryButton,
-                            {
-                                borderColor: palette.accent,
-                                backgroundColor: palette.bg,
-                                opacity: pressed ? 0.6 : 1,
-                            },
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Share invite link"
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.accent },
-                            ]}
-                        >
-                            Invite link
                         </Text>
                     </Pressable>
                 </View>
@@ -386,23 +345,12 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     floatingPrimaryButton: {
-        // Same pill shape as the previous single invite button so the
-        // anchor visually matches what was there.
+        // Pill shape sized to match the previous floating action
+        // cluster's footprint so the anchor visually matches what
+        // was there.
         paddingVertical: spacing.md,
         paddingHorizontal: spacing.lg,
         borderRadius: radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    floatingSecondaryButton: {
-        // Outlined pill in the same shape — accent border, cream fill
-        // (NOT transparent, so the list scrolling behind doesn't show
-        // through the rounded corners). Vertical padding accounts for
-        // the 1.5pt border to keep the cluster's heights identical.
-        paddingVertical: spacing.md - 1.5,
-        paddingHorizontal: spacing.lg - 1.5,
-        borderRadius: radius.full,
-        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -438,12 +386,6 @@ const styles = StyleSheet.create({
     emptyActions: {
         alignSelf: 'stretch',
         gap: spacing.sm,
-    },
-    primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     secondaryButton: {
         paddingVertical: spacing.md,
