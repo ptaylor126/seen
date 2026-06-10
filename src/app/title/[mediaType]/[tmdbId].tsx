@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { AvatarStack, type AvatarStackItem } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
+import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
 import { applyWatchedRating, formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
@@ -820,24 +821,19 @@ export default function TitleDetailScreen() {
               }`;
     // Original language as a readable name when it's NOT English.
     // English-language titles are the common case in an alpha that's
-    // English-speaking — surfacing "English" on every American film is
-    // noise. Foreign-language titles get a useful "Japanese" / "Korean"
-    // / etc. flag. Intl.DisplayNames ships on Hermes (Expo SDK 54);
-    // try/catch guards against an unexpected runtime or a malformed
-    // code from TMDB. When 'en' is no longer the assumed default
-    // (multi-region launch), swap the filter for a device-locale
-    // comparison.
-    const languageName = (() => {
-        const code = detail.data.original_language;
-        if (!code || code === 'en') return '';
-        try {
-            return (
-                new Intl.DisplayNames(['en'], { type: 'language' }).of(code) ?? ''
-            );
-        } catch {
-            return '';
-        }
-    })();
+    // English-speaking — surfacing "English" on every American film
+    // is noise. Foreign-language titles get a useful "Japanese" /
+    // "Korean" / etc. flag. Name comes from LANGUAGE_NAMES, a static
+    // ISO 639-1 → English map (Hermes' Intl.DisplayNames was
+    // unreliable across platforms — see the file header on
+    // src/lib/languages.ts). An unmapped code is omitted from the
+    // meta line; with ~50 entries in the map, that should be rare,
+    // and the fix is one map entry away. When 'en' is no longer the
+    // assumed default (multi-region launch), swap the filter for a
+    // device-locale comparison.
+    const code = detail.data.original_language;
+    const languageName =
+        code && code !== 'en' ? LANGUAGE_NAMES.get(code) ?? '' : '';
     const metaLine = [year, extraMeta, languageName].filter(Boolean).join(' · ');
 
     return (

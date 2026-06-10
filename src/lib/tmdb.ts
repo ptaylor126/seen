@@ -164,8 +164,10 @@ export interface TMDBMovie {
     vote_average: number;
     genres: Array<{ id: number; name: string }>;
     // ISO 639-1 code (e.g. 'en', 'ja', 'ko'). Stored as-is on
-    // items.original_language; displayed via Intl.DisplayNames at
-    // render time so we don't have to maintain a hand-rolled map.
+    // items.original_language; mapped to a display name at render
+    // time via the static LANGUAGE_NAMES map in src/lib/languages.ts
+    // (Hermes' Intl.DisplayNames isn't reliable enough to depend on
+    // — see that file's header).
     original_language: string;
     // Populated only when the caller passes { appendCredits: true } to
     // getMovie() — flows through as TMDB's append_to_response=credits
