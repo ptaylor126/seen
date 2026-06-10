@@ -29,6 +29,7 @@ import {
     getTV,
     getTVWatchProviders,
     imageUrl,
+    type TMDBCastMember,
     type TMDBMovie,
     type TMDBTV,
     type TMDBWatchProvidersRegion,
@@ -241,10 +242,19 @@ export default function TitleDetailScreen() {
 
         let active = true;
 
+        // appendCredits: true folds the cast list into the same TMDB
+        // round-trip as the detail fetch (via append_to_response=credits)
+        // — the cast row below renders from detail.data.credits.cast.
         const detailPromise: Promise<Detail> =
             mediaType === 'movie'
-                ? getMovie(tmdbId).then((data) => ({ type: 'movie' as const, data }))
-                : getTV(tmdbId).then((data) => ({ type: 'tv' as const, data }));
+                ? getMovie(tmdbId, { appendCredits: true }).then((data) => ({
+                      type: 'movie' as const,
+                      data,
+                  }))
+                : getTV(tmdbId, { appendCredits: true }).then((data) => ({
+                      type: 'tv' as const,
+                      data,
+                  }));
 
         // Watch providers fetched in parallel — failure of this call
         // should NOT take down the title screen, so it's swallowed to
@@ -808,7 +818,27 @@ export default function TitleDetailScreen() {
             : `${detail.data.number_of_seasons} season${
                   detail.data.number_of_seasons === 1 ? '' : 's'
               }`;
-    const metaLine = [year, extraMeta].filter(Boolean).join(' · ');
+    // Original language as a readable name when it's NOT English.
+    // English-language titles are the common case in an alpha that's
+    // English-speaking — surfacing "English" on every American film is
+    // noise. Foreign-language titles get a useful "Japanese" / "Korean"
+    // / etc. flag. Intl.DisplayNames ships on Hermes (Expo SDK 54);
+    // try/catch guards against an unexpected runtime or a malformed
+    // code from TMDB. When 'en' is no longer the assumed default
+    // (multi-region launch), swap the filter for a device-locale
+    // comparison.
+    const languageName = (() => {
+        const code = detail.data.original_language;
+        if (!code || code === 'en') return '';
+        try {
+            return (
+                new Intl.DisplayNames(['en'], { type: 'language' }).of(code) ?? ''
+            );
+        } catch {
+            return '';
+        }
+    })();
+    const metaLine = [year, extraMeta, languageName].filter(Boolean).join(' · ');
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -947,6 +977,26 @@ export default function TitleDetailScreen() {
                         ))}
                     </View>
                 )}
+
+                {/* Cast — top ~10 by billing order. Tapping any card
+                    routes to the existing /person/[personId] screen so
+                    the user stays in-app on the actor's filmography
+                    instead of bouncing to TMDB. Section omitted
+                    entirely when credits weren't loaded or cast is
+                    empty (the && guard handles both). */}
+                {detail.data.credits?.cast &&
+                    detail.data.credits.cast.length > 0 && (
+                        <CastRow
+                            cast={detail.data.credits.cast}
+                            palette={palette}
+                            onSelect={(personId) =>
+                                router.push({
+                                    pathname: '/person/[personId]',
+                                    params: { personId: String(personId) },
+                                })
+                            }
+                        />
+                    )}
 
                 {detail.data.overview ? (
                     <Text
@@ -1135,6 +1185,94 @@ function CloseButton({
         >
             <X color={fg} size={20} strokeWidth={ICON_STROKE_WIDTH} />
         </Pressable>
+    );
+}
+
+// Top-billed cast as a horizontal-scrolling photo row under a "Cast"
+// heading. Sourced from append_to_response=credits on the title detail
+// fetch (no extra round-trip). Each card taps through to the existing
+// /person/[personId] screen, keeping the user in-app on the actor's
+// filmography instead of bouncing out. Top 10 by billing order — TMDB
+// usually returns cast pre-sorted but the explicit sort guards against
+// API surprises. Missing profile_path falls back to a tinted block
+// (matches the placeholder pattern this screen uses elsewhere for
+// missing posters).
+function CastRow({
+    cast,
+    palette,
+    onSelect,
+}: {
+    cast: TMDBCastMember[];
+    palette: Palette;
+    onSelect: (personId: number) => void;
+}) {
+    const top = cast
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .slice(0, 10);
+    if (top.length === 0) return null;
+    return (
+        <View style={styles.castSection}>
+            <Text
+                style={[
+                    typography.bodyEmphasis,
+                    styles.castHeading,
+                    { color: palette.text },
+                ]}
+            >
+                Cast
+            </Text>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.castScrollContent}
+            >
+                {top.map((member) => (
+                    <Pressable
+                        key={member.id}
+                        onPress={() => onSelect(member.id)}
+                        style={({ pressed }) => [
+                            styles.castCell,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                        accessibilityRole="link"
+                        accessibilityLabel={
+                            member.character
+                                ? `${member.name}, ${member.character}`
+                                : member.name
+                        }
+                    >
+                        {member.profile_path ? (
+                            <Image
+                                source={{
+                                    uri: imageUrl(member.profile_path, 'w185'),
+                                }}
+                                style={styles.castPhoto}
+                                contentFit="cover"
+                                transition={150}
+                            />
+                        ) : (
+                            <View
+                                style={[
+                                    styles.castPhoto,
+                                    { backgroundColor: palette.surfaceAlt },
+                                ]}
+                            />
+                        )}
+                        <Text
+                            style={[
+                                typography.caption,
+                                styles.castName,
+                                { color: palette.text },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            {member.name}
+                        </Text>
+                    </Pressable>
+                ))}
+            </ScrollView>
+        </View>
     );
 }
 
@@ -1637,6 +1775,32 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.sm,
         paddingVertical: spacing.xs,
         borderRadius: radius.full,
+    },
+    castSection: {
+        marginTop: spacing.lg,
+    },
+    castHeading: {
+        paddingHorizontal: spacing.base,
+        marginBottom: spacing.sm,
+    },
+    castScrollContent: {
+        paddingHorizontal: spacing.base,
+        gap: spacing.md,
+    },
+    castCell: {
+        // Fixed width so two-line names don't push following cards
+        // out of alignment. Width matches the photo so the name caps
+        // visually under the headshot.
+        width: 88,
+        gap: spacing.xs,
+    },
+    castPhoto: {
+        width: 88,
+        height: 88,
+        borderRadius: radius.full,
+    },
+    castName: {
+        textAlign: 'center',
     },
     overview: {
         paddingHorizontal: spacing.base,

@@ -139,6 +139,18 @@ export interface TMDBSearchResult<T> {
     total_results: number;
 }
 
+// Slim cast-member shape — only the fields the title-screen cast row
+// renders. TMDB returns more (gender, popularity, known_for_department,
+// cast_id, credit_id, original_name, adult) — added on demand if a
+// future surface needs them.
+export interface TMDBCastMember {
+    id: number;
+    name: string;
+    character: string | null;
+    profile_path: string | null;
+    order: number;  // billing order; 0 = top-billed
+}
+
 export interface TMDBMovie {
     id: number;
     title: string;
@@ -155,6 +167,12 @@ export interface TMDBMovie {
     // items.original_language; displayed via Intl.DisplayNames at
     // render time so we don't have to maintain a hand-rolled map.
     original_language: string;
+    // Populated only when the caller passes { appendCredits: true } to
+    // getMovie() — flows through as TMDB's append_to_response=credits
+    // query param. crew is dropped from the type because no current
+    // surface reads it; widen the shape if a "Directed by" line ever
+    // needs it.
+    credits?: { cast: TMDBCastMember[] };
 }
 
 export interface TMDBTV {
@@ -173,6 +191,7 @@ export interface TMDBTV {
     genres: Array<{ id: number; name: string }>;
     status: string;
     original_language: string;
+    credits?: { cast: TMDBCastMember[] };
 }
 
 // Watch providers — JustWatch-sourced availability data per region.
@@ -314,12 +333,31 @@ export function searchTV(
     return callProxy('search/tv', { query, page });
 }
 
-export function getMovie(tmdbId: number): Promise<TMDBMovie> {
-    return callProxy(`movie/${tmdbId}`);
+// `appendCredits: true` adds TMDB's `append_to_response=credits` param
+// so the detail response carries the cast inline — one request instead
+// of a follow-up /movie/{id}/credits call. Default false to keep the
+// payload small on callers that don't render cast (the ensureTitle
+// forward-path stamps title metadata only). The tmdb-proxy allowlist
+// matches on path only, so the appended query param flows through
+// without any proxy migration.
+export function getMovie(
+    tmdbId: number,
+    options?: { appendCredits?: boolean },
+): Promise<TMDBMovie> {
+    return callProxy(
+        `movie/${tmdbId}`,
+        options?.appendCredits ? { append_to_response: 'credits' } : {},
+    );
 }
 
-export function getTV(tmdbId: number): Promise<TMDBTV> {
-    return callProxy(`tv/${tmdbId}`);
+export function getTV(
+    tmdbId: number,
+    options?: { appendCredits?: boolean },
+): Promise<TMDBTV> {
+    return callProxy(
+        `tv/${tmdbId}`,
+        options?.appendCredits ? { append_to_response: 'credits' } : {},
+    );
 }
 
 export function getMovieWatchProviders(
