@@ -1,0 +1,41 @@
+-- Scoped service_role grants for the send-push-notification Edge
+-- Function. Deliberately narrow.
+--
+-- Context: same lockdown shape as 20260609120000 found on items and
+-- titles — service_role on every public table is `Dxtm/postgres`
+-- (TRUNCATE / REFERENCES / TRIGGER / MAINTAIN only, no SELECT /
+-- INSERT / UPDATE / DELETE). That posture is a useful security
+-- property: a leaked service-role key cannot reach user data via the
+-- REST API because the GRANT layer rejects every DML attempt before
+-- RLS-bypass even matters. RLS-bypass is necessary but NOT sufficient
+-- to write or read; the grant has to be there too. The send-push
+-- Edge Function uses service_role to cross-user-read tokens for a
+-- notification's recipient — that read was failing with
+-- "permission denied for table push_tokens" (42501) before this grant.
+--
+-- This migration opens only the minimum surface the Edge Function
+-- needs on this table:
+--
+--   - push_tokens.SELECT → look up recipient tokens for fan-out
+--                          (the cross-user read; RLS-bypass needed
+--                          because the Edge Function operates on
+--                          behalf of the system, not the recipient).
+--   - push_tokens.DELETE → reap tokens that Expo's push API reports
+--                          as DeviceNotRegistered (uninstalled app,
+--                          permanent invalidation). Without this,
+--                          stale tokens would accumulate and every
+--                          send would re-attempt them.
+--
+-- Deliberately NOT granted:
+--   - push_tokens.INSERT — tokens are inserted by the CLIENT via
+--     savePushToken() running under the user's JWT (push_tokens has
+--     its own per-user INSERT policy, see 20260518150956). The Edge
+--     Function never creates rows.
+--   - push_tokens.UPDATE — same: client-side upserts only.
+--   - Any other table. Untouched here on purpose; matches the
+--     scoped-grant precedent set by 20260609120000 for items/titles.
+--   - ALTER DEFAULT PRIVILEGES on schema public. Future tables stay
+--     locked-down-by-default; whoever adds one weighs whether
+--     service_role needs access table-by-table.
+
+grant select, delete on table public.push_tokens to service_role;

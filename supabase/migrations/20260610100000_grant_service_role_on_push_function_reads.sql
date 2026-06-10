@@ -1,0 +1,47 @@
+-- Scoped service_role SELECT grants for the send-push-notification
+-- Edge Function's remaining table reads. Same shape as
+-- 20260609120000 (items / titles) and 20260609140000 (push_tokens).
+--
+-- Context: service_role on every public table is `Dxtm/postgres`
+-- (TRUNCATE / REFERENCES / TRIGGER / MAINTAIN only, no SELECT /
+-- INSERT / UPDATE / DELETE) — a deliberate lockdown that keeps a
+-- leaked service-role key from reaching user data via REST. The
+-- send-push-notification Edge Function runs as service_role and
+-- reads three additional public tables beyond push_tokens to build
+-- push payloads. Without the grants below, those reads error with
+-- 42501 inside helper functions whose result the caller treats as
+-- "couldn't resolve required data → skip push" — so the function
+-- returns 200 message_skipped: true and the push is silently
+-- dropped. We hit exactly this on profiles (sender display name
+-- fetch failing → rec_received pushes skipped); auditing the full
+-- function caught two more reads that would have skipped on other
+-- kinds, so granting all three here in one shot rather than
+-- discovering them one skip at a time.
+--
+-- This migration opens the minimum surface the Edge Function needs:
+--
+--   - profiles.SELECT             → fetchDisplayName() for every
+--                                    push kind (sender / watcher /
+--                                    reactor / commenter name).
+--   - recommendations.SELECT      → fetchRecNote() for rec_received
+--                                    (the note becomes the push body).
+--   - recommendation_comments.SELECT → fetchCommentBody() for
+--                                       rec_commented (the comment
+--                                       text becomes the push body).
+--
+-- Deliberately NOT granted:
+--   - INSERT / UPDATE / DELETE on any of these three. The Edge
+--     Function only reads them; writes happen via existing per-user
+--     RLS-gated paths (profiles via signup trigger / own-row
+--     UPDATE; recommendations via send_recommendation RPC;
+--     recommendation_comments via the comments INSERT policy).
+--   - Any other public table. send-push-notification's full DB
+--     surface is exactly these three plus push_tokens (audited from
+--     index.ts — every supabase.from(...) call enumerated).
+--   - ALTER DEFAULT PRIVILEGES on schema public. Future tables stay
+--     locked-down-by-default; matches the precedent of every prior
+--     scoped grant.
+
+grant select on table public.profiles                to service_role;
+grant select on table public.recommendations         to service_role;
+grant select on table public.recommendation_comments to service_role;
