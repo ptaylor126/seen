@@ -28,9 +28,12 @@
  *     alphabetically.
  *
  * Side effects:
- *   - Tab-default sort reset: snap sortBy to DEFAULT_SORT_BY_TAB on
- *     activeTab change so "rating-desc on Watchlist" doesn't bubble
- *     unrated rows to the top of an irrelevant tab.
+ *   - Invalid-sort clear: when the active tab doesn't offer the
+ *     current sortBy (e.g. swap Watched → Watchlist while sorted by
+ *     Rating; Watchlist only offers Date added), snap to the new
+ *     tab's default. A valid sort is preserved across compatible
+ *     tabs (e.g. Date watched stays selected when swapping Watching
+ *     ↔ Watched).
  *   - Stale-genre clear: drop genreFilter to null if the active id
  *     leaves the visible-genre set (e.g. media filter narrows rows).
  */
@@ -79,17 +82,38 @@ export const SORT_LABELS: Record<SortOption, string> = {
 };
 
 // Per-tab sort default — Watchlist / Watching emphasise when added,
-// Watched emphasises when seen. Snaps back to this on tab change so
-// the wrong sort field doesn't carry across tabs.
+// Watched emphasises when seen. Used when the current sortBy is
+// invalid for a newly-active tab (see the invalid-sort clear effect
+// below).
 export const DEFAULT_SORT_BY_TAB: Record<ItemStatus, SortOption> = {
     watchlist: 'dateAdded',
     watching: 'dateAdded',
     watched: 'dateWatched',
 };
 
+// Per-tab sort options. Watchlist items are unwatched and typically
+// unrated, so "Date watched" and "Rating" sort nothing meaningful
+// there — offer only "Date added". Watching and Watched both support
+// the full set. Order matters: it's the order the sort picker lists
+// options to the user.
+//
+// Invariant: DEFAULT_SORT_BY_TAB[tab] must be a member of
+// SORT_OPTIONS_BY_TAB[tab] for every tab. (Verified by inspection;
+// adding a tab here without updating the default would surface as a
+// silent default-snap to an off-list option.)
+export const SORT_OPTIONS_BY_TAB: Record<ItemStatus, readonly SortOption[]> = {
+    watchlist: ['dateAdded'],
+    watching: ['dateWatched', 'dateAdded', 'rating'],
+    watched: ['dateWatched', 'dateAdded', 'rating'],
+};
+
 export interface UseLibraryFiltersResult<T extends FilterableLibraryRow> {
     visibleRows: T[];
     availableGenres: Array<{ id: number; name: string }>;
+    // Sort options offered to the user for the active tab. The picker
+    // lists exactly these; tabs that only have one meaningful sort
+    // (Watchlist → Date added only) still get a single-entry array.
+    availableSortOptions: readonly SortOption[];
     localQuery: string;
     setLocalQuery: (q: string) => void;
     mediaFilter: MediaFilter;
@@ -139,12 +163,22 @@ export function useLibraryFilters<T extends FilterableLibraryRow>(
     const [genreFilter, setGenreFilter] = useState<number | null>(null);
     const [genreStripOpen, setGenreStripOpen] = useState(false);
 
-    // Snap sort to the per-tab default whenever the tab changes.
-    // Without this, swapping Watchlist → Watched with rating-desc
-    // selected would surface unrated rows at the top of the new tab.
+    const availableSortOptions = SORT_OPTIONS_BY_TAB[activeTab];
+
+    // Snap sort to the new tab's default ONLY if the current sortBy
+    // isn't valid for that tab. Preserving a valid sort across
+    // compatible tabs (e.g. Date watched stays selected when swapping
+    // Watching ↔ Watched) is the UX improvement that falls out of
+    // making the option set tab-specific — the previous "always
+    // reset" was a workaround for the absent gating. The dependency
+    // on sortBy is intentional: if the user picks something invalid
+    // for the current tab (shouldn't happen via the picker now, but
+    // belt-and-braces), this effect snaps them back.
     useEffect(() => {
-        setSortBy(DEFAULT_SORT_BY_TAB[activeTab]);
-    }, [activeTab]);
+        if (!availableSortOptions.includes(sortBy)) {
+            setSortBy(DEFAULT_SORT_BY_TAB[activeTab]);
+        }
+    }, [activeTab, sortBy, availableSortOptions]);
 
     // visibleRows composes title search + media filter + genre filter,
     // then ALWAYS applies the sort comparator. The raw input order
@@ -211,6 +245,7 @@ export function useLibraryFilters<T extends FilterableLibraryRow>(
     return {
         visibleRows,
         availableGenres,
+        availableSortOptions,
         localQuery,
         setLocalQuery,
         mediaFilter,

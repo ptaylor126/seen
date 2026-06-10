@@ -727,6 +727,7 @@ export default function FriendDetailScreen() {
                 setMediaFilter={filters.setMediaFilter}
                 sortBy={filters.sortBy}
                 setSortBy={filters.setSortBy}
+                availableSortOptions={filters.availableSortOptions}
                 genreFilter={filters.genreFilter}
                 setGenreFilter={filters.setGenreFilter}
                 genreStripOpen={filters.genreStripOpen}

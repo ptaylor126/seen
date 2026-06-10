@@ -54,6 +54,10 @@ interface LibraryFilterControlsProps {
     setMediaFilter: (f: MediaFilter) => void;
     sortBy: SortOption;
     setSortBy: (s: SortOption) => void;
+    // Tab-specific allowed sort options — the picker lists exactly
+    // these. Comes from useLibraryFilters; the hook also enforces
+    // that sortBy never lands outside this set.
+    availableSortOptions: readonly SortOption[];
     genreFilter: number | null;
     setGenreFilter: (id: number | null) => void;
     genreStripOpen: boolean;
@@ -67,6 +71,7 @@ export function LibraryFilterControls({
     setMediaFilter,
     sortBy,
     setSortBy,
+    availableSortOptions,
     genreFilter,
     setGenreFilter,
     genreStripOpen,
@@ -75,7 +80,7 @@ export function LibraryFilterControls({
 }: LibraryFilterControlsProps) {
     function openSortMenu() {
         Alert.alert('Sort by', undefined, [
-            ...(Object.keys(SORT_LABELS) as SortOption[]).map((opt) => ({
+            ...availableSortOptions.map((opt) => ({
                 text: SORT_LABELS[opt] + (sortBy === opt ? '  ✓' : ''),
                 onPress: () => setSortBy(opt),
             })),
