@@ -159,3 +159,28 @@ export async function maybeEnablePushAfterAccept(userId: string): Promise<void> 
         console.warn('push: enable-after-accept failed silently', err);
     }
 }
+
+// Module-level flag: prevents re-attempt within a single JS session.
+// Resets on cold launch, hot reload, or fresh bundle — the right
+// scope (one attempt per JS lifetime). Re-mounts of TabsLayout inside
+// a session (sign out + sign in, deep link from a push) get skipped.
+// Limitation: if user A signs out and user B signs in within one JS
+// lifetime, B's launch-registration is skipped. Rare for the alpha
+// (single user per device); revisit if multi-account on one device
+// becomes common.
+let launchRegistrationAttempted = false;
+
+// Launch-time push registration. Called from (tabs)/_layout.tsx once
+// per JS session for the authenticated user. Reuses
+// maybeEnablePushAfterAccept's state machine — same shape for both
+// triggers: GRANTED → silently register + save (no prompt);
+// UNDETERMINED → askPushExplainer + requestPushPermission, save if
+// granted; DENIED → no-op (iOS won't re-show the system prompt
+// anyway). The "AfterAccept" name on the underlying helper reflects
+// the original sole caller; it is now shared infrastructure behind
+// two trigger points (friend-accept + launch).
+export async function ensurePushRegistrationOnLaunch(userId: string): Promise<void> {
+    if (launchRegistrationAttempted) return;
+    launchRegistrationAttempted = true;
+    await maybeEnablePushAfterAccept(userId);
+}
