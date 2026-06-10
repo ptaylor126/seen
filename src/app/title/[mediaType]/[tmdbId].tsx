@@ -1499,7 +1499,7 @@ function WhereToWatch({
                     pressed && { opacity: 0.6 },
                 ]}
                 accessibilityRole="link"
-                accessibilityLabel="See all watch options on JustWatch"
+                accessibilityLabel="More details on JustWatch"
             >
                 <Text
                     style={[
@@ -1507,7 +1507,7 @@ function WhereToWatch({
                         { color: palette.accent },
                     ]}
                 >
-                    See all options on JustWatch
+                    More details on JustWatch
                 </Text>
                 <ExternalLink
                     color={palette.accent}
