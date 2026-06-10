@@ -153,9 +153,34 @@ Deno.serve(async (req: Request) => {
         // ---- 5. Fan out to all device tokens. Expo Push accepts up to
         //         100 messages per request; a single user rarely has
         //         more than a few devices so one request is enough.
-        const pushes: PushMessage[] = tokens.map((t) => ({
+        //
+        // Dedupe by expo_push_token VALUE before building the pushes
+        // array: a physical device can have multiple push_tokens rows
+        // (different device_ids accumulated from reinstall cycles —
+        // each install wipes AsyncStorage, generates a fresh device_id,
+        // and upserts a NEW row), but the underlying Expo push token
+        // value is the same one Expo keeps reissuing for that APNs /
+        // FCM registration. The reap-on-DeviceNotRegistered safety net
+        // doesn't fire here because Expo still considers all those
+        // tokens valid (same physical device, same registration).
+        // Result without dedup: N banners per push for a user with N
+        // duplicate rows. Set-on-value collapses them to one banner per
+        // physical device regardless of how many rows accumulated.
+        //
+        // The reap path below still works correctly: tickets returned
+        // by Expo are indexed parallel to the request, so `pushes[i]`
+        // alignment holds against the deduped pushes array. The
+        // resulting `stale` array contains expo_push_token VALUES, and
+        // `.in('expo_push_token', stale)` cleans up every row carrying
+        // a dead token regardless of device_id — which is what we
+        // want (if Expo says the token is dead, every row with it is
+        // dead too).
+        const uniqueExpoTokens = Array.from(
+            new Set(tokens.map((t) => t.expo_push_token)),
+        );
+        const pushes: PushMessage[] = uniqueExpoTokens.map((token) => ({
             ...message,
-            to: t.expo_push_token,
+            to: token,
             sound: 'default',
         }));
 
