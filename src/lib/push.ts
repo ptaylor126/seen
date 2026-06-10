@@ -15,10 +15,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import supabase from '@/lib/supabase';
 
 // Per-install device id persisted in AsyncStorage. Uninstall + reinstall
-// generates a new one — acceptable because old push_tokens rows for that
-// device will simply stop receiving (Expo returns DeviceNotRegistered
-// next send, and the Edge Function removes them then). This avoids the
-// privacy / cross-platform headaches of expo-device's hardware IDs.
+// generates a new one — that's fine because the send-push-notification
+// Edge Function dedupes by expo_push_token value at send time (one
+// banner per physical device regardless of how many push_tokens rows
+// have accumulated for it; see that function's comment on the dedup
+// step). The DeviceNotRegistered reap path in the same function is for
+// GENUINE token invalidation (app uninstalled, never reinstalled); it
+// does NOT fire when Expo reissues the same token for the same device
+// after reinstall — Expo keeps the old token "valid" in that case, so
+// rows accumulate indefinitely without the send-time dedup. If anyone
+// later considers removing that dedup, understand that the reap alone
+// won't keep duplicates out for the common iOS reinstall path. This
+// approach avoids the privacy / cross-platform headaches of
+// expo-device's hardware IDs.
 const DEVICE_ID_KEY = 'seen.push.device_id';
 
 async function getOrCreateDeviceId(): Promise<string> {
