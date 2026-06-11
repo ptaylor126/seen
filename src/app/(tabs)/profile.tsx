@@ -133,6 +133,11 @@ export default function ProfileScreen() {
             onPress: () => router.push('/profile/edit'),
         },
         {
+            id: 'favorites',
+            label: 'Edit Top 5',
+            onPress: () => router.push('/profile/favorites'),
+        },
+        {
             id: 'feedback',
             label: 'Send feedback',
             onPress: handleSendFeedback,

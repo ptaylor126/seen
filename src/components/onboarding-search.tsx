@@ -33,6 +33,12 @@ interface OnboardingSearchProps {
     // user already added them). Used in the watchlist step to prevent
     // duplicate picks. Pass an empty array to disable.
     pickedKeys?: readonly string[];
+    // Restrict results to a single media type. When undefined (the
+    // existing onboarding call sites), results include both movies AND
+    // shows — the original behaviour. Set this when the surface only
+    // accepts one kind (e.g. the favorites editor's "Add film" / "Add
+    // show" flows pick one category at a time).
+    mediaType?: 'movie' | 'tv';
     // Fires whenever the results list transitions to a non-empty
     // state. The owning screen uses this to scroll its ScrollView so
     // the search input + first result land at the top of the visible
@@ -59,6 +65,7 @@ export function OnboardingSearch({
     onPick,
     autoFocus = true,
     pickedKeys = [],
+    mediaType,
     onResultsRendered,
     onContainerLayout,
 }: OnboardingSearchProps) {
@@ -109,9 +116,25 @@ export function OnboardingSearch({
                 const response = await searchMulti(trimmed, 1);
                 if (!active) return;
                 const filtered = response.results.filter(
-                    (item): item is SearchableItem =>
-                        (item.media_type === 'movie' || item.media_type === 'tv') &&
-                        !!item.poster_path,
+                    (item): item is SearchableItem => {
+                        // Inline the narrowing so TypeScript can carry
+                        // the discriminated-union refinement through to
+                        // the poster_path check. A precomputed boolean
+                        // breaks that narrowing — poster_path doesn't
+                        // exist on TMDBPersonSummary, so the compiler
+                        // (rightly) refuses.
+                        if (mediaType) {
+                            return (
+                                item.media_type === mediaType &&
+                                !!item.poster_path
+                            );
+                        }
+                        return (
+                            (item.media_type === 'movie' ||
+                                item.media_type === 'tv') &&
+                            !!item.poster_path
+                        );
+                    },
                 );
                 setResults(filtered);
                 setSearchFailed(false);
@@ -134,7 +157,7 @@ export function OnboardingSearch({
             active = false;
             clearTimeout(handle);
         };
-    }, [query, retryNonce]);
+    }, [query, retryNonce, mediaType]);
 
     function handleRetry() {
         setRetryNonce((n) => n + 1);
