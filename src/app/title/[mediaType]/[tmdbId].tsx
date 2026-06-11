@@ -31,6 +31,7 @@ import {
     getTVWatchProviders,
     imageUrl,
     type TMDBCastMember,
+    type TMDBCrewMember,
     type TMDBMovie,
     type TMDBTV,
     type TMDBWatchProvidersRegion,
@@ -954,6 +955,25 @@ export default function TitleDetailScreen() {
                     </Text>
                 ) : null}
 
+                {/* Movies-only "Directed by / Written by" line.
+                    Sourced from the same append_to_response=credits
+                    payload that powers the cast row. TV omitted by
+                    design: TV directing is per-episode, and a TV
+                    equivalent here would use created_by, which is a
+                    different field with different semantics. */}
+                {detail.type === 'movie' && (
+                    <DirectorWriterLine
+                        crew={detail.data.credits?.crew}
+                        palette={palette}
+                        onSelectPerson={(personId) =>
+                            router.push({
+                                pathname: '/person/[personId]',
+                                params: { personId: String(personId) },
+                            })
+                        }
+                    />
+                )}
+
                 {detail.data.genres.length > 0 && (
                     <View style={styles.genres}>
                         {detail.data.genres.map((g) => (
@@ -1181,6 +1201,92 @@ function CloseButton({
         >
             <X color={fg} size={20} strokeWidth={ICON_STROKE_WIDTH} />
         </Pressable>
+    );
+}
+
+// "Directed by / Written by" credit line for the movie title screen.
+// One compact caption-styled line sitting between the tagline and the
+// genre pills; each name is its own tap target routing to the existing
+// /person/[personId] screen (same pattern as the cast row).
+//
+// Directors: every crew entry with job === 'Director' (most films
+// have one; a few — Coens, Wachowskis, Daniels — have two; very rare
+// films have more). All shown, joined with ", " and a final " & "
+// (mirrors the rec-sender and watcher caption pattern elsewhere on
+// this screen).
+//
+// Writers: crew entries with job in {'Writer', 'Screenplay', 'Story'}.
+// Same person can hold multiple writing credits on one film
+// (Screenplay + Story is the canonical case for adapted screenplays);
+// deduped by id so they appear once. Capped at the first 3 unique
+// people so heavily-credited scripts don't run a wall of names into
+// the layout. Order is preserved from TMDB, which roughly ranks by
+// credit prominence within each job type.
+//
+// Either side can be empty (rare — some festival/indie entries on
+// TMDB lack a Director row, or have all writing credits filed under a
+// non-recognised job string). Renders the populated side alone and
+// omits the separator; returns null only when both are empty.
+function DirectorWriterLine({
+    crew,
+    palette,
+    onSelectPerson,
+}: {
+    crew?: TMDBCrewMember[];
+    palette: Palette;
+    onSelectPerson: (personId: number) => void;
+}) {
+    if (!crew || crew.length === 0) return null;
+
+    const directors = crew.filter((c) => c.job === 'Director');
+
+    const WRITER_JOBS = new Set(['Writer', 'Screenplay', 'Story']);
+    const writersById = new Map<number, TMDBCrewMember>();
+    for (const c of crew) {
+        if (WRITER_JOBS.has(c.job) && !writersById.has(c.id)) {
+            writersById.set(c.id, c);
+        }
+    }
+    const writers = Array.from(writersById.values()).slice(0, 3);
+
+    if (directors.length === 0 && writers.length === 0) return null;
+
+    // Render a comma-and-ampersand-joined list of tappable names. Each
+    // <Text onPress> is its own per-name tap target rather than wrapping
+    // the whole segment, so a user tapping "Coen" on "Joel & Ethan Coen"
+    // lands on the right person. Tappable spans take palette.text (not
+    // muted) so they read as interactive against the muted surrounding
+    // line.
+    const renderNames = (people: TMDBCrewMember[]) =>
+        people.map((p, i) => (
+            <Text key={p.id}>
+                {i > 0 && (i === people.length - 1 ? ' & ' : ', ')}
+                <Text
+                    onPress={() => onSelectPerson(p.id)}
+                    style={{ color: palette.text }}
+                >
+                    {p.name}
+                </Text>
+            </Text>
+        ));
+
+    return (
+        <Text
+            style={[
+                styles.crewLine,
+                typography.caption,
+                { color: palette.textMuted },
+            ]}
+            numberOfLines={2}
+        >
+            {directors.length > 0 ? (
+                <>Directed by {renderNames(directors)}</>
+            ) : null}
+            {directors.length > 0 && writers.length > 0 ? '  ·  ' : null}
+            {writers.length > 0 ? (
+                <>Written by {renderNames(writers)}</>
+            ) : null}
+        </Text>
     );
 }
 
@@ -1757,6 +1863,10 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.sm,
     },
     tagline: {
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.base,
+    },
+    crewLine: {
         paddingHorizontal: spacing.base,
         marginTop: spacing.base,
     },

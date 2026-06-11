@@ -151,6 +151,18 @@ export interface TMDBCastMember {
     order: number;  // billing order; 0 = top-billed
 }
 
+// Slim crew-member shape for the movie title-screen "Directed by /
+// Written by" credit line. TMDB also returns department, credit_id,
+// gender, popularity, original_name, adult — added on demand. `job`
+// is the discriminator for directors ('Director') and writers
+// ('Writer' / 'Screenplay' / 'Story') in the title-screen filter.
+export interface TMDBCrewMember {
+    id: number;
+    name: string;
+    job: string;
+    profile_path: string | null;
+}
+
 export interface TMDBMovie {
     id: number;
     title: string;
@@ -171,10 +183,12 @@ export interface TMDBMovie {
     original_language: string;
     // Populated only when the caller passes { appendCredits: true } to
     // getMovie() — flows through as TMDB's append_to_response=credits
-    // query param. crew is dropped from the type because no current
-    // surface reads it; widen the shape if a "Directed by" line ever
-    // needs it.
-    credits?: { cast: TMDBCastMember[] };
+    // query param. cast drives the title-screen Cast row; crew drives
+    // the "Directed by / Written by" line on movies (filtered by
+    // `job`). TV's credits stay cast-only because TV doesn't have a
+    // single film-level director — directing is per-episode, and a
+    // TV-equivalent of this surface would use `created_by` instead.
+    credits?: { cast: TMDBCastMember[]; crew?: TMDBCrewMember[] };
 }
 
 export interface TMDBTV {
