@@ -33,6 +33,43 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-11
+
+**Done**
+
+- Top 5 editor — add (via search) + remove favorites, with watched-state rules (`ea7c3cb`). New `/profile/favorites` screen reached from a new "Edit Top 5" settings row on the own profile (own-profile-only entry point; friend profile stays read-only via the shared `<TopFiveSections>` from layer 2). Both sections shown stacked with their filled ranks + a single "+ Add" affordance per section. Rank gaps after a remove display honestly (e.g. 1, 3, 4 if rank 2 was removed); compaction in layer 3b.
+
+  - **Add flow**: pick title via search (extended `OnboardingSearch` with optional `mediaType?: 'movie' | 'tv'` filter so the picker only shows the section's category). Pre-check: title already in the same category at a different rank → friendly "Already in your top 5 at rank N." Then items-status branches drive the watched gate:
+    - No items row → silent: `ensureTitle` + upsert items as `watched` + fire rating sheet.
+    - Status `'watchlist'` or `'watching'` → prompt "Mark watched?" — Cancel cancels the WHOLE add (no items change, no favorites row); Confirm transitions + fires rating sheet.
+    - Status `'watched'` → direct add, no items change, no rating sheet.
+    Insert is `addFavoriteAtRank` (UPSERT on `(user_id, media_type, rank)` so a fresh add inserts and a replace-at-rank updates in place; single round-trip, no DELETE-then-INSERT race window).
+  - **Full category**: tapping "+ Add" opens a replace-picker modal BEFORE the search modal so the user knows which slot they're filling before committing to a title. Tap a row → its rank becomes the target for the subsequent search-pick.
+  - **Remove flow**: confirm + `removeFavorite(id)`. NO items change — un-favoriting doesn't un-watch.
+  - **Rating reuse**: same `RatingSheet` component + `applyWatchedRating` writer the title screen uses — same 1-10 scale, same skip-returns-null contract, same rec-status transitions for any open recs on the same title. No parallel rating implementation.
+  - **Reorder explicitly deferred** to layer 3b: the `(user_id, media_type, rank)` UNIQUE means naive two-step swaps collide on the first UPDATE.
+
+- Search modal header fix — safe-area inset (`e99bd1e`). On first device test the search modal header sat directly behind the iOS status bar, with the title text "Add film" / "Add show" colliding with the system clock. **Root cause**: React Native `<Modal>` renders its content in a separate native view controller on iOS, **outside** the `SafeAreaProvider` tree the root layout sets up. `SafeAreaView` from `react-native-safe-area-context` reads context at render time from its render tree, which inside the Modal is detached — ends up flush against Y=0. **Fix**: drop `SafeAreaView` for a plain `<View>` with `paddingTop: insets.top` — the `useSafeAreaInsets()` hook captures the provider's values when called from the editor (which IS inside the tree) and they remain accessible to JSX rendered into the Modal. Header row also tightened: `flex: 1` + `numberOfLines={1}` on the title, `gap` on the row, so long titles ellipsise instead of pushing into the Cancel button.
+
+**Decisions worth remembering**
+
+- **React Native `<Modal>` renders OUTSIDE the `SafeAreaProvider` tree on iOS** — `useSafeAreaInsets()` works inside it (the hook is called from a component that IS inside the provider, and the returned values stay valid for JSX rendered into the Modal), but `SafeAreaView` from `react-native-safe-area-context` does NOT — that component reads context from its own render tree, which is detached inside the Modal. Pattern for any future full-screen React Native `<Modal>`: drop SafeAreaView, apply `paddingTop: insets.top` (and `paddingBottom: insets.bottom` where relevant) directly. The codebase's preferred convention for full-screen surfaces is Expo Router stack routes with `presentation: 'modal'` — those work normally because the Stack renders inside the provider. A React Native `<Modal>` is a deliberate deviation only worth it when the surface needs to hold a lot of cross-modal local state (the favorites editor has three overlapping modals — search, replace picker, rating sheet — and a single `busy` gate across them all). The trade-off is documented in the editor's comment.
+
+- **UPSERT on the conflict constraint is the right primitive for "fresh insert OR replace-at-slot"** — single round-trip, no race window, and the column-list form (`onConflict: 'user_id,media_type,rank'`) parses literally at PostgREST → PG. **NOT subject to the plpgsql `#variable_conflict use_variable` substitution that broke `ensure_title` on 2026-06-10** — that bug was specific to function bodies; the client-side UPSERT goes straight through PostgREST without plpgsql in the loop. Caller is responsible for catching the OTHER unique-constraint case via a pre-check; in favorites that's the `(user_id, media_type, tmdb_id)` UNIQUE — surfaced as "Already in your top 5 at rank N" before the UPSERT is attempted, so the user gets a useful message instead of a raw 23505.
+
+- **Mark-as-watched prompts should branch on the starting state, not just the target state.** Not-in-library is silent (the act of adding to your top 5 IS the user saying "I've seen this"); already-watched is silent (no change needed); watchlist/watching prompts explicitly because the user has a deliberate state we'd otherwise overwrite. Three-branch logic for what looks like a binary "is this watched?" gate. Generalises: any flow that mutates an item's status as a side effect of a primary action should distinguish "this state didn't exist yet" (silent OK) from "this state was deliberately something else" (prompt before mutating).
+
+**Next**
+
+- **Top 5 layer 3b — reorder / drag-rearrange.** The UNIQUE on `(user_id, media_type, rank)` means a swap "rank 1 ↔ rank 2" can't be two separate UPDATEs — the first one collides with the existing row at the target rank. Options to consider: (a) deferred constraints (smallest migration, but changes a default for the whole table — and deferrable UNIQUE constraints need an explicit `DEFERRABLE` declaration on the constraint definition, which means re-creating the constraint); (b) a security-definer RPC `swap_favorites(rank_a, rank_b)` that does both UPDATEs in one statement; (c) single-statement CASE-based UPDATE keyed on id (no schema change, all client-side). Pick the simplest that handles the swap atomically.
+- **Convert the search overlay from `<Modal>` to a stack route** (`/profile/favorites/add?mediaType=...`) for codebase consistency. Only worth doing if we hit more issues with the `<Modal>` pattern; currently working after the safe-area fix. Trade-off: "all editor state in one component" vs "matches the rest of the app's full-screen modal convention" — neither is wrong, but it's worth a deliberate decision once layer 3b lands.
+
+**Open questions**
+
+- None.
+
+---
+
 ## 2026-06-10
 
 **Done**
@@ -67,6 +104,10 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
   - **`callProxy` silent retry on `FunctionsFetchError` only** (discriminator: `error.name === 'FunctionsFetchError'`, set by the supabase-js constructor). One retry at ~700ms back-off. HTTP errors (4xx/5xx → `FunctionsHttpError`, different class with a different `name`) are NOT retried — those are conscious server responses where blind retry would mask the underlying issue. Bounded to a single retry to keep worst-case latency at one back-off interval, not exponential. The 401 → signOut branch and the HTTP-error message formatting are unchanged.
   - **`OnboardingSearch` friendly surfacing** when the call still fails after the silent retry — replaced the `error: string | null` state with a `searchFailed: boolean`, render the friendly message `"Couldn't reach search — check your connection."` with a tap-to-retry affordance. Retry re-fires the search via a `retryNonce` state bumped into the effect deps (so the unchanged query still re-runs). Raw error preserved in `console.warn` for debugging. The stale-guard `active` flag behaviour is unchanged.
   - Scope: layer 1 covers every TMDB call app-wide; layer 2 is onboarding-only for now. The same friendlier treatment could land at other TMDB call sites if testers report similar scary strings post-onboarding.
+
+- Top 5 data model — `public.favorites` table + RLS (`c524a8f`). New table: `(user_id, media_type, tmdb_id, rank 1-5, created_at)`, two UNIQUEs (`favorites_user_media_rank_unique` for one title per slot per category, `favorites_user_media_tmdb_unique` so a title can't appear twice in one category — but the same numeric `tmdb_id` IS allowed across both categories, which protects against TMDB's occasional cross-catalogue id reuse). Display joins to `public.titles` via `(tmdb_id, media_type)`, no metadata denormalisation. **RLS reuses the existing `is_friend_of_auth(uuid)` helper directly** — the same predicate items's `is_item_visible_to_auth` calls internally — so the set of users who can see a given user's top 5 is identical by construction to the set who can see their library. Deliberately NO per-row visibility column: a curated top 5 is implicitly public-to-friends; "private slot" isn't a meaningful product state (the user would just leave the title out). If a private tier is ever needed, add a visibility column and switch to the `is_item_visible_to_auth` shape — small, additive migration. rls-auditor PASS; types regenerated via `supabase gen types typescript --linked`.
+
+- Top 5 display (read-only) on own + friend profiles (`92e13dd`). New `fetchFavoritesForUser` loader — one batched `favorites` query plus `fetchTitlesByItems` for the titles stitch (same batch-and-stitch pattern the library uses). Shared `<TopFiveSections>` component renders "Top 5 Films" and "Top 5 Shows" as horizontal-scrolling poster cards with a rank chip overlay; each card taps through to the title screen via an `onSelect` callback. Empty handling: a section is omitted when its array is empty (component returns null); conditional wrapper in both screens so the section's `marginBottom` doesn't fire on the no-favorites case. Profile screen wrapped in `<ScrollView>` (was previously flat — adding sections plus the future editor affordances can exceed viewport on smaller phones). Friend profile inserts the sections between the profile block and the search bar / library tabs. **Visibility correctness rests entirely on the favorites RLS** — calling the loader with a non-friend's userId returns an empty array, not an error; the friend screen also gates the loader effect on `state.kind === 'friends'` so we don't fire a guaranteed-empty query.
 
 **Decisions worth remembering**
 
