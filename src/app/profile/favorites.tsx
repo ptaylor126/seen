@@ -13,7 +13,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
     OnboardingSearch,
@@ -594,23 +594,44 @@ export default function EditFavoritesScreen() {
 
             {/* Search modal — full-screen overlay containing the
                 reusable OnboardingSearch component with a mediaType
-                filter pinned to the section the user is editing. */}
+                filter pinned to the section the user is editing.
+                Uses insets.top directly (not <SafeAreaView>) because a
+                React Native <Modal> renders OUTSIDE the
+                SafeAreaProvider tree on iOS — the SafeAreaView wrapper
+                doesn't receive the right insets there and ends up flush
+                against Y=0, colliding with the status bar. The
+                useSafeAreaInsets hook itself still returns the
+                provider's values when called from this component (it
+                captures them at hook time), so applying paddingTop
+                manually does the right thing inside the Modal. The
+                rest of the app's full-screen surfaces are stack routes
+                with presentation: 'modal' (see _layout.tsx), where
+                SafeAreaView works normally — that's the preferred
+                pattern; this Modal stays for state-management
+                simplicity in the editor. */}
             <Modal
                 visible={searchOpen !== null}
                 animationType="slide"
                 onRequestClose={() => setSearchOpen(null)}
             >
                 {searchOpen && (
-                    <SafeAreaView
+                    <View
                         style={[
                             styles.modalRoot,
-                            { backgroundColor: palette.bg },
+                            {
+                                backgroundColor: palette.bg,
+                                paddingTop: insets.top,
+                            },
                         ]}
-                        edges={['top']}
                     >
                         <View style={styles.modalHeader}>
                             <Text
-                                style={[typography.heading, { color: palette.text }]}
+                                style={[
+                                    typography.heading,
+                                    styles.modalHeaderTitle,
+                                    { color: palette.text },
+                                ]}
+                                numberOfLines={1}
                             >
                                 {searchOpen.replacingRank !== null
                                     ? `Replace rank ${searchOpen.replacingRank}`
@@ -645,7 +666,7 @@ export default function EditFavoritesScreen() {
                                 mediaType={searchOpen.mediaType}
                             />
                         </ScrollView>
-                    </SafeAreaView>
+                    </View>
                 )}
             </Modal>
 
@@ -864,9 +885,19 @@ const styles = StyleSheet.create({
     modalHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.md,
+        // gap (not justifyContent: 'space-between') because the title
+        // has flex: 1 and naturally takes all available space, pushing
+        // Cancel to the right edge. gap guarantees breathing room
+        // between them even when the title ellipsises.
+        gap: spacing.md,
+    },
+    modalHeaderTitle: {
+        // flex: 1 + numberOfLines={1} on the <Text> means a long title
+        // (e.g. "Replace rank N" plus future copy growth) ellipsises
+        // instead of pushing into the Cancel button.
+        flex: 1,
     },
     modalBody: {
         flex: 1,
