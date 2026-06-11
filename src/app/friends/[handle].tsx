@@ -21,7 +21,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { TopFiveSections } from '@/components/top-five-sections';
 import { ViewControls } from '@/components/view-controls';
+import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
 import {
     type LibraryGridCols,
     useLibraryView,
@@ -144,6 +146,14 @@ export default function FriendDetailScreen() {
     const [items, setItems] = useState<ItemRow[]>([]);
     const [itemsLoading, setItemsLoading] = useState(false);
     const [itemsError, setItemsError] = useState<string | null>(null);
+    // Friend's top 5 lists. RLS gates the read at the DB layer (favorites
+    // SELECT policy is owner-or-friend); calling this for a non-friend
+    // would return an empty array, not throw — but the loader effect
+    // below only fires when state.kind === 'friends' anyway.
+    const [favorites, setFavorites] = useState<UserFavorites>({
+        movies: [],
+        tv: [],
+    });
 
     // Shared filter / sort / search state — same hook the own library
     // (src/app/(tabs)/library.tsx) uses, so the two screens stay in
@@ -314,6 +324,29 @@ export default function FriendDetailScreen() {
             active = false;
         };
     }, [state, activeTab]);
+
+    // ---- Phase 2b: fetch the friend's top 5 lists. Separate from the
+    // items effect because it doesn't depend on activeTab (tab switches
+    // would needlessly re-fetch). Best-effort: a transient read failure
+    // degrades to "no top 5 shown," not a broken profile screen.
+    useEffect(() => {
+        if (state.kind !== 'friends') {
+            setFavorites({ movies: [], tv: [] });
+            return;
+        }
+        let active = true;
+        (async () => {
+            try {
+                const result = await fetchFavoritesForUser(state.profile.id);
+                if (active) setFavorites(result);
+            } catch (err) {
+                console.warn('friend favorites fetch failed:', err);
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [state]);
 
     function renderGridCell({ item }: { item: ItemRow }) {
         const cellWidth = getGridCellWidth(gridCols, screenWidth);
@@ -648,6 +681,30 @@ export default function FriendDetailScreen() {
                 </View>
             </SafeAreaView>
 
+            {/* Friend's top 5 sections — between the profile block and
+                the library search/tabs. Conditional wrapper so the
+                marginBottom doesn't fire when the friend has no
+                favorites curated (the inner component would return
+                null and leave a stray gap above the searchBar). */}
+            {(favorites.movies.length > 0 || favorites.tv.length > 0) && (
+                <View style={styles.topFiveBlock}>
+                    <TopFiveSections
+                        movies={favorites.movies}
+                        tv={favorites.tv}
+                        palette={palette}
+                        onSelect={(mediaType, tmdbId) =>
+                            router.push({
+                                pathname: '/title/[mediaType]/[tmdbId]',
+                                params: {
+                                    mediaType,
+                                    tmdbId: String(tmdbId),
+                                },
+                            })
+                        }
+                    />
+                </View>
+            )}
+
             {/* Local title search — mirrors the library tab's local-
                 filter bar, minus the `+` button + add-overlay (you
                 can't add to someone else's library). Wired to the
@@ -833,6 +890,12 @@ const styles = StyleSheet.create({
         paddingTop: spacing.md,
         paddingBottom: spacing.lg,
         gap: spacing.xs,
+    },
+    topFiveBlock: {
+        // Vertical breathing room below the top-5 sections; zero-
+        // height when both arrays are empty (the component returns
+        // null), so no stray padding appears in the no-favorites case.
+        marginBottom: spacing.md,
     },
     searchBar: {
         // Local title-filter input. Mirrors the own library's

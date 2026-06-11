@@ -1,14 +1,15 @@
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
-import { Fragment } from 'react';
+import { Fragment, useCallback, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     Linking,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     useColorScheme,
@@ -16,9 +17,11 @@ import {
 } from 'react-native';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { TopFiveSections } from '@/components/top-five-sections';
 import { useProfile } from '@/hooks/use-profile';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
+import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
 import { getPalette, ICON_STROKE_WIDTH, spacing, typography } from '@/theme/theme';
 
 const AVATAR_SIZE = 96;
@@ -34,6 +37,34 @@ export default function ProfileScreen() {
     // which meant edits never showed because the tab stays mounted
     // and the effect never re-fired.
     const { status, profile } = useProfile();
+    const [favorites, setFavorites] = useState<UserFavorites>({
+        movies: [],
+        tv: [],
+    });
+
+    // Re-fetch on focus so the section refreshes when the editor (Layer 3)
+    // ships and the user returns from it. Today it just loads once per
+    // tab focus — the favorites table can't change without an editor.
+    // Failures are silent: a transient read error degrades to "no top 5
+    // shown," not a broken profile screen.
+    useFocusEffect(
+        useCallback(() => {
+            const userId = profile?.id;
+            if (!userId) return;
+            let active = true;
+            (async () => {
+                try {
+                    const result = await fetchFavoritesForUser(userId);
+                    if (active) setFavorites(result);
+                } catch (err) {
+                    console.warn('own favorites fetch failed:', err);
+                }
+            })();
+            return () => {
+                active = false;
+            };
+        }, [profile?.id]),
+    );
 
     async function handleSignOut() {
         try {
@@ -146,70 +177,104 @@ export default function ProfileScreen() {
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader title="Profile" unreadCount={unreadCount} />
-            <View style={styles.card}>
-                {profile.avatarUrl ? (
-                    <Image
-                        source={{ uri: profile.avatarUrl }}
-                        style={[styles.avatar, { backgroundColor: palette.accent }]}
-                        contentFit="cover"
-                        transition={200}
-                    />
-                ) : (
-                    <View
-                        style={[
-                            styles.avatar,
-                            styles.avatarFallback,
-                            { backgroundColor: palette.accent },
-                        ]}
-                    >
-                        <Text style={[typography.display, { color: palette.textInverse }]}>
-                            {firstLetter}
-                        </Text>
-                    </View>
-                )}
-                <Text
-                    style={[typography.display, styles.displayName, { color: palette.text }]}
-                >
-                    {profile.displayName}
-                </Text>
-                <Text style={[typography.body, { color: palette.textMuted }]}>
-                    @{profile.handle}
-                </Text>
-            </View>
-
-            <View>
-                {rows.map((row, i) => (
-                    <Fragment key={row.id}>
-                        {i > 0 && (
-                            <View
-                                style={[styles.separator, { backgroundColor: palette.border }]}
-                            />
-                        )}
-                        <Pressable
-                            onPress={row.onPress}
-                            style={({ pressed }) => [
-                                styles.settingsRow,
-                                pressed && { opacity: 0.6 },
+            {/* Scroll wrapper: the screen was previously flat (card + settings
+                rows) and fit comfortably on a phone. Adding the top-5
+                sections can push content past the viewport on small devices
+                and once the editor lands the section can grow further, so
+                everything below the header is scrollable now. Pure layout
+                change — no visual difference when content fits on screen. */}
+            <ScrollView contentContainerStyle={styles.scrollContent}>
+                <View style={styles.card}>
+                    {profile.avatarUrl ? (
+                        <Image
+                            source={{ uri: profile.avatarUrl }}
+                            style={[styles.avatar, { backgroundColor: palette.accent }]}
+                            contentFit="cover"
+                            transition={200}
+                        />
+                    ) : (
+                        <View
+                            style={[
+                                styles.avatar,
+                                styles.avatarFallback,
+                                { backgroundColor: palette.accent },
                             ]}
                         >
-                            <Text
-                                style={[
-                                    typography.body,
-                                    styles.settingsLabel,
-                                    { color: palette.text },
+                            <Text style={[typography.display, { color: palette.textInverse }]}>
+                                {firstLetter}
+                            </Text>
+                        </View>
+                    )}
+                    <Text
+                        style={[typography.display, styles.displayName, { color: palette.text }]}
+                    >
+                        {profile.displayName}
+                    </Text>
+                    <Text style={[typography.body, { color: palette.textMuted }]}>
+                        @{profile.handle}
+                    </Text>
+                </View>
+
+                {/* Top 5 sections — render nothing when both lists are
+                    empty. Layer 3 (the editor) will add a "Tap to add"
+                    affordance on the owner's profile; for now the
+                    absence of content is the only signal that no
+                    favorites have been picked yet. The wrapper is
+                    conditional so the marginBottom doesn't fire on
+                    the empty case. */}
+                {(favorites.movies.length > 0 || favorites.tv.length > 0) && (
+                    <View style={styles.topFiveBlock}>
+                        <TopFiveSections
+                            movies={favorites.movies}
+                            tv={favorites.tv}
+                            palette={palette}
+                            onSelect={(mediaType, tmdbId) =>
+                                router.push({
+                                    pathname: '/title/[mediaType]/[tmdbId]',
+                                    params: {
+                                        mediaType,
+                                        tmdbId: String(tmdbId),
+                                    },
+                                })
+                            }
+                        />
+                    </View>
+                )}
+
+                <View>
+                    {rows.map((row, i) => (
+                        <Fragment key={row.id}>
+                            {i > 0 && (
+                                <View
+                                    style={[styles.separator, { backgroundColor: palette.border }]}
+                                />
+                            )}
+                            <Pressable
+                                onPress={row.onPress}
+                                style={({ pressed }) => [
+                                    styles.settingsRow,
+                                    pressed && { opacity: 0.6 },
                                 ]}
                             >
-                                {row.label}
-                            </Text>
-                            <ChevronRight
-                                color={palette.textMuted}
-                                size={20}
-                                strokeWidth={ICON_STROKE_WIDTH}
-                            />
-                        </Pressable>
-                    </Fragment>
-                ))}
-            </View>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        styles.settingsLabel,
+                                        { color: palette.text },
+                                    ]}
+                                >
+                                    {row.label}
+                                </Text>
+                                <ChevronRight
+                                    color={palette.textMuted}
+                                    size={20}
+                                    strokeWidth={ICON_STROKE_WIDTH}
+                                />
+                            </Pressable>
+                        </Fragment>
+                    ))}
+                </View>
+            </ScrollView>
         </View>
     );
 }
@@ -217,6 +282,19 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
     root: { flex: 1 },
     fillCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    scrollContent: {
+        // Trailing breathing room so the last settings row doesn't
+        // sit flush against the home indicator on phones without a
+        // hardware home button.
+        paddingBottom: spacing.xl,
+    },
+    topFiveBlock: {
+        // Vertical breathing room between the profile card and the
+        // settings list. When the component returns null (no favorites
+        // either side) this still adds spacing but it's negligible and
+        // saves a conditional wrapper.
+        paddingBottom: spacing.lg,
+    },
     card: {
         alignItems: 'center',
         gap: spacing.sm,
