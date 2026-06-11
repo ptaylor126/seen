@@ -19,9 +19,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { AvatarStack, type AvatarStackItem } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
+import { formatYourMarker, type ItemStatus } from '@/lib/item-status';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
-import { applyWatchedRating, formatRatingStars, type MediaType } from '@/lib/rating';
+import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import {
@@ -43,8 +44,6 @@ import {
     spacing,
     typography,
 } from '@/theme/theme';
-
-type ItemStatus = 'watchlist' | 'watching' | 'watched';
 
 // Discriminated union so render code can narrow on `type` and access the
 // right shape (TMDBMovie.title vs TMDBTV.name etc.).
@@ -133,21 +132,6 @@ interface FriendActivity {
     // to stars at render time via formatRatingStars-style division.
     ratingsAverage: number | null;
     ratingsCount: number;
-}
-
-// Map an items row to a one-line marker for the current user's
-// relationship to this title — used in the YOUR row above the
-// status pills.
-function formatYourMarker(
-    status: ItemStatus | null,
-    rating: number | null,
-): string | null {
-    if (!status) return null;
-    if (status === 'watchlist') return 'On your watchlist';
-    if (status === 'watching') return "You're watching this";
-    // status === 'watched'
-    if (rating !== null) return `You rated this ${formatRatingStars(rating)}`;
-    return "You've watched this";
 }
 
 function firstName(displayName: string): string {
@@ -943,6 +927,49 @@ export default function TitleDetailScreen() {
                     </View>
                 </View>
 
+                {/* YOUR row — singular personal marker for this title.
+                    Sits right under the title block so existing
+                    library status is one of the first things the user
+                    reads, not buried below the Where-to-Watch block.
+                    Tappable when status is 'watched' so the user can
+                    edit (or first-set) their rating without going
+                    through the toggle-off / status pill flow. */}
+                {currentStatus !== null && (
+                    <Pressable
+                        onPress={() => {
+                            if (currentStatus === 'watched') {
+                                setShowRatingSheet(true);
+                            }
+                        }}
+                        disabled={currentStatus !== 'watched'}
+                        style={({ pressed }) => [
+                            styles.yourMarker,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.text },
+                            ]}
+                        >
+                            {formatYourMarker(currentStatus, currentRating)}
+                        </Text>
+                        {currentStatus === 'watched' && (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {currentRating !== null
+                                    ? 'Tap to edit'
+                                    : 'Tap to rate'}
+                            </Text>
+                        )}
+                    </Pressable>
+                )}
+
                 {detail.data.tagline ? (
                     <Text
                         style={[
@@ -1050,46 +1077,6 @@ export default function TitleDetailScreen() {
                     providers={providersForRegion}
                     palette={palette}
                 />
-
-                {/* YOUR row — singular personal marker for this title.
-                    Tappable when the current status is 'watched' so the
-                    user can edit (or first-set) their rating without
-                    going through the toggle-off / status pill flow. */}
-                {currentStatus !== null && (
-                    <Pressable
-                        onPress={() => {
-                            if (currentStatus === 'watched') {
-                                setShowRatingSheet(true);
-                            }
-                        }}
-                        disabled={currentStatus !== 'watched'}
-                        style={({ pressed }) => [
-                            styles.yourMarker,
-                            pressed && { opacity: 0.6 },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.text },
-                            ]}
-                        >
-                            {formatYourMarker(currentStatus, currentRating)}
-                        </Text>
-                        {currentStatus === 'watched' && (
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {currentRating !== null
-                                    ? 'Tap to edit'
-                                    : 'Tap to rate'}
-                            </Text>
-                        )}
-                    </Pressable>
-                )}
 
                 {/* Status pills — a choice. The selected status is
                     filled accent; the others are outline-only with a
@@ -1994,7 +1981,12 @@ const styles = StyleSheet.create({
     },
     yourMarker: {
         paddingHorizontal: spacing.base,
-        marginTop: spacing.lg,
+        // spacing.base (vs spacing.lg in the prior bottom location) so
+        // this sits inside the upper title-metadata cluster (title
+        // block → marker → tagline → credits → genres → cast) at the
+        // same rhythm as its siblings, not as a large gap separating
+        // sections.
+        marginTop: spacing.base,
         gap: spacing.xs,
     },
     // Reviews section — sits between FriendActivity and WhereToWatch

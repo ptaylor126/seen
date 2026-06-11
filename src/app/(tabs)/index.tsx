@@ -220,41 +220,82 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         f.user_a_id === userId ? f.user_b_id : f.user_a_id,
     );
 
-    // ---- Wave 2: friend items + sender profiles (parallel)
+    // ---- Wave 2: friend items + sender profiles + own watched-on-recs
+    // (parallel)
     const senderIds = new Set<string>();
     for (const r of recs) {
         if (r.from_user_id) senderIds.add(r.from_user_id);
     }
 
-    const [friendItemsResult, senderProfilesResult] = await Promise.all([
-        friendIds.length > 0
-            ? supabase
-                  .from('items')
-                  .select(
-                      'user_id, tmdb_id, media_type, status, updated_at, created_at, rating',
-                  )
-                  .in('user_id', friendIds)
-                  // Section is "Friends are watching" — only the watching
-                  // status drives the social proof. Watched-by-friends
-                  // belongs elsewhere if we ever surface it.
-                  .eq('status', 'watching')
-                  .order('updated_at', { ascending: false })
-                  // Bumped from 40 → 200 so popular shows don't get
-                  // their watcher count clipped: with grouping we need
-                  // enough rows in the window to surface every friend
-                  // who's watching X, not just the most recent few.
-                  .limit(200)
-            : Promise.resolve({ data: [], error: null }),
-        senderIds.size > 0
-            ? supabase
-                  .from('profiles')
-                  .select('id, handle, display_name, avatar_url')
-                  .in('id', Array.from(senderIds))
-            : Promise.resolve({ data: [], error: null }),
-    ]);
+    // Distinct rec'd tmdb_ids for the "filter out watched titles from
+    // Recs for you" lookup. A rec for a title the user has already
+    // finished watching shouldn't take up a slot in the discovery
+    // carousel — the title isn't actionable as "something to watch."
+    // Inbox still shows these recs (with the library-status badge)
+    // because it's a sent-feed, not a discovery surface.
+    const recTmdbIds = Array.from(new Set(recs.map((r) => r.tmdb_id)));
+
+    const [friendItemsResult, senderProfilesResult, watchedRecLookupResult] =
+        await Promise.all([
+            friendIds.length > 0
+                ? supabase
+                      .from('items')
+                      .select(
+                          'user_id, tmdb_id, media_type, status, updated_at, created_at, rating',
+                      )
+                      .in('user_id', friendIds)
+                      // Section is "Friends are watching" — only the watching
+                      // status drives the social proof. Watched-by-friends
+                      // belongs elsewhere if we ever surface it.
+                      .eq('status', 'watching')
+                      .order('updated_at', { ascending: false })
+                      // Bumped from 40 → 200 so popular shows don't get
+                      // their watcher count clipped: with grouping we need
+                      // enough rows in the window to surface every friend
+                      // who's watching X, not just the most recent few.
+                      .limit(200)
+                : Promise.resolve({ data: [], error: null }),
+            senderIds.size > 0
+                ? supabase
+                      .from('profiles')
+                      .select('id, handle, display_name, avatar_url')
+                      .in('id', Array.from(senderIds))
+                : Promise.resolve({ data: [], error: null }),
+            // Own watched rows on the rec'd titles. status='watched' is
+            // intentional — watchlist + watching pass through to the
+            // carousel because they're still useful nudges for unfinished
+            // titles; only finished-watching is filtered out. .in('tmdb_id',
+            // …) may pull a slight superset (e.g. an items row for the
+            // movie-550 when the rec was for tv-550) — the composite-key
+            // stitch below excludes those cleanly.
+            recTmdbIds.length > 0
+                ? supabase
+                      .from('items')
+                      .select('tmdb_id, media_type')
+                      .eq('user_id', userId)
+                      .eq('status', 'watched')
+                      .in('tmdb_id', recTmdbIds)
+                : Promise.resolve({ data: [], error: null }),
+        ]);
 
     if (friendItemsResult.error) throw friendItemsResult.error;
     if (senderProfilesResult.error) throw senderProfilesResult.error;
+
+    // Best-effort: a query failure here would leave the watched-recs
+    // set empty, falling through to "show all recs" — degraded behaviour
+    // is a watched-rec slipping into the carousel, not a broken home
+    // screen. Same shape as the inbox library-status enrichment.
+    const watchedRecKeys = new Set<string>();
+    if (watchedRecLookupResult.error) {
+        console.warn(
+            'home watched-recs filter fetch failed:',
+            watchedRecLookupResult.error,
+        );
+    } else {
+        for (const row of watchedRecLookupResult.data ?? []) {
+            watchedRecKeys.add(`${row.media_type}:${row.tmdb_id}`);
+        }
+    }
 
     // Group friend items by (media_type, tmdb_id) — one card per show,
     // carrying the list of friends watching it. Items arrive ordered
@@ -361,7 +402,14 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
 
     const recsForYou: RecForYou[] = [];
     recs.forEach((r) => {
-        const titleRow = titleByKey.get(`${r.media_type}:${r.tmdb_id}`);
+        const key = `${r.media_type}:${r.tmdb_id}`;
+        // Drop recs the user has already finished watching — they're
+        // not actionable as "something to watch" in a discovery
+        // carousel. Watchlist + watching status pass through (still
+        // useful nudges for unfinished titles); only 'watched' is
+        // filtered out.
+        if (watchedRecKeys.has(key)) return;
+        const titleRow = titleByKey.get(key);
         if (!titleRow) return;
         const senderProfile = r.from_user_id
             ? senderProfileById.get(r.from_user_id)

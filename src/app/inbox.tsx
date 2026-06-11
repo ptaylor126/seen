@@ -14,6 +14,7 @@ import {
 
 import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
+import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
@@ -38,6 +39,13 @@ interface IncomingRecItem {
     note: string | null;
     sender: ProfileSummary;
     titleName: string | null;
+    // The recipient's existing relationship to this title, if any.
+    // Drives the compact "Watched · 4★" / "Watchlist" / "Watching"
+    // badge on the rec card so the user sees their library status
+    // before tapping in. null = title isn't in the recipient's
+    // library, so no badge renders. Sourced from a batched items
+    // lookup keyed on the rec'd tmdb_ids — see load().
+    libraryStatus: { status: ItemStatus; rating: number | null } | null;
 }
 
 interface FriendRequestItem {
@@ -369,6 +377,61 @@ export default function InboxScreen() {
                 });
             }
 
+            // Library-status lookup for the recipient's own items rows
+            // on the rec'd titles. One batched query filtered by
+            // user_id + tmdb_id IN (distinct rec'd ids), stitched
+            // client-side by `${media_type}:${tmdb_id}` so per-card
+            // lookup in renderIncomingRec is O(1). The .in('tmdb_id',
+            // …) may pull a slight superset (e.g. items for the
+            // movie-version of a tmdb_id we only wanted the tv-version
+            // of) — the composite-key stitch filters those out
+            // cleanly. Cheaper and clearer than chaining .or(and(…))
+            // pairs for true composite-key filtering. Best-effort:
+            // query failure renders the inbox without the badges
+            // rather than blocking the whole load.
+            type LibraryStatusValue = {
+                status: ItemStatus;
+                rating: number | null;
+            };
+            const libraryStatusByKey = new Map<string, LibraryStatusValue>();
+            const recTmdbIds = Array.from(
+                new Set(recs.map((r) => r.tmdb_id)),
+            );
+            if (recTmdbIds.length > 0) {
+                const { data: itemRows, error: itemsError } = await supabase
+                    .from('items')
+                    .select('tmdb_id, media_type, status, rating')
+                    .eq('user_id', userId)
+                    .in('tmdb_id', recTmdbIds);
+                if (itemsError) {
+                    console.warn(
+                        'inbox library-status fetch failed:',
+                        itemsError,
+                    );
+                } else {
+                    for (const row of itemRows ?? []) {
+                        const status = row.status;
+                        if (
+                            status !== 'watchlist' &&
+                            status !== 'watching' &&
+                            status !== 'watched'
+                        ) {
+                            continue;
+                        }
+                        libraryStatusByKey.set(
+                            `${row.media_type}:${row.tmdb_id}`,
+                            {
+                                status,
+                                rating:
+                                    typeof row.rating === 'number'
+                                        ? row.rating
+                                        : null,
+                            },
+                        );
+                    }
+                }
+            }
+
             const inboxItems: InboxItem[] = [];
 
             for (const r of recs) {
@@ -387,6 +450,10 @@ export default function InboxScreen() {
                     titleName:
                         titleByKey.get(`${r.media_type}:${r.tmdb_id}`)?.title ??
                         null,
+                    libraryStatus:
+                        libraryStatusByKey.get(
+                            `${r.media_type}:${r.tmdb_id}`,
+                        ) ?? null,
                 });
             }
 
@@ -614,6 +681,30 @@ export default function InboxScreen() {
                         </Text>{' '}
                         recommended <Text style={typography.bodyEmphasis}>{title}</Text>
                     </Text>
+                    {item.libraryStatus && (
+                        <View
+                            style={[
+                                styles.libraryBadge,
+                                { backgroundColor: palette.surfaceAlt },
+                            ]}
+                            accessibilityLabel={`Your status: ${formatLibraryBadge(
+                                item.libraryStatus.status,
+                                item.libraryStatus.rating,
+                            )}`}
+                        >
+                            <Text
+                                style={[
+                                    typography.micro,
+                                    { color: palette.text },
+                                ]}
+                            >
+                                {formatLibraryBadge(
+                                    item.libraryStatus.status,
+                                    item.libraryStatus.rating,
+                                )}
+                            </Text>
+                        </View>
+                    )}
                     {notePreview && (
                         <Text
                             style={[
@@ -1047,6 +1138,18 @@ const styles = StyleSheet.create({
     },
     note: {
         fontStyle: 'italic',
+    },
+    libraryBadge: {
+        // Compact pill on the rec card signalling the recipient's
+        // existing library status for the rec'd title — "Watched",
+        // "Watched · 4★", "Watchlist", "Watching". alignSelf so the
+        // pill sizes to its content rather than stretching across
+        // the row. rowText's gap: spacing.xs handles vertical
+        // spacing from its sibling rows.
+        alignSelf: 'flex-start',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radius.full,
     },
     requestActions: {
         flexDirection: 'row',
