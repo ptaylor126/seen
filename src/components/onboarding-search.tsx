@@ -68,7 +68,21 @@ export function OnboardingSearch({
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchableItem[] | null>(null);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    // Boolean rather than the raw error string: the user never sees
+    // the technical "tmdb-proxy: Failed to send a request to the Edge
+    // Function" wording — that's a scary read at first-run onboarding,
+    // where the user has zero trust capital with the app yet. callProxy
+    // already silently retries once on FunctionsFetchError, so reaching
+    // this branch means BOTH attempts failed — almost certainly a
+    // genuine connectivity issue (or, less commonly, a real outage).
+    // The friendly message + tap-to-retry covers both cases.
+    const [searchFailed, setSearchFailed] = useState(false);
+    // Bumped by the tap-to-retry affordance to force the search effect
+    // to re-run with the same query (would otherwise be a no-op since
+    // the query dep hasn't changed). The 300ms debounce window applies
+    // to the retry too — feels like a brief spinner rather than an
+    // immediate response, which is fine.
+    const [retryNonce, setRetryNonce] = useState(0);
 
     // Fire onResultsRendered after a state update that produced a
     // non-empty results list — lets the parent ScrollView scroll to
@@ -84,7 +98,7 @@ export function OnboardingSearch({
         const trimmed = query.trim();
         if (!trimmed) {
             setResults(null);
-            setError(null);
+            setSearchFailed(false);
             setLoading(false);
             return;
         }
@@ -100,11 +114,18 @@ export function OnboardingSearch({
                         !!item.poster_path,
                 );
                 setResults(filtered);
-                setError(null);
+                setSearchFailed(false);
             } catch (err) {
                 if (!active) return;
+                // Keep the raw error in the console for debugging —
+                // never surface it to the user. The friendly message
+                // rendered below handles their side.
+                console.warn(
+                    '[onboarding search] tmdb-proxy call failed:',
+                    err,
+                );
                 setResults([]);
-                setError(err instanceof Error ? err.message : 'Search failed');
+                setSearchFailed(true);
             } finally {
                 if (active) setLoading(false);
             }
@@ -113,7 +134,11 @@ export function OnboardingSearch({
             active = false;
             clearTimeout(handle);
         };
-    }, [query]);
+    }, [query, retryNonce]);
+
+    function handleRetry() {
+        setRetryNonce((n) => n + 1);
+    }
 
     function handlePick(item: SearchableItem) {
         onPick(item);
@@ -121,7 +146,7 @@ export function OnboardingSearch({
         // on the watchlist step where the user adds three in a row.
         setQuery('');
         setResults(null);
-        setError(null);
+        setSearchFailed(false);
     }
 
     const pickedSet = new Set(pickedKeys);
@@ -206,13 +231,43 @@ export function OnboardingSearch({
                 <View style={styles.statusBlock}>
                     <ActivityIndicator color={palette.accent} />
                 </View>
-            ) : results === null ? null : results.length === 0 ? (
+            ) : results === null ? null : searchFailed ? (
+                // Friendly failure block. callProxy already retried
+                // once silently, so reaching this point means both
+                // attempts failed — almost always a connectivity
+                // issue from the device side. Tap-to-retry re-fires
+                // the search effect without making the user re-type.
                 <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={2}
                     >
-                        {error ? error : `No results for "${query.trim()}"`}
+                        Couldn’t reach search — check your connection.
+                    </Text>
+                    <Pressable
+                        onPress={handleRetry}
+                        hitSlop={spacing.sm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Try search again"
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.accent },
+                            ]}
+                        >
+                            Try again
+                        </Text>
+                    </Pressable>
+                </View>
+            ) : results.length === 0 ? (
+                <View style={styles.statusBlock}>
+                    <Text
+                        style={[typography.body, { color: palette.textMuted }]}
+                        numberOfLines={2}
+                    >
+                        No results for &quot;{query.trim()}&quot;
                     </Text>
                 </View>
             ) : (
@@ -254,6 +309,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: spacing.xl,
         paddingHorizontal: spacing.xl,
+        // Breathing room between message + tap-to-retry in the failure
+        // block. No-op for the single-child loading + "no results"
+        // blocks (`gap` requires >1 child to render any space).
+        gap: spacing.sm,
     },
     resultList: {
         paddingBottom: spacing.lg,

@@ -283,10 +283,45 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
         expiresAt: session?.expires_at,
     });
 
-    const { data, error } = await supabase.functions.invoke<T>('tmdb-proxy', {
-        body: { path, ...params },
-        headers,
-    });
+    const invoke = () =>
+        supabase.functions.invoke<T>('tmdb-proxy', {
+            body: { path, ...params },
+            headers,
+        });
+
+    let result = await invoke();
+
+    // Silent retry once on FunctionsFetchError ONLY — that's the
+    // transport-layer fetch rejection (network blip, DNS hiccup,
+    // Supabase Edge Runtime cold-start exceeding the socket timeout),
+    // not a real HTTP response. Most of these resolve on the second
+    // attempt and the user never sees an error. HTTP errors (4xx/5xx
+    // → FunctionsHttpError) are NOT retried: those are conscious
+    // server responses (auth issue, malformed request, function code
+    // error) where a blind retry would mask the underlying problem
+    // and waste a round-trip. Single retry only — avoids unbounded
+    // hammering on genuinely-down endpoints and keeps worst-case
+    // latency bounded (one back-off interval, not exponential).
+    //
+    // ~700ms back-off: long enough to cover most cellular blips and
+    // give the proxy a moment to start warming up after a cold-start
+    // socket timeout, short enough that an onboarding user perceives
+    // it as "slight loading lag" rather than "broken." Tuning sweet
+    // spot — go lower and we miss too many transients; go higher and
+    // every retry feels like a hang.
+    if (
+        result.error &&
+        (result.error as Error).name === 'FunctionsFetchError'
+    ) {
+        console.warn(
+            '[tmdb-proxy] FunctionsFetchError on first attempt, retrying once after back-off:',
+            result.error.message,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+        result = await invoke();
+    }
+
+    const { data, error } = result;
 
     if (error) {
         // FunctionsHttpError carries the original Response on `.context`.
