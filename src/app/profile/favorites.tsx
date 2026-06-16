@@ -951,7 +951,10 @@ export default function EditFavoritesScreen() {
                     <Pressable
                         style={[
                             styles.replaceBackdrop,
-                            { paddingBottom: insets.bottom + spacing.lg },
+                            {
+                                backgroundColor: palette.overlay,
+                                paddingBottom: insets.bottom + spacing.lg,
+                            },
                         ]}
                         onPress={() => setReplacePicker(null)}
                         accessibilityRole="button"
@@ -1182,8 +1185,10 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.lg,
     },
     replaceBackdrop: {
+        // backgroundColor set inline in the JSX (palette.overlay) —
+        // overlay is theme-dependent and palette isn't in scope at
+        // StyleSheet.create time.
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.4)',
         justifyContent: 'flex-end',
         paddingHorizontal: spacing.base,
     },

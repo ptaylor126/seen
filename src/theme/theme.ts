@@ -12,27 +12,32 @@
 
 export const palette = {
     light: {
-        bg: '#FAF7F2',
+        bg: '#F7F5F1',
         surface: '#FFFFFF',
-        surfaceAlt: '#F2EDE5',
+        surfaceAlt: '#ECE8E1',
         text: '#1A1614',
         textMuted: '#6B6661',
         textInverse: '#FFFFFF',
         border: '#E8E2DA',
         borderStrong: '#D4CCC1',
-        accent: '#E5654A',
-        accentPressed: '#C9523C',
-        accentSubtle: '#FBE5DE',
+        accent: '#7A3960',
+        accentPressed: '#6A3252',
+        accentSubtle: '#F0E4EC',
         success: '#5B8E5A',
         warning: '#D89B3C',
         error: '#C04B3D',
         overlay: 'rgba(26, 22, 20, 0.5)',
+        // Shadow base color. Currently '#000000' in both schemes; the
+        // shadowOpacity prop on each elevation preset controls how
+        // visible the shadow actually is. Token exists so component
+        // shadow styles never hardcode '#000'.
+        shadow: '#000000',
         // Avatar fallback fills used when no avatar image is available.
         // Hashed deterministically from a stable user id so the same user
         // always gets the same colour. All values are medium-dark so the
         // initial reads in textInverse (white) at ≥4:1 contrast. Warm
-        // palette only — nothing that clashes with the cream + coral
-        // theme.
+        // palette only — held over from the cream + coral era; re-check
+        // against the plum accent on device and tune any that clash.
         avatarFallbacks: [
             '#C46850',
             '#B08A3C',
@@ -45,24 +50,26 @@ export const palette = {
         ],
     },
     dark: {
-        bg: '#15110F',
-        surface: '#1F1A17',
+        bg: '#16120F',
+        surface: '#211B17',
         surfaceAlt: '#2A2420',
         text: '#F5F1EB',
         textMuted: '#A39E97',
         textInverse: '#15110F',
         border: '#2E2823',
         borderStrong: '#3F3832',
-        accent: '#F07A5F',
-        accentPressed: '#E5654A',
-        accentSubtle: '#3A2520',
+        accent: '#9B5079',
+        accentPressed: '#7A3960',
+        accentSubtle: '#3A2233',
         success: '#6FA86E',
         warning: '#E4AC4D',
         error: '#D75B4D',
         overlay: 'rgba(0, 0, 0, 0.6)',
+        shadow: '#000000',
         // Parallel set to light.avatarFallbacks, lifted in lightness so
         // the dark-mode textInverse (near-black) reads with ≥4:1
-        // contrast on each fill.
+        // contrast on each fill. Same caveat: tune against plum on
+        // device if any read off-key.
         avatarFallbacks: [
             '#E8957D',
             '#D4B173',

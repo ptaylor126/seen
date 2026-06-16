@@ -1302,6 +1302,11 @@ const styles = StyleSheet.create({
         // content. iOS supports negative shadowOffset directly; Android
         // ignores negative offsets but still draws elevation, which
         // gives us a thin separation line — good enough as a fallback.
+        // shadowColor stays hardcoded '#000' deliberately: it's
+        // theme-independent (palette.shadow is '#000000' in both
+        // light and dark) and this is a static StyleSheet.create where
+        // palette isn't in scope. Visibility is controlled by
+        // shadowOpacity below, not the base color.
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -2 },
         shadowOpacity: 0.06,
