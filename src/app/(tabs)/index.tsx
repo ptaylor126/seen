@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Mail } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Film, Mail } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -43,6 +44,10 @@ interface RecForYou {
     mediaType: MediaType;
     title: string;
     posterPath: string | null;
+    // TMDB landscape image. Null on ~0.2% of titles (2 of 861 in the
+    // backfill); renderRecHeroCard falls back to a solid surfaceAlt
+    // card with a faint film glyph in that case.
+    backdropPath: string | null;
     note: string | null;
     sender: {
         userId: string;
@@ -92,10 +97,18 @@ interface HomeData {
 // the next card peeking on the right edge to invite swipe.
 const HERO_SCREEN_W = Dimensions.get('window').width;
 const REC_CARD_W = Math.round(HERO_SCREEN_W * 0.85);
-const REC_CARD_H = 200;
-const REC_POSTER_W = 120;
-const REC_POSTER_H = 180;
-const REC_AVATAR_SIZE = 40;
+// Bumped from 200 (the old side-by-side poster+text layout's height)
+// to 220 for the cinematic full-bleed backdrop card. With
+// REC_CARD_W ≈ 331pt on a 390pt phone, 220pt gives ~1.5:1 — taller
+// than strict 16:9 (which would be ~186pt), enough vertical space
+// for the bottom gradient + title + note without cramping the
+// recommender pill up top. Backdrop image is cropped via contentFit:
+// 'cover' so a slightly taller-than-16:9 card just trims pixels
+// from the image edges.
+const REC_CARD_H = 220;
+// 22pt avatar inside the top-left recommender pill on the new
+// cinematic card (was 40pt in the previous side-by-side layout).
+const REC_PILL_AVATAR_SIZE = 22;
 
 // Friends are watching — horizontal scrolling row of 2:3 posters, no
 // labels. Pure visual scan with the half-poster peek at the right edge
@@ -420,6 +433,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             mediaType: r.media_type as MediaType,
             title: titleRow.title ?? '',
             posterPath: titleRow.poster_path,
+            backdropPath: titleRow.backdrop_path,
             note: typeof r.note === 'string' && r.note.length > 0 ? r.note : null,
             sender: {
                 // Fallback to the rec id when the sender's profile is
@@ -715,11 +729,34 @@ export default function HomeScreen() {
         );
     }
 
+    // Cinematic hero card — full-bleed TMDB backdrop with a
+    // bottom-anchored gradient so the title + note read on any image.
+    // Top-left has a recommender pill (avatar + "{firstName} recommends");
+    // bottom-left has the title + note. Card stays dark (image-forward)
+    // in both light and dark mode regardless of palette — the backdrop
+    // carries it; only the surrounding screen chrome adapts.
+    //
+    // Fallback for the ~0.2% of titles with no TMDB backdrop (2 of 861
+    // in the backfill): solid palette.surfaceAlt with a faint Film
+    // glyph, and the text/pill recolour onto light tokens. Clean and
+    // intentional rather than a hacked-up version of the backdrop
+    // card; rare enough that minimum-viable is the right scope.
+    //
     // Shared between the single-card and multi-card render paths so a
-    // change to the card layout doesn't have to land in two places.
-    // `cardWidth` is overridden inline because the solo and carousel
-    // widths differ; everything else comes from styles.recHeroCard.
+    // change here lands in both. `cardWidth` is supplied inline —
+    // REC_CARD_SOLO_W (near-full-width) when there's just one rec,
+    // REC_CARD_W (~85%) when the carousel needs the next card to
+    // peek and invite the swipe.
     function renderRecHeroCard(rec: RecForYou, cardWidth: number) {
+        const hasBackdrop = rec.backdropPath !== null;
+        // Title / note colours flip with the variant: the backdrop
+        // case sits on the dark end of the gradient (white text
+        // regardless of the page palette), the fallback case adapts
+        // to light tokens since it's on surfaceAlt with no dark image.
+        const titleColor = hasBackdrop ? '#FFFFFF' : palette.text;
+        const noteColor = hasBackdrop
+            ? 'rgba(255,255,255,0.82)'
+            : palette.textMuted;
         return (
             <Pressable
                 key={rec.id}
@@ -728,62 +765,103 @@ export default function HomeScreen() {
                 }
                 style={({ pressed }) => [
                     styles.recHeroCard,
-                    {
-                        width: cardWidth,
-                        backgroundColor: palette.surfaceAlt,
-                        borderColor: palette.border,
-                    },
+                    { width: cardWidth },
                     pressed && { opacity: 0.85 },
                 ]}
             >
-                {rec.posterPath ? (
-                    <Image
-                        source={{ uri: imageUrl(rec.posterPath, 'w342') }}
-                        style={styles.recHeroPoster}
-                        contentFit="cover"
-                        transition={150}
-                    />
+                {hasBackdrop ? (
+                    <>
+                        <Image
+                            source={{
+                                uri: imageUrl(rec.backdropPath!, 'w780'),
+                            }}
+                            style={StyleSheet.absoluteFillObject}
+                            contentFit="cover"
+                            transition={150}
+                        />
+                        {/* Gradient: transparent at top, near-opaque
+                            warm-dark at bottom. locations={[0.45, 1]}
+                            keeps the upper half of the image readable
+                            (where the recommender pill floats) while
+                            ramping aggressively into the bottom half
+                            so the title + note text always reads
+                            regardless of the underlying image
+                            lightness. */}
+                        <LinearGradient
+                            colors={[
+                                'rgba(10,6,10,0)',
+                                'rgba(10,6,10,0.92)',
+                            ]}
+                            locations={[0.45, 1]}
+                            style={StyleSheet.absoluteFillObject}
+                        />
+                    </>
                 ) : (
                     <View
                         style={[
-                            styles.recHeroPoster,
-                            { backgroundColor: palette.surface },
+                            StyleSheet.absoluteFillObject,
+                            styles.recHeroFallback,
+                            { backgroundColor: palette.surfaceAlt },
                         ]}
-                    />
-                )}
-                <View style={styles.recHeroContent}>
-                    <View style={styles.recHeroSenderRow}>
-                        <Avatar
-                            avatarUrl={rec.sender.avatarUrl}
-                            displayName={rec.sender.displayName}
-                            seedId={rec.sender.userId}
-                            size={REC_AVATAR_SIZE}
+                    >
+                        <Film
+                            color={palette.textMuted}
+                            size={64}
+                            strokeWidth={1.25}
+                            style={styles.recHeroFallbackIcon}
                         />
-                        <View style={styles.recHeroSenderText}>
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.accent },
-                                ]}
-                                numberOfLines={1}
-                            >
-                                {firstName(rec.sender.displayName)}
-                            </Text>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                recommends
-                            </Text>
-                        </View>
                     </View>
+                )}
+
+                {/* Recommender pill, top-left. Solid palette.accent
+                    (plum) in BOTH the backdrop and fallback variants
+                    — the recommender is the whole social-signal point
+                    of the card, so it gets a deliberate brand-coloured
+                    chip rather than blending into the image or the
+                    surfaceAlt wash. White firstName + 85%-white
+                    "recommends" gives the two-step hierarchy inside
+                    the pill (name = primary, verb = supporting) at
+                    legible contrast on plum. */}
+                <View
+                    style={[
+                        styles.recommenderPill,
+                        { backgroundColor: palette.accent },
+                    ]}
+                >
+                    <Avatar
+                        avatarUrl={rec.sender.avatarUrl}
+                        displayName={rec.sender.displayName}
+                        seedId={rec.sender.userId}
+                        size={REC_PILL_AVATAR_SIZE}
+                    />
                     <Text
                         style={[
-                            typography.heading,
-                            { color: palette.text },
+                            typography.caption,
+                            { color: 'rgba(255,255,255,0.85)' },
                         ]}
+                        numberOfLines={1}
+                    >
+                        <Text
+                            style={[
+                                typography.caption,
+                                styles.recommenderName,
+                                { color: '#FFFFFF' },
+                            ]}
+                        >
+                            {firstName(rec.sender.displayName)}
+                        </Text>{' '}
+                        recommends
+                    </Text>
+                </View>
+
+                {/* Title + note, bottom-left, sitting on the dark end
+                    of the gradient. Title uses typography.heading;
+                    note is italic caption-sized in curly quotes.
+                    Both numberOfLines={2} so a long note doesn't push
+                    the title or vice versa. */}
+                <View style={styles.recHeroContent}>
+                    <Text
+                        style={[typography.heading, { color: titleColor }]}
                         numberOfLines={2}
                     >
                         {rec.title}
@@ -792,7 +870,7 @@ export default function HomeScreen() {
                         <Text
                             style={[
                                 styles.recNote,
-                                { color: palette.textMuted },
+                                { color: noteColor },
                             ]}
                             numberOfLines={2}
                         >
@@ -807,15 +885,17 @@ export default function HomeScreen() {
     function renderRecsForYou(data: HomeData) {
         return (
             <View style={styles.section}>
-                <Text
-                    style={[
-                        typography.bodyEmphasis,
-                        styles.sectionHeader,
-                        { color: palette.text },
-                    ]}
-                >
-                    Recs for you
-                </Text>
+                {/* No "Recs for you" section heading. The card already
+                    leads with "{firstName} recommends" in the plum
+                    pill, so a separate heading would just restate the
+                    same idea louder. Leading the screen with the
+                    cinematic card (no label) is a more confident
+                    image-forward open. styles.section's
+                    paddingTop: spacing.lg keeps a 24pt gap below the
+                    search bar so the card doesn't jam. The other
+                    sections (Friends are watching, Currently watching)
+                    keep their headings — those do real structural
+                    work separating sections. */}
                 {data.recsForYou.length > 0 ? (
                     // Single rec → render at near-full width without
                     // the horizontal scroller, since there's nothing
@@ -1351,39 +1431,71 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.xs,
     },
     recHeroCard: {
-        flexDirection: 'row',
         // Width is supplied inline by renderRecHeroCard so the single
-        // and multi-card paths can use different sizes.
+        // and multi-card paths can use different sizes. Card is a
+        // fixed-height tile that hosts a full-bleed backdrop (or
+        // fallback wash) behind absolutely-positioned overlay
+        // children — overflow: 'hidden' clips both the image and the
+        // gradient to the rounded corners.
         height: REC_CARD_H,
-        padding: spacing.sm,
         borderRadius: radius.md,
-        borderWidth: 1,
-        gap: spacing.md,
+        overflow: 'hidden',
+        position: 'relative',
     },
-    recHeroPoster: {
-        width: REC_POSTER_W,
-        height: REC_POSTER_H,
-        borderRadius: radius.sm,
+    recHeroFallback: {
+        // Used only when backdropPath is null. Centers the Film glyph
+        // as a quiet hint that the card is intentionally image-less,
+        // rather than looking like a broken/missing image.
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    recHeroContent: {
-        flex: 1,
-        gap: spacing.sm,
-        // Subtle inset on the right so content doesn't crowd the card
-        // edge; lines up the title with the avatar column above.
-        paddingRight: spacing.xs,
+    recHeroFallbackIcon: {
+        // Quiet enough to read as decoration, not a primary affordance.
+        opacity: 0.3,
     },
-    recHeroSenderRow: {
+    recommenderPill: {
+        // Top-left badge with the recommender's avatar + "{firstName}
+        // recommends". Floats over the card, so absolute positioning
+        // with a generous top/left inset. maxWidth keeps long display
+        // names from running off the right edge into the dead zone
+        // where there's no peek visual.
+        position: 'absolute',
+        top: spacing.md,
+        left: spacing.md,
+        maxWidth: '85%',
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
+        // Asymmetric horizontal padding: tight on the left (the avatar
+        // already provides visual weight) and roomier on the right so
+        // the text doesn't crowd the pill edge.
+        paddingLeft: spacing.xs,
+        paddingRight: spacing.sm,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
     },
-    recHeroSenderText: {
-        // Stack the sender name (accent) over the "recommends" caption
-        // (muted) so the social attribution reads as one identity
-        // block.
-        flex: 1,
+    recommenderName: {
+        // Slight weight bump on the firstName chunk inside the
+        // recommender pill — separates the name from the "recommends"
+        // trailing text without needing a different typography token.
+        fontWeight: '600',
+    },
+    recHeroContent: {
+        // Bottom-anchored title + note block. Sits inside the dark
+        // end of the gradient on the backdrop variant; against
+        // surfaceAlt on the fallback. Stretches to the card edges
+        // minus the standard gutter so titles can use the full width.
+        position: 'absolute',
+        bottom: spacing.md,
+        left: spacing.md,
+        right: spacing.md,
+        gap: spacing.xs,
     },
     recNote: {
+        // Italic caption-sized note with light-on-dark colour applied
+        // inline (varies between backdrop and fallback variants). The
+        // typography token doesn't include italic by default so we
+        // set it here.
         fontSize: 14,
         lineHeight: 20,
         fontStyle: 'italic',
