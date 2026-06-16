@@ -32,21 +32,29 @@ export const palette = {
         // visible the shadow actually is. Token exists so component
         // shadow styles never hardcode '#000'.
         shadow: '#000000',
-        // Avatar fallback fills used when no avatar image is available.
-        // Hashed deterministically from a stable user id so the same user
-        // always gets the same colour. All values are medium-dark so the
-        // initial reads in textInverse (white) at ≥4:1 contrast. Warm
-        // palette only — held over from the cream + coral era; re-check
-        // against the plum accent on device and tune any that clash.
+        // Avatar fallback gradients used when no avatar image is
+        // available. Hashed deterministically from a stable user id
+        // (djb2 in src/components/avatar.tsx) so the same user always
+        // gets the same pair — kept at exactly 8 pairs so the modulo
+        // matches the previous flat-colour set and existing avatars
+        // map to "their" colour, just rendered as a gentle two-tone
+        // gradient now. Each pair is a small from→to shift within one
+        // hue family (Notion/Linear style — visible but muted). The
+        // initial sits as WHITE text on top in both themes, so the
+        // LIGHTER stop (the "from" / top-left of the diagonal) is
+        // contrast-verified at ≥4.5:1 against white via WCAG. Hue
+        // families chosen to harmonize with the plum accent — plum
+        // and its harmonics (violet, rose) + warm earthy tones
+        // (bronze, brown) + cool counterpoints (blue, teal, green).
         avatarFallbacks: [
-            '#C46850',
-            '#B08A3C',
-            '#7C8F60',
-            '#B06978',
-            '#5E807F',
-            '#87729D',
-            '#6F8460',
-            '#8B5E45',
+            { from: '#7A3960', to: '#5A2A48' }, // plum (matches accent)
+            { from: '#3F587A', to: '#2D3F5C' }, // blue
+            { from: '#8B6135', to: '#6E4925' }, // bronze
+            { from: '#3F6B4F', to: '#2E5238' }, // green
+            { from: '#5C497F', to: '#443560' }, // violet
+            { from: '#8C4555', to: '#6B3242' }, // rose
+            { from: '#2F6068', to: '#1F484F' }, // teal
+            { from: '#6F4A37', to: '#543526' }, // warm brown
         ],
     },
     dark: {
@@ -66,19 +74,22 @@ export const palette = {
         error: '#D75B4D',
         overlay: 'rgba(0, 0, 0, 0.6)',
         shadow: '#000000',
-        // Parallel set to light.avatarFallbacks, lifted in lightness so
-        // the dark-mode textInverse (near-black) reads with ≥4:1
-        // contrast on each fill. Same caveat: tune against plum on
-        // device if any read off-key.
+        // Parallel set to light.avatarFallbacks — same 8 hue families
+        // in the same slot order so the same `seedId` maps to the
+        // same family across themes (a user's "rose" avatar stays
+        // "their" rose in dark mode). Each pair is slightly lifted
+        // vs the light variant so the gradient pops against the dark
+        // bg (#16120F), but still mid-dark enough to hold the WHITE
+        // initial at ≥4.5:1 contrast — every "from" stop verified.
         avatarFallbacks: [
-            '#E8957D',
-            '#D4B173',
-            '#B0C28D',
-            '#D49AA6',
-            '#9CB5B3',
-            '#B7A2C7',
-            '#A8BD9A',
-            '#BF9A82',
+            { from: '#9B5079', to: '#7A3960' }, // plum (matches accent)
+            { from: '#587398', to: '#3F587A' }, // blue
+            { from: '#8C6440', to: '#6E4925' }, // bronze
+            { from: '#4F7A60', to: '#3F6B4F' }, // green
+            { from: '#7A669D', to: '#5C497F' }, // violet
+            { from: '#A85F73', to: '#8C4555' }, // rose
+            { from: '#3F757E', to: '#2F6068' }, // teal
+            { from: '#8C6450', to: '#6F4A37' }, // warm brown
         ],
     },
 } as const;
@@ -220,8 +231,17 @@ export type ColorScheme = 'light' | 'dark';
 // the contract. (The previous `typeof palette.light` alias failed because
 // `as const` made every color a literal type, and the dark variants
 // couldn't be assigned to the light-keyed literal type.) Array-valued
-// tokens (e.g. avatarFallbacks) widen to `readonly string[]` instead.
-type WidenPaletteValue<V> = V extends readonly string[] ? readonly string[] : string;
+// tokens widen to a plain-string-element shape so the matching pair of
+// arrays from `palette.dark` is structurally assignable. Today there's
+// one array-of-objects token (avatarFallbacks: { from, to }[]) and
+// no string-array tokens, but the readonly-string[] branch stays for
+// future tokens of that shape.
+type WidenPaletteValue<V> =
+    V extends readonly { from: string; to: string }[]
+        ? readonly { from: string; to: string }[]
+        : V extends readonly string[]
+            ? readonly string[]
+            : string;
 export type Palette = {
     readonly [K in keyof typeof palette.light]: WidenPaletteValue<
         (typeof palette.light)[K]
