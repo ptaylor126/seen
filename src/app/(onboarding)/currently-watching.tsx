@@ -115,6 +115,7 @@ export default function CurrentlyWatchingScreen() {
                 mediaType: item.media_type,
                 title,
                 posterPath: item.poster_path,
+                backdropPath: item.backdrop_path,
                 releaseDate:
                     typeof rawDate === 'string' && rawDate.length > 0
                         ? rawDate

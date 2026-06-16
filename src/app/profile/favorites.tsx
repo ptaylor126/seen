@@ -411,6 +411,7 @@ export default function EditFavoritesScreen() {
                     mediaType,
                     title: titleText,
                     posterPath: item.poster_path,
+                    backdropPath: item.backdrop_path,
                     releaseDate:
                         typeof rawDate === 'string' && rawDate.length > 0
                             ? rawDate

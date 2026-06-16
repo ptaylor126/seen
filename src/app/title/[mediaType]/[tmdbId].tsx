@@ -620,6 +620,7 @@ export default function TitleDetailScreen() {
                     mediaType,
                     title: titleText,
                     posterPath: detail.data.poster_path,
+                    backdropPath: detail.data.backdrop_path,
                     releaseDate:
                         typeof rawDate === 'string' && rawDate.length > 0
                             ? rawDate

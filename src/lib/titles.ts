@@ -29,6 +29,11 @@ export interface TitleRow {
     media_type: MediaType;
     title: string | null;
     poster_path: string | null;
+    // TMDB landscape image path. Null when TMDB doesn't have one for
+    // this title (~5-15% of titles per the 2026-06-16 audit — niche,
+    // festival, unreleased entries). Renderer consumers handle null
+    // with a fallback (solid surfaceAlt with title overlaid).
+    backdrop_path: string | null;
     release_date: string | null;  // 'YYYY-MM-DD' or null.
     original_language: string | null;
     genre_ids: number[] | null;
@@ -63,7 +68,7 @@ export async function fetchTitlesByItems(
     const { data, error } = await supabase
         .from('titles')
         .select(
-            'tmdb_id, media_type, title, poster_path, release_date, original_language, genre_ids',
+            'tmdb_id, media_type, title, poster_path, backdrop_path, release_date, original_language, genre_ids',
         )
         .in('tmdb_id', tmdbIds);
     if (error) throw error;
@@ -74,6 +79,7 @@ export async function fetchTitlesByItems(
             media_type: row.media_type,
             title: row.title,
             poster_path: row.poster_path,
+            backdrop_path: row.backdrop_path,
             release_date: row.release_date,
             original_language: row.original_language,
             genre_ids: row.genre_ids,
@@ -87,27 +93,36 @@ export interface EnsureTitleArgs {
     mediaType: MediaType;
     title: string;
     posterPath: string | null;
+    backdropPath: string | null;
     releaseDate: string | null;  // 'YYYY-MM-DD' or null. Caller maps TMDB empty-string to null.
     originalLanguage: string;
     genreIds: number[];
 }
 
 export async function ensureTitle(args: EnsureTitleArgs): Promise<void> {
+    // Argument names changed from snake_case-matching-columns to p_*
+    // in 20260616130000 — see that migration's header for the
+    // #variable_conflict use_variable history and why the rename was
+    // necessary to safely add DO UPDATE SET. PostgREST resolves the
+    // RPC by named-argument set, so passing the OLD names would now
+    // fail with PGRST202.
     const { error } = await supabase.rpc('ensure_title', {
-        tmdb_id: args.tmdbId,
-        media_type: args.mediaType,
-        title: args.title,
+        p_tmdb_id: args.tmdbId,
+        p_media_type: args.mediaType,
+        p_title: args.title,
         // The generated Database['public']['Functions']['ensure_title']
         // signature types these as required `string`, but the
         // underlying Postgres function args are `text`/`date`, which
         // accept NULL. supabase-js will serialise a null JS value to
         // JSON null and the RPC accepts it. Cast at this boundary so
-        // call sites can pass null naturally for unknown poster/date.
+        // call sites can pass null naturally for unknown poster/
+        // backdrop/date.
         // reason: typegen marks nullable text args as required-string.
-        poster_path: args.posterPath as unknown as string,
-        release_date: args.releaseDate as unknown as string,
-        original_language: args.originalLanguage,
-        genre_ids: args.genreIds,
+        p_poster_path: args.posterPath as unknown as string,
+        p_backdrop_path: args.backdropPath as unknown as string,
+        p_release_date: args.releaseDate as unknown as string,
+        p_original_language: args.originalLanguage,
+        p_genre_ids: args.genreIds,
     });
     if (error) {
         console.warn('ensure_title failed (non-blocking):', error);

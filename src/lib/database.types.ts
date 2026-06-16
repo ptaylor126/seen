@@ -563,6 +563,7 @@ export type Database = {
       }
       titles: {
         Row: {
+          backdrop_path: string | null
           created_at: string
           genre_ids: number[] | null
           media_type: string
@@ -574,6 +575,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          backdrop_path?: string | null
           created_at?: string
           genre_ids?: number[] | null
           media_type: string
@@ -585,6 +587,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          backdrop_path?: string | null
           created_at?: string
           genre_ids?: number[] | null
           media_type?: string
@@ -614,13 +617,14 @@ export type Database = {
       }
       ensure_title: {
         Args: {
-          genre_ids: number[]
-          media_type: string
-          original_language: string
-          poster_path: string
-          release_date: string
-          title: string
-          tmdb_id: number
+          p_backdrop_path: string
+          p_genre_ids: number[]
+          p_media_type: string
+          p_original_language: string
+          p_poster_path: string
+          p_release_date: string
+          p_title: string
+          p_tmdb_id: number
         }
         Returns: undefined
       }
