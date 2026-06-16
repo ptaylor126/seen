@@ -633,6 +633,10 @@ export type Database = {
       is_party_to_comment: { Args: { comment_id: string }; Returns: boolean }
       is_party_to_rec: { Args: { rec_id: string }; Returns: boolean }
       is_recipient_of_rec: { Args: { rec_id: string }; Returns: boolean }
+      reorder_favorites: {
+        Args: { p_media_type: string; p_ordered_ids: string[] }
+        Returns: undefined
+      }
       send_recommendation: {
         Args: {
           media_type: string

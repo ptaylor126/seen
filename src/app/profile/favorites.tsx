@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Plus, X } from 'lucide-react-native';
+import { GripVertical, Plus, X } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -13,6 +13,11 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import {
+    NestableDraggableFlatList,
+    NestableScrollContainer,
+    type RenderItemParams,
+} from 'react-native-draggable-flatlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -27,6 +32,7 @@ import {
     type FavoriteItem,
     fetchFavoritesForUser,
     removeFavorite,
+    reorderFavorites,
     type UserFavorites,
 } from '@/lib/favorites';
 import { applyWatchedRating } from '@/lib/rating';
@@ -65,6 +71,44 @@ interface PendingRatingState {
     currentRating: number | null;
 }
 
+// Coerce an unknown thrown value into a user-presentable string.
+// PostgrestError (the shape supabase-js throws from .from(...) chains)
+// is a plain object with .message / .code / .hint / .details — NOT an
+// Error instance, so the naive `err instanceof Error ? err.message :
+// 'Unknown error'` pattern that lived at every catch site here was
+// always falling through to "Unknown error" for any DB-level failure.
+// Same duck-typed shape the title screen's surfaceUpdateError uses.
+// Includes the PG code (e.g. "23505") when present so a constraint
+// violation surfaces unambiguously in the alert without diving into
+// Metro — load-bearing during the next iteration of the favorites
+// editor when constraint behaviour might still surprise us.
+function formatErrorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (
+        err &&
+        typeof err === 'object' &&
+        'message' in err &&
+        typeof (err as { message: unknown }).message === 'string'
+    ) {
+        const obj = err as {
+            message: string;
+            code?: unknown;
+            hint?: unknown;
+        };
+        const code =
+            typeof obj.code === 'string' && obj.code.length > 0
+                ? obj.code
+                : null;
+        const hint =
+            typeof obj.hint === 'string' && obj.hint.length > 0
+                ? obj.hint
+                : null;
+        const head = code ? `${code}: ${obj.message}` : obj.message;
+        return hint ? `${head}\n\n${hint}` : head;
+    }
+    return 'Unknown error';
+}
+
 function nextOpenRank(items: FavoriteItem[]): number {
     const used = new Set(items.map((f) => f.rank));
     for (let r = 1; r <= MAX_RANK; r++) {
@@ -73,6 +117,14 @@ function nextOpenRank(items: FavoriteItem[]): number {
     // Caller's responsibility — the editor screen guards on
     // items.length < MAX_RANK before calling.
     throw new Error('nextOpenRank: no open rank');
+}
+
+// True if the rank-sorted items array isn't 1, 2, 3, ... N — i.e. a
+// removal has left a gap (e.g. 1, 3, 4) before the renormalize-on-
+// remove flow landed in this build, or the slot was never compacted.
+// Drives the opportunistic compaction in the initial load effect.
+function hasRankGap(items: FavoriteItem[]): boolean {
+    return items.some((f, i) => f.rank !== i + 1);
 }
 
 function categoryLabel(mediaType: MediaCategory): string {
@@ -158,15 +210,39 @@ export default function EditFavoritesScreen() {
     );
     const [ratingBusy, setRatingBusy] = useState(false);
 
+    // Refresh local favorites state from the server. Retries once on
+    // transient failure (mirrors callProxy's silent-retry shape — most
+    // network blips resolve on the second try). If BOTH attempts fail,
+    // THROWS — the previous "swallow + console.warn" shape let local
+    // state drift out of sync with the DB after a failed refresh, and
+    // subsequent operations (nextOpenRank, the duplicate pre-check)
+    // computed against stale data and intermittently collided on
+    // INSERT. Now the failure surfaces to the caller's catch, which
+    // shows the actual error via formatErrorMessage rather than letting
+    // staleness accumulate silently.
+    //
+    // Callers that don't want a refresh-failure to abort their flow
+    // (e.g. the optimistic-rollback path in handleReorderEnd) wrap
+    // this call in their own try/catch.
     const refreshFavorites = useCallback(async () => {
         if (!userId) return;
-        try {
-            const result = await fetchFavoritesForUser(userId);
-            setFavorites(result);
-        } catch (err) {
-            console.warn('favorites refresh failed:', err);
-            // Soft failure — keep showing whatever we last loaded.
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const result = await fetchFavoritesForUser(userId);
+                setFavorites(result);
+                return;
+            } catch (err) {
+                lastError = err;
+                if (attempt === 0) {
+                    await new Promise<void>((resolve) =>
+                        setTimeout(resolve, 400),
+                    );
+                }
+            }
         }
+        console.error('favorites refresh failed after retry:', lastError);
+        throw lastError;
     }, [userId]);
 
     useEffect(() => {
@@ -175,7 +251,45 @@ export default function EditFavoritesScreen() {
             if (!userId) return;
             try {
                 const result = await fetchFavoritesForUser(userId);
-                if (active) setFavorites(result);
+                if (!active) return;
+                // Opportunistic gap compaction. A pre-3b build that
+                // removed a slot without renumbering would leave gaps
+                // (e.g. 1, 3, 4 if rank 2 was removed). Detect those
+                // here and call reorder_favorites with the current
+                // ordering so they renumber 1..N before render.
+                // Best-effort: any failure here leaves the gaps in
+                // place (load still completes); the renumber retries
+                // on next editor visit.
+                const moviesNeedCompact = hasRankGap(result.movies);
+                const tvNeedCompact = hasRankGap(result.tv);
+                if (moviesNeedCompact || tvNeedCompact) {
+                    try {
+                        if (moviesNeedCompact) {
+                            await reorderFavorites({
+                                mediaType: 'movie',
+                                orderedIds: result.movies.map((f) => f.id),
+                            });
+                        }
+                        if (tvNeedCompact) {
+                            await reorderFavorites({
+                                mediaType: 'tv',
+                                orderedIds: result.tv.map((f) => f.id),
+                            });
+                        }
+                        // Re-fetch to pick up the renumbered ranks.
+                        const compacted =
+                            await fetchFavoritesForUser(userId);
+                        if (active) setFavorites(compacted);
+                    } catch (compactErr) {
+                        console.warn(
+                            'opportunistic compaction failed (rendering with gaps):',
+                            compactErr,
+                        );
+                        if (active) setFavorites(result);
+                    }
+                } else {
+                    setFavorites(result);
+                }
             } catch (err) {
                 console.warn('initial favorites load failed:', err);
             } finally {
@@ -220,14 +334,29 @@ export default function EditFavoritesScreen() {
         setBusy(true);
 
         try {
-            const list = mediaType === 'movie' ? favorites.movies : favorites.tv;
+            // Refetch favorites from the DB BEFORE any decision —
+            // don't trust local state for the duplicate-tmdb pre-check
+            // OR for nextOpenRank's slot computation. Either being
+            // stale (e.g. after a previously-failed silent refresh)
+            // would let an INSERT into a stale-thought-open rank
+            // collide on favorites_user_media_rank_unique, or let a
+            // duplicate tmdb_id slip past the pre-check and collide
+            // on favorites_user_media_tmdb_unique. The cost is one
+            // extra round-trip per add; the alternative (the previous
+            // local-state read) was the intermittent "Couldn't add"
+            // bug. Same setFavorites so the screen reflects the
+            // freshest state before the writes start.
+            const fresh = await fetchFavoritesForUser(userId);
+            setFavorites(fresh);
+            const list = mediaType === 'movie' ? fresh.movies : fresh.tv;
             const titleText =
                 item.media_type === 'movie' ? item.title : item.name;
 
-            // Pre-check: tmdb_id already in this category at a DIFFERENT
-            // rank than the one we're replacing? The other UNIQUE on
-            // (user_id, media_type, tmdb_id) would fire on the UPSERT
-            // otherwise. Catch it here with a friendlier message.
+            // Pre-check (against FRESH list, not local state): tmdb_id
+            // already in this category at a DIFFERENT rank than the
+            // one we're replacing? The other UNIQUE on (user_id,
+            // media_type, tmdb_id) would fire on the INSERT otherwise.
+            // Catch it here with a friendlier message.
             const existing = list.find((f) => f.tmdbId === item.id);
             if (existing) {
                 if (
@@ -360,8 +489,71 @@ export default function EditFavoritesScreen() {
             console.error('favorites add failed:', err);
             Alert.alert(
                 "Couldn't add",
-                err instanceof Error ? err.message : 'Unknown error',
+                formatErrorMessage(err),
             );
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Reorder flow (drag-to-reorder on drop)
+    // ------------------------------------------------------------------
+
+    async function handleReorderEnd(
+        mediaType: MediaCategory,
+        newOrder: FavoriteItem[],
+    ) {
+        if (busy) return;
+        const currentList =
+            mediaType === 'movie' ? favorites.movies : favorites.tv;
+        const newIds = newOrder.map((f) => f.id);
+        const currentIds = currentList.map((f) => f.id);
+        // Skip the round-trip if the drop ended at the same position
+        // (drag started but didn't actually move anything).
+        if (
+            newIds.length === currentIds.length &&
+            newIds.every((id, i) => id === currentIds[i])
+        ) {
+            return;
+        }
+        setBusy(true);
+        // Optimistic update: write the new order + new ranks into
+        // local state so the row doesn't snap back to its old position
+        // during the network round-trip. Re-derived as { ...f, rank: i+1 }
+        // so the rank chips on the cards match the new ordering
+        // immediately. Reverted by refreshFavorites() in the catch
+        // branch if the RPC fails.
+        setFavorites((prev) => ({
+            ...prev,
+            [mediaType === 'movie' ? 'movies' : 'tv']: newOrder.map(
+                (f, i) => ({ ...f, rank: i + 1 }),
+            ),
+        }));
+        try {
+            await reorderFavorites({ mediaType, orderedIds: newIds });
+            await refreshFavorites();
+        } catch (err) {
+            console.error('favorites reorder failed:', err);
+            Alert.alert(
+                "Couldn't reorder",
+                formatErrorMessage(err),
+            );
+            // Roll back optimistic update on failure. Wrapped in its
+            // own try/catch because refreshFavorites now throws on
+            // failure (previously swallowed) — a rollback-refresh
+            // failure shouldn't supersede the original reorder error
+            // that's already in the alert. Worst case here: local
+            // state stays at the optimistic ordering, but the user
+            // already saw the "Couldn't reorder" alert and can retry.
+            try {
+                await refreshFavorites();
+            } catch (refreshErr) {
+                console.warn(
+                    'refresh during reorder-rollback failed:',
+                    refreshErr,
+                );
+            }
         } finally {
             setBusy(false);
         }
@@ -378,12 +570,29 @@ export default function EditFavoritesScreen() {
         setBusy(true);
         try {
             await removeFavorite(favorite.id);
+            // Compact the gap left by the removed rank: re-rank the
+            // remaining favorites in this category in their current
+            // order. Skipped when nothing remains (the RPC's n=0
+            // branch is a no-op anyway, but skipping the round-trip
+            // is cheaper). After the renumber, refresh once — the
+            // refresh picks up both the DELETE and the new ranks in
+            // one round-trip.
+            const remaining = (favorite.mediaType === 'movie'
+                ? favorites.movies
+                : favorites.tv
+            ).filter((f) => f.id !== favorite.id);
+            if (remaining.length > 0) {
+                await reorderFavorites({
+                    mediaType: favorite.mediaType,
+                    orderedIds: remaining.map((f) => f.id),
+                });
+            }
             await refreshFavorites();
         } catch (err) {
             console.error('favorites remove failed:', err);
             Alert.alert(
                 "Couldn't remove",
-                err instanceof Error ? err.message : 'Unknown error',
+                formatErrorMessage(err),
             );
         } finally {
             setBusy(false);
@@ -413,7 +622,7 @@ export default function EditFavoritesScreen() {
             console.error('favorites rating update failed:', err);
             Alert.alert(
                 'Rating update failed',
-                err instanceof Error ? err.message : 'Unknown error',
+                formatErrorMessage(err),
             );
         } finally {
             setRatingBusy(false);
@@ -423,6 +632,102 @@ export default function EditFavoritesScreen() {
     // ------------------------------------------------------------------
     // Render helpers
     // ------------------------------------------------------------------
+
+    // Per-row renderer for DraggableFlatList. Long-press the grip
+    // handle (≡) on the left to start dragging; the rest of the row is
+    // tap-inert except the [×] remove on the right. `drag` is the
+    // function the library hands us to begin a drag; we bind it to
+    // the grip's onLongPress (not the whole row) so the [×] tap stays
+    // a clean affordance with no gesture conflict. `isActive` is true
+    // while THIS row is being dragged — we dim its opacity so the
+    // user sees clearly which row is in motion.
+    function renderDraggableRow(
+        params: RenderItemParams<FavoriteItem>,
+        mediaType: MediaCategory,
+    ) {
+        const { item: fav, drag, isActive } = params;
+        return (
+            <View
+                style={[
+                    styles.row,
+                    { borderColor: palette.border },
+                    isActive && { opacity: 0.7 },
+                ]}
+            >
+                <Pressable
+                    onLongPress={drag}
+                    delayLongPress={150}
+                    disabled={busy}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Drag to reorder ${fav.title || 'this title'}`}
+                    style={({ pressed }) => [
+                        styles.rowDragHandle,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <GripVertical
+                        color={palette.textMuted}
+                        size={20}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                </Pressable>
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        styles.rowRank,
+                        { color: palette.textMuted },
+                    ]}
+                >
+                    {fav.rank}
+                </Text>
+                {fav.posterPath ? (
+                    <Image
+                        source={{
+                            uri: imageUrl(fav.posterPath, 'w185'),
+                        }}
+                        style={styles.rowPoster}
+                        contentFit="cover"
+                        transition={150}
+                    />
+                ) : (
+                    <View
+                        style={[
+                            styles.rowPoster,
+                            { backgroundColor: palette.surfaceAlt },
+                        ]}
+                    />
+                )}
+                <Text
+                    style={[
+                        typography.body,
+                        styles.rowTitle,
+                        { color: palette.text },
+                    ]}
+                    numberOfLines={2}
+                >
+                    {fav.title || 'Untitled'}
+                </Text>
+                <Pressable
+                    onPress={() => handleRemoveTapped(fav)}
+                    hitSlop={spacing.sm}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${fav.title || 'this title'} from your top 5`}
+                    style={({ pressed }) => [
+                        styles.rowRemove,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <X
+                        color={palette.textMuted}
+                        size={20}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                </Pressable>
+            </View>
+        );
+    }
 
     function renderSection(mediaType: MediaCategory) {
         const list = mediaType === 'movie' ? favorites.movies : favorites.tv;
@@ -453,74 +758,29 @@ export default function EditFavoritesScreen() {
                         No {singularLabel(mediaType)}s yet — add up to {MAX_RANK}.
                     </Text>
                 ) : (
-                    <View style={styles.rows}>
-                        {list.map((fav) => (
-                            <View
-                                key={fav.id}
-                                style={[
-                                    styles.row,
-                                    { borderColor: palette.border },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        styles.rowRank,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    {fav.rank}
-                                </Text>
-                                {fav.posterPath ? (
-                                    <Image
-                                        source={{
-                                            uri: imageUrl(fav.posterPath, 'w185'),
-                                        }}
-                                        style={styles.rowPoster}
-                                        contentFit="cover"
-                                        transition={150}
-                                    />
-                                ) : (
-                                    <View
-                                        style={[
-                                            styles.rowPoster,
-                                            {
-                                                backgroundColor:
-                                                    palette.surfaceAlt,
-                                            },
-                                        ]}
-                                    />
-                                )}
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        styles.rowTitle,
-                                        { color: palette.text },
-                                    ]}
-                                    numberOfLines={2}
-                                >
-                                    {fav.title || 'Untitled'}
-                                </Text>
-                                <Pressable
-                                    onPress={() => handleRemoveTapped(fav)}
-                                    hitSlop={spacing.sm}
-                                    disabled={busy}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={`Remove ${fav.title || 'this title'} from your top 5`}
-                                    style={({ pressed }) => [
-                                        styles.rowRemove,
-                                        pressed && { opacity: 0.6 },
-                                    ]}
-                                >
-                                    <X
-                                        color={palette.textMuted}
-                                        size={20}
-                                        strokeWidth={ICON_STROKE_WIDTH}
-                                    />
-                                </Pressable>
-                            </View>
-                        ))}
-                    </View>
+                    // NestableDraggableFlatList per section — the
+                    // library's variant designed for lists nested inside
+                    // a parent scroll container (we use NestableScrollContainer
+                    // instead of plain ScrollView in the outer render
+                    // for exactly this reason). Without these variants,
+                    // the inner FlatList's pan-responder would conflict
+                    // with the outer ScrollView. Long-press the grip
+                    // handle on a row to start dragging; drop fires
+                    // handleReorderEnd which calls the reorder_favorites
+                    // RPC (atomic renumber on the server, optimistic
+                    // ranks rewritten locally before the round-trip).
+                    <NestableDraggableFlatList
+                        data={list}
+                        keyExtractor={(item) => item.id}
+                        onDragEnd={({ data }) =>
+                            handleReorderEnd(mediaType, data)
+                        }
+                        activationDistance={10}
+                        containerStyle={styles.rows}
+                        renderItem={(params) =>
+                            renderDraggableRow(params, mediaType)
+                        }
+                    />
                 )}
 
                 {/* Single "+ Add" affordance per section. When full,
@@ -586,10 +846,17 @@ export default function EditFavoritesScreen() {
                     <ActivityIndicator color={palette.accent} />
                 </View>
             ) : (
-                <ScrollView contentContainerStyle={styles.scrollContent}>
+                // NestableScrollContainer instead of plain ScrollView so
+                // the per-section NestableDraggableFlatList can host
+                // its drag gestures without pan-responder conflict with
+                // the parent scroll surface. Inherits ScrollView props
+                // (contentContainerStyle works the same way).
+                <NestableScrollContainer
+                    contentContainerStyle={styles.scrollContent}
+                >
                     {renderSection('movie')}
                     {renderSection('tv')}
-                </ScrollView>
+                </NestableScrollContainer>
             )}
 
             {/* Search modal — full-screen overlay containing the
@@ -853,6 +1120,14 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm,
         borderRadius: radius.sm,
         borderWidth: StyleSheet.hairlineWidth,
+    },
+    rowDragHandle: {
+        // Drag-handle tap target on the LEFT of the row. Long-press
+        // starts the drag (see renderDraggableRow). Slightly wider
+        // than the icon so the hit area is comfortable for
+        // imprecise touches.
+        paddingHorizontal: spacing.xs,
+        paddingVertical: spacing.xs,
     },
     rowRank: {
         // Fixed width so misaligned rank numbers (1-5 single digit)

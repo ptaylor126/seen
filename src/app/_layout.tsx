@@ -9,6 +9,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View, useColorScheme } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
@@ -50,12 +51,31 @@ export default function RootLayout() {
     // screens write to via refresh(). Without the shared context, the
     // post-onboarding navigation would race against a stale profile
     // state and bounce the user back into the flow.
+    //
+    // GestureHandlerRootView is the OUTERMOST wrapper because
+    // react-native-gesture-handler strictly requires it as an ancestor
+    // of any component that uses its gestures (NativeViewGestureHandler,
+    // long-press / pan / pinch handlers, etc.). Stack-navigator's
+    // back-swipe gestures worked without it because iOS gesture-handler
+    // can find a root view through fallback paths, but
+    // NestableDraggableFlatList in the Top 5 editor (and any future
+    // drag / swipe surface we add) exercises the strict path and
+    // throws "NativeViewGestureHandler must be used as a descendant
+    // of GestureHandlerRootView" without this wrapper. style={{ flex: 1 }}
+    // is mandatory — without it the view collapses to zero height
+    // and the whole app renders blank. NOTE: React Native <Modal>
+    // components render OUTSIDE this tree on iOS (separate native
+    // view controller — same reason SafeAreaView doesn't work inside
+    // Modal); any draggable list rendered inside a Modal would need
+    // its own GestureHandlerRootView inside the Modal.
     return (
-        <SafeAreaProvider>
-            <ProfileProvider>
-                <RootLayoutInner />
-            </ProfileProvider>
-        </SafeAreaProvider>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+            <SafeAreaProvider>
+                <ProfileProvider>
+                    <RootLayoutInner />
+                </ProfileProvider>
+            </SafeAreaProvider>
+        </GestureHandlerRootView>
     );
 }
 
