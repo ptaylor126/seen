@@ -33,6 +33,16 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-16
+
+**Decisions worth remembering**
+
+- **`ON CONFLICT DO NOTHING` on an upsert meant to "keep this row current" is a latent bug** — bad or partial rows become permanent and silently no-op every future write. Today's failure: stub rows in `public.titles` (title / poster_path / backdrop_path NULL, traced to a 2026-06-09 backfill TMDB-hiccup that slipped past the `if (!res.ok)` guard and inserted with all-null fields) were skipped by every subsequent forward-path `ensure_title` call because of the DO NOTHING. UI surfaced "Unable to load title" on a row that had clearly been touched. Fix: `DO UPDATE SET col = COALESCE(excluded.col, titles.col)` — stubs heal on the next write, and the `coalesce` prevents a future caller's accidental NULL from clobbering an existing populated field. **Generalises**: any `ensure_*` / "stamp the catalogue with fresh source-of-truth data" pattern should be DO UPDATE COALESCE, not DO NOTHING. Reserve DO NOTHING for cases where the upsert is genuinely "first write wins, ignore subsequent attempts" (idempotent inserts of immutable events). The stub source itself — `if (!res.ok)` not catching 200-with-error-body — is a worth a separate look in any TMDB script.
+
+- **The `p_*` parameter rename finally eliminated the `#variable_conflict use_variable` trap that bit `ensure_title` repeatedly.** Same function, same shape: parameter names matching column names + `use_variable` → plpgsql substituted parameter placeholders into column-reference positions where it shouldn't. 2026-06-10 hit the ON CONFLICT col_list (fixed with `ON CONFLICT ON CONSTRAINT titles_pkey`). 2026-06-16 hit the DO UPDATE SET LHS (no constraint-name shortcut exists for that position). Both bugs were the same root cause; only the position differed. The 2026-06-10 fix migration noted the rename was rejected as "no functional advantage over the constraint-name reference" — that judgement was correct at the time (just ON CONFLICT) but wrong as soon as the function grew DO UPDATE, which the original design didn't anticipate. **Rule going forward**: every new RPC parameter gets a `p_` prefix at write time, no exceptions. Then `use_variable` is unnecessary (default `use_column` works in every parser position) and the trap is structurally impossible to reintroduce. The constraint-name shortcut was a band-aid for one position only; the rename is the structural fix.
+
+---
+
 ## 2026-06-11
 
 **Done**
