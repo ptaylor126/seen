@@ -1,0 +1,123 @@
+// Generic segmented control: one rounded container holding N options,
+// the selected one filled (subtle accent wash), the rest plain. Used
+// for library + friend-library's Watchlist/Watching/Watched picker;
+// usable for any string-valued mutually-exclusive choice.
+//
+// Visual posture:
+//   - Container: palette.surface (a step lighter than the surfaceAlt
+//     zone we sit in), radius.md outer corners, internal spacing.xs
+//     padding so the selected segment is inset from the container edge.
+//   - Selected segment: palette.accentSubtle (soft accent wash) +
+//     palette.accent text — accent is present but muted, distinct
+//     from the loud solid-accent pills the previous version used.
+//   - Unselected segments: transparent background + palette.textMuted
+//     text — read as inactive but tappable.
+//   - Labels at 14/Medium (caption size + medium weight) — reads as a
+//     control rather than a body-sized button.
+//   - Generous tap target: paddingVertical spacing.md gives ~42pt
+//     total height, right at the Apple minimum.
+//
+// Generic over T (string-valued) so the caller's option list keeps
+// its narrowed type through the onChange callback — no string cast at
+// the call site.
+
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import {
+    fontFamily,
+    getPalette,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
+
+type Palette = ReturnType<typeof getPalette>;
+
+interface SegmentedControlProps<T extends string> {
+    options: ReadonlyArray<{ value: T; label: string }>;
+    value: T;
+    onChange: (next: T) => void;
+    palette: Palette;
+}
+
+export function SegmentedControl<T extends string>({
+    options,
+    value,
+    onChange,
+    palette,
+}: SegmentedControlProps<T>) {
+    return (
+        <View
+            style={[
+                styles.container,
+                {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                },
+            ]}
+        >
+            {options.map((option) => {
+                const isActive = option.value === value;
+                return (
+                    <Pressable
+                        key={option.value}
+                        onPress={() => onChange(option.value)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isActive }}
+                        accessibilityLabel={option.label}
+                        style={({ pressed }) => [
+                            styles.segment,
+                            {
+                                backgroundColor: isActive
+                                    ? palette.accentSubtle
+                                    : 'transparent',
+                                opacity: pressed ? 0.7 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                styles.label,
+                                {
+                                    color: isActive
+                                        ? palette.accent
+                                        : palette.textMuted,
+                                },
+                            ]}
+                        >
+                            {option.label}
+                        </Text>
+                    </Pressable>
+                );
+            })}
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        padding: spacing.xs,
+        borderRadius: radius.md,
+        borderWidth: StyleSheet.hairlineWidth,
+        // gap so the selected segment's fill doesn't touch its siblings;
+        // combined with the container padding, the segment sits as a
+        // distinct pill inside the rounded container.
+        gap: spacing.xs,
+    },
+    segment: {
+        flex: 1,
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    label: {
+        // caption size (14px) at medium (500) weight. Reads as a
+        // control label rather than a body button (which would use
+        // bodyEmphasis at 16/600 — too shouty for a segmented control).
+        ...typography.caption,
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
+    },
+});

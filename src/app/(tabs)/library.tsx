@@ -39,6 +39,7 @@ import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
 import { useLibraryFilters } from '@/lib/use-library-filters';
 import { LibraryFilterControls } from '@/components/library-filter-controls';
+import { SegmentedControl } from '@/components/segmented-control';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -107,6 +108,11 @@ const TAB_LABELS: Record<ItemStatus, string> = {
     watching: 'Watching',
     watched: 'Watched',
 };
+// SegmentedControl wants an array of {value, label}; precompute at module
+// scope so the reference is stable across renders (avoids re-creating
+// the array every frame, which would also force a child re-render).
+const TAB_OPTIONS: ReadonlyArray<{ value: ItemStatus; label: string }> =
+    TABS.map((value) => ({ value, label: TAB_LABELS[value] }));
 // "Tap + to add" referenced a Plus icon that's been removed since the
 // shared SearchBar took over the header — copy refreshed to point at
 // the search bar as the primary add path.
@@ -594,10 +600,7 @@ export default function LibraryScreen() {
                 <View
                     style={[
                         styles.localSearchBar,
-                        {
-                            backgroundColor: palette.surface,
-                            borderColor: palette.border,
-                        },
+                        { backgroundColor: palette.surface },
                     ]}
                 >
                     <SearchIcon
@@ -683,62 +686,50 @@ export default function LibraryScreen() {
                 </Pressable>
             </View>
 
-            <View style={styles.tabs}>
-                {TABS.map((tab) => {
-                    const isActive = activeTab === tab;
-                    return (
-                        <Pressable
-                            key={tab}
-                            onPress={() => setActiveTab(tab)}
-                            style={({ pressed }) => [
-                                styles.tabPill,
-                                {
-                                    backgroundColor: isActive
-                                        ? palette.accent
-                                        : 'transparent',
-                                    borderColor: palette.accent,
-                                    opacity: pressed ? 0.6 : 1,
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    {
-                                        color: isActive
-                                            ? palette.textInverse
-                                            : palette.accent,
-                                    },
-                                ]}
-                            >
-                                {TAB_LABELS[tab]}
-                            </Text>
-                        </Pressable>
-                    );
-                })}
+            {/* Filter zone — the segmented status picker + the
+                media/sort/genre controls share one surfaceAlt-toned
+                surface so they read as a distinct grouped region,
+                visually separated from the search row above (which
+                sits on the page bg). Vertical padding only — children
+                handle their own paddingHorizontal so the genre chip
+                strip inside LibraryFilterControls can still scroll
+                edge-to-edge. */}
+            <View
+                style={[
+                    styles.filterZone,
+                    { backgroundColor: palette.surfaceAlt },
+                ]}
+            >
+                <View style={styles.segmentedRow}>
+                    <SegmentedControl
+                        options={TAB_OPTIONS}
+                        value={activeTab}
+                        onChange={setActiveTab}
+                        palette={palette}
+                    />
+                </View>
+                {/* Filter / sort / genre controls — shared with the
+                    friend library (see src/components/library-filter-controls.tsx).
+                    State + filtering logic live in useLibraryFilters
+                    above; this is pure presentation. Filter + sort
+                    are now client-side; the loader fetches every
+                    item for the tab once and the hook composes title
+                    search + media filter + sort + genre filter in
+                    memory, so changes here are instant (no refetch). */}
+                <LibraryFilterControls
+                    palette={palette}
+                    mediaFilter={filters.mediaFilter}
+                    setMediaFilter={filters.setMediaFilter}
+                    sortBy={filters.sortBy}
+                    setSortBy={filters.setSortBy}
+                    availableSortOptions={filters.availableSortOptions}
+                    genreFilter={filters.genreFilter}
+                    setGenreFilter={filters.setGenreFilter}
+                    genreStripOpen={filters.genreStripOpen}
+                    setGenreStripOpen={filters.setGenreStripOpen}
+                    availableGenres={filters.availableGenres}
+                />
             </View>
-
-            {/* Filter / sort / genre controls — shared with the friend
-                library (see src/components/library-filter-controls.tsx).
-                State + filtering logic live in useLibraryFilters above;
-                this is pure presentation. Filter + sort are now
-                client-side; the loader fetches every item for the tab
-                once and the hook composes title search + media filter
-                + sort + genre filter in memory, so changes here are
-                instant (no refetch). */}
-            <LibraryFilterControls
-                palette={palette}
-                mediaFilter={filters.mediaFilter}
-                setMediaFilter={filters.setMediaFilter}
-                sortBy={filters.sortBy}
-                setSortBy={filters.setSortBy}
-                availableSortOptions={filters.availableSortOptions}
-                genreFilter={filters.genreFilter}
-                setGenreFilter={filters.setGenreFilter}
-                genreStripOpen={filters.genreStripOpen}
-                setGenreStripOpen={filters.setGenreStripOpen}
-                availableGenres={filters.availableGenres}
-            />
 
             {loading ? (
                 <View style={styles.statusBlock}>
@@ -843,20 +834,20 @@ export default function LibraryScreen() {
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    tabs: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
-        paddingBottom: spacing.md,
+    filterZone: {
+        // surfaceAlt wash so the whole filter region reads as a
+        // distinct zone separate from the search bar above (which
+        // sits on the page bg). Vertical padding only — see the
+        // children's own paddingHorizontal for inset behaviour.
+        paddingTop: spacing.md,
+        paddingBottom: spacing.sm,
+        gap: spacing.md,
     },
-    tabPill: {
-        flex: 1,
-        paddingVertical: spacing.sm,
-        borderRadius: radius.sm,
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
+    segmentedRow: {
+        // Horizontal inset for the segmented control inside the
+        // filter zone, matching the rest of the screen's content
+        // gutters (paddingHorizontal: spacing.base elsewhere).
+        paddingHorizontal: spacing.base,
     },
     statusBlock: {
         flex: 1,
@@ -891,11 +882,17 @@ const styles = StyleSheet.create({
         // Wraps the search bar + adjacent "+" button as one connected
         // row. Horizontal margins live here so the bar's `flex: 1`
         // measures the row's remaining width after the + and gap.
+        // marginBottom gives the page-bg air strip below the search
+        // and above the surfaceAlt filter zone — without it the zone
+        // butts directly against the search and the two read as a
+        // single blob. Matches src/app/friends/[handle].tsx > searchBar's
+        // marginBottom so the two surfaces stay visually consistent.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         marginHorizontal: spacing.base,
         marginTop: spacing.sm,
+        marginBottom: spacing.md,
     },
     localSearchBar: {
         // Mirrors the shared SearchBar's pill shape so the visual
@@ -903,13 +900,18 @@ const styles = StyleSheet.create({
         // already-loaded library rows in memory rather than firing a
         // TMDB query (unless the overlay is open, in which case the
         // bar dual-modes to drive useSearchBar's query directly).
+        //
+        // Border deliberately omitted — the surface fill against the
+        // page bg is the visual separation; pairing fill + border
+        // reads as a generic input pill. The filter zone below uses
+        // a different surface (surfaceAlt), so the search and the
+        // zone stay visually distinct through tonal contrast alone.
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.md,
         borderRadius: radius.full,
-        borderWidth: 1,
         height: 44,
     },
     addButton: {

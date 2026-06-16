@@ -39,6 +39,7 @@ import {
     type SortOption,
 } from '@/lib/use-library-filters';
 import {
+    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -103,11 +104,8 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isActive
-                                            ? palette.accent
+                                            ? palette.accentSubtle
                                             : 'transparent',
-                                        borderColor: isActive
-                                            ? palette.accent
-                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -117,12 +115,11 @@ export function LibraryFilterControls({
                             >
                                 <Text
                                     style={[
-                                        typography.caption,
-                                        styles.mediaFilterText,
+                                        styles.chipText,
                                         {
                                             color: isActive
-                                                ? palette.textInverse
-                                                : palette.text,
+                                                ? palette.accent
+                                                : palette.textMuted,
                                         },
                                     ]}
                                 >
@@ -156,11 +153,8 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isGenreActive
-                                            ? palette.accent
+                                            ? palette.accentSubtle
                                             : 'transparent',
-                                        borderColor: isGenreActive
-                                            ? palette.accent
-                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -177,12 +171,11 @@ export function LibraryFilterControls({
                             >
                                 <Text
                                     style={[
-                                        typography.caption,
-                                        styles.mediaFilterText,
+                                        styles.chipText,
                                         {
                                             color: isGenreActive
-                                                ? palette.textInverse
-                                                : palette.text,
+                                                ? palette.accent
+                                                : palette.textMuted,
                                         },
                                     ]}
                                 >
@@ -204,15 +197,14 @@ export function LibraryFilterControls({
                         accessibilityRole="button"
                     >
                         <ArrowDownUp
-                            color={palette.text}
+                            color={palette.textMuted}
                             size={14}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
-                                typography.caption,
                                 styles.sortButtonText,
-                                { color: palette.text },
+                                { color: palette.textMuted },
                             ]}
                         >
                             {SORT_LABELS[sortBy]}
@@ -252,11 +244,8 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isAllActive
-                                            ? palette.accent
+                                            ? palette.accentSubtle
                                             : 'transparent',
-                                        borderColor: isAllActive
-                                            ? palette.accent
-                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -272,12 +261,11 @@ export function LibraryFilterControls({
                             >
                                 <Text
                                     style={[
-                                        typography.caption,
-                                        styles.mediaFilterText,
+                                        styles.chipText,
                                         {
                                             color: isAllActive
-                                                ? palette.textInverse
-                                                : palette.text,
+                                                ? palette.accent
+                                                : palette.textMuted,
                                         },
                                     ]}
                                 >
@@ -300,11 +288,8 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isActive
-                                            ? palette.accent
+                                            ? palette.accentSubtle
                                             : 'transparent',
-                                        borderColor: isActive
-                                            ? palette.accent
-                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -318,12 +303,11 @@ export function LibraryFilterControls({
                             >
                                 <Text
                                     style={[
-                                        typography.caption,
-                                        styles.mediaFilterText,
+                                        styles.chipText,
                                         {
                                             color: isActive
-                                                ? palette.textInverse
-                                                : palette.text,
+                                                ? palette.accent
+                                                : palette.textMuted,
                                         },
                                     ]}
                                 >
@@ -353,16 +337,25 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     mediaFilterPill: {
-        // Outlined pill when inactive, filled accent when active.
-        // borderWidth always present (transparent → accent) so the
-        // layout doesn't jitter as the selection moves.
+        // Transparent when inactive, soft accent wash (accentSubtle)
+        // when active. No border — matches the SegmentedControl
+        // segment treatment so the top row (segmented status picker)
+        // and this row read as the same design family. Pill shape
+        // (radius.full) gives the chip-ness; the fill + text-color
+        // shift carries the active state without needing an outline.
         paddingHorizontal: spacing.sm,
         paddingVertical: spacing.xs,
         borderRadius: radius.full,
-        borderWidth: 1,
     },
-    mediaFilterText: {
-        fontWeight: '600',
+    chipText: {
+        // 14/Medium — same treatment as SegmentedControl labels so
+        // the typography across the filter zone is unified. Was
+        // typography.caption + fontWeight: '600' before (semibold
+        // on top of regular Geist) which read inconsistently against
+        // the segmented control's medium weight.
+        ...typography.caption,
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
     },
     rightControls: {
         // Sub-group on the right of controlsRow holding the Genre
@@ -381,7 +374,11 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.xs,
     },
     sortButtonText: {
-        fontWeight: '600',
+        // 14/Medium — same treatment as chipText / SegmentedControl
+        // labels so the row reads consistently.
+        ...typography.caption,
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
     },
     genreScrollRow: {
         // Horizontal chip strip below controlsRow when revealed.

@@ -21,6 +21,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { SegmentedControl } from '@/components/segmented-control';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { ViewControls } from '@/components/view-controls';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
@@ -83,6 +84,11 @@ const TAB_LABELS: Record<ItemStatus, string> = {
     watching: 'Watching',
     watched: 'Watched',
 };
+// Stable {value, label} array for the shared SegmentedControl —
+// computed once at module scope so the prop reference doesn't change
+// across renders.
+const TAB_OPTIONS: ReadonlyArray<{ value: ItemStatus; label: string }> =
+    TABS.map((value) => ({ value, label: TAB_LABELS[value] }));
 
 const POSTER_W = 56;
 const POSTER_H = 84;
@@ -712,10 +718,7 @@ export default function FriendDetailScreen() {
             <View
                 style={[
                     styles.searchBar,
-                    {
-                        backgroundColor: palette.surface,
-                        borderColor: palette.border,
-                    },
+                    { backgroundColor: palette.surface },
                 ]}
             >
                 <SearchIcon
@@ -739,58 +742,45 @@ export default function FriendDetailScreen() {
                 />
             </View>
 
-            <View style={styles.tabs}>
-                {TABS.map((tab) => {
-                    const isActive = activeTab === tab;
-                    return (
-                        <Pressable
-                            key={tab}
-                            onPress={() => setActiveTab(tab)}
-                            style={({ pressed }) => [
-                                styles.tabPill,
-                                {
-                                    backgroundColor: isActive
-                                        ? palette.accent
-                                        : 'transparent',
-                                    borderColor: palette.accent,
-                                    opacity: pressed ? 0.6 : 1,
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    {
-                                        color: isActive
-                                            ? palette.textInverse
-                                            : palette.accent,
-                                    },
-                                ]}
-                            >
-                                {TAB_LABELS[tab]}
-                            </Text>
-                        </Pressable>
-                    );
-                })}
+            {/* Filter zone — segmented status picker + media/sort/genre
+                controls share one surfaceAlt-toned surface so they
+                read as a distinct grouped region, visually separated
+                from the search bar above. Mirrors the own-library
+                screen's filter zone (src/app/(tabs)/library.tsx) so
+                the two surfaces stay visually consistent. */}
+            <View
+                style={[
+                    styles.filterZone,
+                    { backgroundColor: palette.surfaceAlt },
+                ]}
+            >
+                <View style={styles.segmentedRow}>
+                    <SegmentedControl
+                        options={TAB_OPTIONS}
+                        value={activeTab}
+                        onChange={setActiveTab}
+                        palette={palette}
+                    />
+                </View>
+                {/* Shared filter / sort / genre controls — same
+                    component the own library uses
+                    (src/components/library-filter-controls.tsx).
+                    State + filtering logic in useLibraryFilters
+                    above; this is pure presentation. */}
+                <LibraryFilterControls
+                    palette={palette}
+                    mediaFilter={filters.mediaFilter}
+                    setMediaFilter={filters.setMediaFilter}
+                    sortBy={filters.sortBy}
+                    setSortBy={filters.setSortBy}
+                    availableSortOptions={filters.availableSortOptions}
+                    genreFilter={filters.genreFilter}
+                    setGenreFilter={filters.setGenreFilter}
+                    genreStripOpen={filters.genreStripOpen}
+                    setGenreStripOpen={filters.setGenreStripOpen}
+                    availableGenres={filters.availableGenres}
+                />
             </View>
-
-            {/* Shared filter / sort / genre controls — same component
-                the own library uses (src/components/library-filter-
-                controls.tsx). State + filtering logic in
-                useLibraryFilters above; this is pure presentation. */}
-            <LibraryFilterControls
-                palette={palette}
-                mediaFilter={filters.mediaFilter}
-                setMediaFilter={filters.setMediaFilter}
-                sortBy={filters.sortBy}
-                setSortBy={filters.setSortBy}
-                availableSortOptions={filters.availableSortOptions}
-                genreFilter={filters.genreFilter}
-                setGenreFilter={filters.setGenreFilter}
-                genreStripOpen={filters.genreStripOpen}
-                setGenreStripOpen={filters.setGenreStripOpen}
-                availableGenres={filters.availableGenres}
-            />
 
             {itemsLoading ? (
                 <View style={styles.fillCenter}>
@@ -902,12 +892,15 @@ const styles = StyleSheet.create({
         // .localSearchBar pill shape so the two screens read the
         // same, minus the `+` button wrapper / row flex — friend
         // libraries have no add affordance, so this stands alone.
+        // Border deliberately omitted (matches the own-library
+        // search bar) — the surface fill against the page bg is
+        // the visual separation; pairing fill + border reads as a
+        // generic input pill.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.md,
         borderRadius: radius.full,
-        borderWidth: 1,
         height: 44,
         marginHorizontal: spacing.base,
         marginBottom: spacing.md,
@@ -954,20 +947,19 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         marginTop: spacing.md,
     },
-    tabs: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
-        paddingBottom: spacing.md,
+    filterZone: {
+        // surfaceAlt wash so the segmented status picker + the
+        // shared filter controls below it read as one distinct zone,
+        // visually separated from the search bar above (which sits
+        // on the page bg). Mirrors the own-library filter zone.
+        paddingTop: spacing.md,
+        paddingBottom: spacing.sm,
+        gap: spacing.md,
     },
-    tabPill: {
-        flex: 1,
-        paddingVertical: spacing.sm,
-        borderRadius: radius.sm,
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
+    segmentedRow: {
+        // Horizontal inset for the segmented control matching the
+        // rest of the screen's content gutters.
+        paddingHorizontal: spacing.base,
     },
     listContent: {
         paddingHorizontal: spacing.base,
