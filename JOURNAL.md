@@ -33,6 +33,23 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-17
+
+**Done**
+
+- Home-screen polish batch — cinematic rec hero refinements + Friends row resize (`6088edb`). All in `src/app/(tabs)/index.tsx`, pure presentation:
+  - **Hero recommender pill restyle.** Swapped the solid `palette.accent` (plum) fill for a dark plum-tint `rgba(36,26,32,0.88)` background — same hue family as the floating nav bar's surface, less loud against the backdrop image (image shows through ~12%). Name chunk recoloured from white to light-plum `#D4A8C5` (8.2:1 on the dark fill) and set to `fontFamily.bold` explicitly — not just `fontWeight:'600'` — because RN resolves weight by family name and the synthesized bold rendered less cleanly than the real Geist_700Bold face. "recommends" trailing word dropped from 85%-white to 60%-white for a clearer name-vs-verb hierarchy. **Pill stays top-left**: an experiment moving it into the bottom title/note cluster was tried and reverted (it crowded the cluster and lost the top-left social-signal anchor); the only residue was a stale `REC_CARD_H` comment, fixed in this commit.
+  - **`REC_CARD_H` 220 → 240.** The extra 20pt gives the bottom title/note block more breathing room over the image — at 220 the text sat close to the gradient's hard ramp; 240 lets the gradient start lower and the text settle without crowding the clear-image zone above. ~1.37:1 at `REC_CARD_W ≈ 331pt`.
+  - **"Friends are watching" covers 3.5-visible → 2.5-visible.** Poster-width formula `(W - inset - 3·gap)/3.5` → `(W - inset - 2·gap)/2.5` for larger, more cinematic covers at the cost of one fewer visible at rest. Concrete sizes now ~130×195 (SE) to ~152×228 (Pro Max).
+  - **Avatar stack — "2.5 arrangement".** Chip avatar 20 → 26pt, `MAX_AVATARS` 5 → 3, single `STACK_OVERLAP` (12) replaced by two values: `MAIN_OVERLAP` (4) between the two front chips so both read fully, `PEEK_OVERLAP` (15 = half-chip) so a third avatar peeks half-behind and the +N pill peeks behind that. Per-chip overlap chosen at render time (most-recent/rightmost → MAIN, other non-leftmost → PEEK, leftmost → none). Overflow text 10 → 12pt to match the bigger 30pt chip outer.
+  - **Search-to-hero gap tightened.** `searchBarWrapper.marginBottom` 12 → 8 (`spacing.md` → `spacing.sm`) plus a new `sectionFirst` style applying `paddingTop: spacing.xs` (4pt) to the recs section only, via `[styles.section, styles.sectionFirst]` so the override wins for that one property. Total search-bar-to-hero gap now 8 + 4 = 12pt; other sections keep the default 24pt inter-section rhythm.
+
+**Next**
+
+- **On-device pass for the home-screen batch** — all five tweaks shipped untested on device. Confirm: the dark plum-tint pill reads against both bright and dark backdrops; the light-plum name holds contrast; the 2.5 Friends covers + the 26pt avatar stack (2 full + half-peek third + N) sit cleanly on the smallest (SE) and largest (Pro Max) phones without overflow; the tightened 12pt search-to-hero gap reads as deliberate breath, not cramped. Folds into the still-pending on-device verification carried from 2026-06-16 (floating nav + search/keyboard UX).
+
+---
+
 ## 2026-06-16
 
 **Done**
