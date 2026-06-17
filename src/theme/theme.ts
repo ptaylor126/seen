@@ -12,13 +12,27 @@
 
 export const palette = {
     light: {
-        bg: '#F7F5F1',
+        // Light surface ramp carries a subtle plum undertone (R>B>G,
+        // ~3% saturation — a warm plum cast, not an obviously coloured
+        // bg) so white surfaces (search bar, cards, white pills)
+        // visibly separate from the page. Before this, bg #F7F5F1 vs
+        // surface #FFFFFF was only 1.089:1 — effectively the same
+        // tone — so white surfaces had no separation. The whole ramp
+        // was shifted down one notch (not just bg) to KEEP the gaps
+        // intact: deepening bg alone into the ~81 lum range would have
+        // collided with surfaceAlt (81.0) and flattened the recessed
+        // filter zone. Adjacent contrasts now: surface→bg 1.213,
+        // bg→surfaceAlt 1.123 (≈ the old 1.122), surfaceAlt→border
+        // 1.147. Dark mode deliberately NOT given a parallel tint yet
+        // — dark isn't rendered/validated (app.json pinned to light);
+        // the parallel plum-tint belongs in the dark-mode pass.
+        bg: '#EFE7EC',
         surface: '#FFFFFF',
-        surfaceAlt: '#ECE8E1',
+        surfaceAlt: '#E4DAE1',
         text: '#1A1614',
         textMuted: '#6B6661',
         textInverse: '#FFFFFF',
-        border: '#E8E2DA',
+        border: '#D9CBD4',
         borderStrong: '#D4CCC1',
         accent: '#7A3960',
         accentPressed: '#6A3252',
