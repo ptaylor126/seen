@@ -1,15 +1,16 @@
 import { Tabs } from 'expo-router';
-import { BookMarked, Home, UserCircle, Users } from 'lucide-react-native';
 import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
 
+import FriendsIcon from '../../../assets/images/navbar/icon-friends.svg';
+import HomeIcon from '../../../assets/images/navbar/icon-home.svg';
+import LibraryIcon from '../../../assets/images/navbar/icon-library.svg';
+import ProfileIcon from '../../../assets/images/navbar/icon-profile.svg';
+
+import { FloatingTabBar } from '@/components/floating-tab-bar';
 import { useSession } from '@/hooks/use-session';
 import { ensurePushRegistrationOnLaunch } from '@/lib/push';
-import { getPalette, ICON_STROKE_WIDTH } from '@/theme/theme';
 
 export default function TabsLayout() {
-    const scheme = useColorScheme() ?? 'light';
-    const palette = getPalette(scheme);
     const session = useSession();
     const userId = session.session?.user.id ?? null;
 
@@ -46,32 +47,33 @@ export default function TabsLayout() {
 
     return (
         <Tabs
+            // Custom floating tab bar — see src/components/floating-tab-bar.tsx
+            // for the rounded, inset, image-forward design. The tabBar
+            // function receives BottomTabBarProps from React Navigation;
+            // the component owns colour, layout, and active-state pill,
+            // so the per-Tabs.Screen tabBarActiveTintColor / Inactive /
+            // tabBarStyle options no longer apply (they're owned by
+            // the default tab bar that we've replaced).
+            tabBar={(props) => <FloatingTabBar {...props} />}
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: palette.accent,
-                tabBarInactiveTintColor: palette.textMuted,
-                tabBarStyle: {
-                    // Flush at the bottom, cream background to match the
-                    // rest of the app, hairline top border to delineate
-                    // from content. iOS-native feel; doesn't compete
-                    // with content the way the previous floating-pill
-                    // BlurView did.
-                    backgroundColor: palette.bg,
-                    borderTopColor: palette.border,
-                    borderTopWidth: 1,
-                },
             }}
         >
+            {/* Custom Figma nav icons (assets/images/navbar/). The
+                color prop resolves the SVGs' `stroke="currentColor"`
+                so the tab bar's tabBarActiveTintColor /
+                tabBarInactiveTintColor (plum / textMuted) recolour
+                each icon automatically. width/height take react
+                navigation's size token. strokeWidth not passed —
+                each SVG bakes its own stroke (1.2 as exported from
+                Figma; design pass may bump to ICON_STROKE_WIDTH=1.5
+                later). */}
             <Tabs.Screen
                 name="index"
                 options={{
                     title: 'Home',
                     tabBarIcon: ({ color, size }) => (
-                        <Home
-                            color={color}
-                            size={size}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
+                        <HomeIcon color={color} width={size} height={size} />
                     ),
                 }}
             />
@@ -80,11 +82,7 @@ export default function TabsLayout() {
                 options={{
                     title: 'Library',
                     tabBarIcon: ({ color, size }) => (
-                        <BookMarked
-                            color={color}
-                            size={size}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
+                        <LibraryIcon color={color} width={size} height={size} />
                     ),
                 }}
             />
@@ -93,11 +91,7 @@ export default function TabsLayout() {
                 options={{
                     title: 'Friends',
                     tabBarIcon: ({ color, size }) => (
-                        <Users
-                            color={color}
-                            size={size}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
+                        <FriendsIcon color={color} width={size} height={size} />
                     ),
                 }}
             />
@@ -106,11 +100,7 @@ export default function TabsLayout() {
                 options={{
                     title: 'Profile',
                     tabBarIcon: ({ color, size }) => (
-                        <UserCircle
-                            color={color}
-                            size={size}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
+                        <ProfileIcon color={color} width={size} height={size} />
                     ),
                 }}
             />

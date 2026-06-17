@@ -20,6 +20,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ScreenHeader } from '@/components/screen-header';
 import {
     SEARCH_OVERLAY_TOP_OFFSET,
@@ -148,6 +149,7 @@ export default function LibraryScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const tabBarInset = useFloatingTabBarInset();
     const { count: unreadCount } = useUnreadCount();
 
     const [activeTab, setActiveTab] = useState<ItemStatus>('watchlist');
@@ -785,7 +787,10 @@ export default function LibraryScreen() {
                     data={filters.visibleRows}
                     keyExtractor={(item) => item.id}
                     renderItem={renderRow}
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={[
+                        styles.listContent,
+                        { paddingBottom: tabBarInset },
+                    ]}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
                     ItemSeparatorComponent={() => (
@@ -809,7 +814,10 @@ export default function LibraryScreen() {
                     keyExtractor={(item) => item.id}
                     renderItem={renderGridCell}
                     numColumns={gridCols}
-                    contentContainerStyle={styles.gridContent}
+                    contentContainerStyle={[
+                        styles.gridContent,
+                        { paddingBottom: tabBarInset },
+                    ]}
                     columnWrapperStyle={{
                         columnGap: GRID_GAP_BY_COLS[gridCols],
                     }}
@@ -934,8 +942,9 @@ const styles = StyleSheet.create({
         paddingVertical: 0,
     },
     listContent: {
+        // paddingBottom set inline at the FlatList via
+        // useFloatingTabBarInset.
         paddingHorizontal: spacing.base,
-        paddingBottom: spacing.lg,
     },
     row: {
         flexDirection: 'row',
@@ -965,8 +974,9 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     gridContent: {
+        // paddingBottom set inline at the FlatList via
+        // useFloatingTabBarInset.
         paddingHorizontal: spacing.base,
-        paddingBottom: spacing.lg,
         paddingTop: spacing.sm,
     },
     gridCell: {

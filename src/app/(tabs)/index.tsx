@@ -18,6 +18,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RatingSheet } from '@/components/rating-sheet';
 import {
     SEARCH_OVERLAY_TOP_OFFSET,
@@ -501,6 +502,7 @@ export default function HomeScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const tabBarInset = useFloatingTabBarInset();
     const { count: unreadCount } = useUnreadCount();
 
     const [data, setData] = useState<HomeData | null>(null);
@@ -1320,7 +1322,14 @@ export default function HomeScreen() {
             data.recsForYou.length === 0;
         body = (
             <ScrollView
-                contentContainerStyle={styles.scrollContent}
+                // Inline paddingBottom = floating-nav clearance (bar
+                // height + bottom gap + safe-area). Replaces the
+                // previous static spacing.xxl — the floating bar
+                // provides its own trailing breath via its inset.
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingBottom: tabBarInset },
+                ]}
                 refreshControl={
                     <RefreshControl
                         refreshing={refreshing}
@@ -1404,7 +1413,9 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     scrollContent: {
-        paddingBottom: spacing.xxl,
+        // paddingBottom set inline at the consuming ScrollView via
+        // useFloatingTabBarInset (replaces the previous static
+        // spacing.xxl that was sized for the old non-floating tab bar).
     },
     section: {
         paddingTop: spacing.lg,

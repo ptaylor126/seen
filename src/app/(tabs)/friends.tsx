@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ChevronRight, Users } from 'lucide-react-native';
+import { ChevronRight, Plus, Users } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
+import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
@@ -32,21 +33,11 @@ interface FriendRow {
 
 const AVATAR_SIZE = 44;
 
-// List bottom padding so the last friend isn't hidden behind the
-// floating Add friend button. ~46pt + bottom offset (spacing.base) +
-// breathing room. The tab bar lives outside the screen view and is
-// already cleared by React Navigation. (Was previously sized for a
-// two-button cluster including an Invite link affordance; that
-// affordance was removed because the invite URL doesn't deep-link
-// into the app yet — see src/app/friends/invite.tsx header. The
-// backend invite_links + claim_invite_link path stays in place for
-// when Universal Link / App Link plumbing lands.)
-const FLOATING_BUTTON_CLEAR = spacing.xxxl + spacing.base;
-
 export default function FriendsScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const tabBarInset = useFloatingTabBarInset();
     const { count: unreadCount } = useUnreadCount();
 
     const [friends, setFriends] = useState<FriendRow[]>([]);
@@ -160,11 +151,35 @@ export default function FriendsScreen() {
 
     const showEmptyState =
         !loading && !error && friends.length === 0 && pendingIncoming === 0;
-    const showFloatingActions = !loading && !error && !showEmptyState;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Friends" unreadCount={unreadCount} />
+            <ScreenHeader
+                title="Friends"
+                unreadCount={unreadCount}
+                // Header-right "+" replaces the previous floating
+                // "Add friend" pill (the floating tab bar now occupies
+                // the bottom-edge zone; two floating overlays in the
+                // same space were visually noisy). Routes to the same
+                // /friends/add destination the pill used. The inline
+                // "Add friend by handle" link in the empty state
+                // (renderEmptyState) covers the no-friends path.
+                rightActions={
+                    <Pressable
+                        onPress={() => router.push('/friends/add')}
+                        hitSlop={spacing.sm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Add friend by handle"
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <Plus
+                            color={palette.text}
+                            size={24}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    </Pressable>
+                }
+            />
 
             {loading ? (
                 <View style={styles.fillCenter}>
@@ -254,7 +269,10 @@ export default function FriendsScreen() {
                             data={friends}
                             keyExtractor={(item) => item.userId}
                             renderItem={renderFriendRow}
-                            contentContainerStyle={styles.listContent}
+                            contentContainerStyle={[
+                                styles.listContent,
+                                { paddingBottom: tabBarInset },
+                            ]}
                             ItemSeparatorComponent={() => (
                                 <View
                                     style={[
@@ -273,35 +291,6 @@ export default function FriendsScreen() {
                         </View>
                     )}
                 </>
-            )}
-
-            {showFloatingActions && (
-                <View style={styles.floatingActions} pointerEvents="box-none">
-                    {/* Find someone already on Seen and send a friend
-                        request. The request must be accepted by the
-                        recipient — not an auto-friendship. */}
-                    <Pressable
-                        onPress={() => router.push('/friends/add')}
-                        style={({ pressed }) => [
-                            styles.floatingPrimaryButton,
-                            {
-                                backgroundColor: palette.accent,
-                                opacity: pressed ? 0.6 : 1,
-                            },
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Add friend by handle"
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.textInverse },
-                            ]}
-                        >
-                            Add friend
-                        </Text>
-                    </Pressable>
-                </View>
             )}
         </View>
     );
@@ -329,30 +318,12 @@ const styles = StyleSheet.create({
     listContent: {
         paddingHorizontal: spacing.base,
         paddingTop: spacing.sm,
-        paddingBottom: FLOATING_BUTTON_CLEAR,
-    },
-    floatingActions: {
-        // Same anchoring as the prior single pill — full-width wrapper
-        // with `pointerEvents="box-none"` so taps on transparent padding
-        // pass through to the list. flexDirection: row + center +
-        // gap.md groups the two pills as a single connected affordance.
-        position: 'absolute',
-        left: spacing.base,
-        right: spacing.base,
-        bottom: spacing.base,
-        flexDirection: 'row',
-        justifyContent: 'center',
-        gap: spacing.md,
-    },
-    floatingPrimaryButton: {
-        // Pill shape sized to match the previous floating action
-        // cluster's footprint so the anchor visually matches what
-        // was there.
-        paddingVertical: spacing.md,
-        paddingHorizontal: spacing.lg,
-        borderRadius: radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
+        // paddingBottom set inline at the FlatList via
+        // useFloatingTabBarInset — replaces the previous
+        // FLOATING_BUTTON_CLEAR clearance for the now-removed
+        // floating "Add friend" pill. The Add-friend affordance
+        // moved to a header-right "+" button (see the ScreenHeader
+        // rightActions prop above).
     },
     row: {
         flexDirection: 'row',

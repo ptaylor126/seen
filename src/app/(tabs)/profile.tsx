@@ -16,6 +16,7 @@ import {
     View,
 } from 'react-native';
 
+import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ScreenHeader } from '@/components/screen-header';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { useProfile } from '@/hooks/use-profile';
@@ -30,6 +31,7 @@ export default function ProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const tabBarInset = useFloatingTabBarInset();
     const { count: unreadCount } = useUnreadCount();
     // Read from the shared profile context so /profile/edit's
     // refresh() call propagates here automatically. Previously this
@@ -188,7 +190,12 @@ export default function ProfileScreen() {
                 and once the editor lands the section can grow further, so
                 everything below the header is scrollable now. Pure layout
                 change — no visual difference when content fits on screen. */}
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingBottom: tabBarInset },
+                ]}
+            >
                 <View style={styles.card}>
                     {profile.avatarUrl ? (
                         <Image
@@ -288,10 +295,10 @@ const styles = StyleSheet.create({
     root: { flex: 1 },
     fillCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     scrollContent: {
-        // Trailing breathing room so the last settings row doesn't
-        // sit flush against the home indicator on phones without a
-        // hardware home button.
-        paddingBottom: spacing.xl,
+        // paddingBottom set inline at the ScrollView via
+        // useFloatingTabBarInset — the floating nav provides the
+        // trailing breath that the previous static spacing.xl
+        // covered for the old non-floating tab bar.
     },
     topFiveBlock: {
         // Vertical breathing room between the profile card and the
