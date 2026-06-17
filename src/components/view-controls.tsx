@@ -51,14 +51,13 @@ export function ViewControls({
             <View style={styles.toggleGroup}>
                 <ViewControlsCell
                     active={mode === 'list'}
-                    variant="fill"
                     onPress={() => onModeChange('list')}
                     palette={palette}
                     accessibilityLabel="List view"
                 >
                     <LayoutList
                         color={
-                            mode === 'list' ? palette.textInverse : palette.text
+                            mode === 'list' ? palette.accent : palette.textMuted
                         }
                         size={18}
                         strokeWidth={ICON_STROKE_WIDTH}
@@ -66,14 +65,13 @@ export function ViewControls({
                 </ViewControlsCell>
                 <ViewControlsCell
                     active={mode === 'grid'}
-                    variant="fill"
                     onPress={() => onModeChange('grid')}
                     palette={palette}
                     accessibilityLabel="Grid view"
                 >
                     <LayoutGrid
                         color={
-                            mode === 'grid' ? palette.textInverse : palette.text
+                            mode === 'grid' ? palette.accent : palette.textMuted
                         }
                         size={18}
                         strokeWidth={ICON_STROKE_WIDTH}
@@ -95,7 +93,6 @@ export function ViewControls({
                             <ViewControlsCell
                                 key={opt}
                                 active={isActive}
-                                variant="stroke"
                                 onPress={() => onGridColsChange(opt)}
                                 palette={palette}
                                 accessibilityLabel={`${opt} columns`}
@@ -107,7 +104,7 @@ export function ViewControls({
                                         {
                                             color: isActive
                                                 ? palette.accent
-                                                : palette.text,
+                                                : palette.textMuted,
                                         },
                                     ]}
                                 >
@@ -122,18 +119,23 @@ export function ViewControls({
     );
 }
 
-// Cell shared between the two control types in the cluster. Both
-// variants keep `borderWidth: 1.5` and the same `minHeight` so toggle
-// and density cells sit level in the row regardless of which active
-// treatment they carry.
-//   - `variant: 'fill'`: active = solid accent fill, inactive = no
-//     visible chrome. Border is always transparent.
-//   - `variant: 'stroke'`: active = coral outline, inactive = no
-//     visible chrome. Background is always transparent.
-// Caller passes the content color (icon/text) to match.
+// Cell shared by both control types in the cluster (list/grid toggle +
+// 2/3/4 density). One treatment for all of them — a plum WASH FILL,
+// matching the All/Movies/TV filter chips and the segmented control so
+// every "selected" state across the filter zone speaks the same
+// language (the wash fill, not an outline):
+//   - active   = palette.accentWash fill (the shared filter-zone
+//     selected fill — exactly what the chips + segmented control use) +
+//     the caller passes palette.accent as the content (icon/text) color.
+//   - inactive = transparent fill, no border; the caller passes
+//     palette.textMuted as the content color.
+// No border in either state — the fill carries "selected". minHeight is
+// constant so toggle and density cells sit level in the row, and the
+// fill swapping in/out causes no layout shift. The two control types
+// are differentiated by their CONTENT (icons vs numbers), so they don't
+// need different selected-styles on top.
 function ViewControlsCell({
     active,
-    variant,
     onPress,
     palette,
     accessibilityLabel,
@@ -141,23 +143,12 @@ function ViewControlsCell({
     children,
 }: {
     active: boolean;
-    variant: 'fill' | 'stroke';
     onPress: () => void;
     palette: Palette;
     accessibilityLabel: string;
     cellStyle?: StyleProp<ViewStyle>;
     children: ReactNode;
 }) {
-    const variantStyle =
-        variant === 'fill'
-            ? {
-                  backgroundColor: active ? palette.accent : 'transparent',
-                  borderColor: 'transparent',
-              }
-            : {
-                  backgroundColor: 'transparent',
-                  borderColor: active ? palette.accent : 'transparent',
-              };
     return (
         <Pressable
             onPress={onPress}
@@ -165,7 +156,11 @@ function ViewControlsCell({
             style={({ pressed }) => [
                 styles.controlsCell,
                 cellStyle,
-                variantStyle,
+                {
+                    backgroundColor: active
+                        ? palette.accentWash
+                        : 'transparent',
+                },
                 pressed && { opacity: 0.6 },
             ]}
             accessibilityLabel={accessibilityLabel}
@@ -205,17 +200,16 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     controlsCell: {
-        // Same height in every variant so the filled toggle and the
-        // stroked numbers sit perfectly level in the row. borderWidth
-        // is always present (transparent when inactive in the stroke
-        // variant, always transparent in the fill variant) to keep
-        // layout stable as selection moves.
+        // Constant min size so toggle and density cells sit level; the
+        // active state is a plum wash fill (set inline), no border, so
+        // there's no layout shift as selection moves. radius.sm - 2
+        // gives a slightly tighter corner than the surrounding container
+        // so the filled cell nests cleanly inside it.
         minWidth: 28,
         minHeight: 26,
         paddingHorizontal: spacing.xs,
         paddingVertical: 2,
         borderRadius: radius.sm - 2,
-        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
     },

@@ -37,6 +37,20 @@ export const palette = {
         accent: '#7A3960',
         accentPressed: '#6A3252',
         accentSubtle: '#F0E4EC',
+        // Shared "selected" fill for the Library filter zone — used by
+        // ALL THREE selector controls (the segmented status picker, the
+        // All/Movies/TV + Genre chips, and the grid/density view
+        // controls) so every selected state across the zone reads
+        // identically. A LIGHT plum wash: a deeper bump (#D8B5CC) was
+        // tried and read too heavy/muddy, so this stays at the lighter
+        // value. Contrast: 1.53:1 vs the segmented control's white
+        // container, 1.12:1 vs the surfaceAlt zone the chips + grid sit
+        // on; accent (#7A3960) text/icons on top read at 5.33:1. Sits
+        // below the solid-plum tier (reserved for nav active pill +
+        // action buttons). Distinct from accentSubtle, which is kept for
+        // its other, lighter consumers (recommend / friends / rec
+        // screens).
+        accentWash: '#E4CADB',
         success: '#5B8E5A',
         warning: '#D89B3C',
         error: '#C04B3D',
@@ -83,6 +97,12 @@ export const palette = {
         accent: '#9B5079',
         accentPressed: '#7A3960',
         accentSubtle: '#3A2233',
+        // Parallel to light.accentWash — the shared filter-zone selected
+        // fill, back at the lighter pre-bump value. Dark mode isn't
+        // rendered/validated yet (app.json pinned to light); this exists
+        // so the Palette type stays satisfied and is ready for the
+        // dark-mode pass (final value to be tuned on device then).
+        accentWash: '#4A2A3D',
         success: '#6FA86E',
         warning: '#E4AC4D',
         error: '#D75B4D',

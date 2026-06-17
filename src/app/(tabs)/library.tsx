@@ -704,7 +704,6 @@ export default function LibraryScreen() {
                             styles.addButton,
                             {
                                 backgroundColor: palette.surface,
-                                borderColor: palette.border,
                             },
                             pressed && { opacity: 0.6 },
                         ]}
@@ -752,7 +751,6 @@ export default function LibraryScreen() {
                             styles.addButton,
                             {
                                 backgroundColor: palette.surface,
-                                borderColor: palette.border,
                             },
                             pressed && { opacity: 0.6 },
                         ]}
@@ -1008,14 +1006,13 @@ const styles = StyleSheet.create({
     },
     addButton: {
         // Circular control sized to match the search bar's pill height
-        // so the row reads as a connected pair. Outlined (surface fill
-        // + hairline border) rather than accent-filled so it doesn't
-        // upstage the primary "search your library" affordance — the
-        // accent-coloured icon stroke gives it enough weight.
+        // so the row reads as a connected pair. Borderless surface fill
+        // (matching the now-borderless search bar) — the surface tone
+        // against the page bg is the separation, and the accent-coloured
+        // icon stroke gives it enough weight without an outline.
         width: 44,
         height: 44,
         borderRadius: radius.full,
-        borderWidth: 1,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -1060,8 +1057,12 @@ const styles = StyleSheet.create({
     gridContent: {
         // paddingBottom set inline at the FlatList via
         // useFloatingTabBarInset.
+        // paddingTop spacing.md (12) matches searchRow.marginBottom (12,
+        // the page-bg air strip ABOVE the filter zone) so the gap below
+        // the zone (band bottom edge → first poster) is symmetric with
+        // the gap above it.
         paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
+        paddingTop: spacing.md,
     },
     gridCell: {
         position: 'relative',

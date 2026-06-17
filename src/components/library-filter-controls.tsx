@@ -104,8 +104,11 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isActive
-                                            ? palette.accentSubtle
+                                            ? palette.accentWash
                                             : 'transparent',
+                                        borderColor: isActive
+                                            ? 'transparent'
+                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -153,8 +156,11 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isGenreActive
-                                            ? palette.accentSubtle
+                                            ? palette.accentWash
                                             : 'transparent',
+                                        borderColor: isGenreActive
+                                            ? 'transparent'
+                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -197,14 +203,14 @@ export function LibraryFilterControls({
                         accessibilityRole="button"
                     >
                         <ArrowDownUp
-                            color={palette.textMuted}
+                            color={palette.text}
                             size={14}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
                                 styles.sortButtonText,
-                                { color: palette.textMuted },
+                                { color: palette.text },
                             ]}
                         >
                             {SORT_LABELS[sortBy]}
@@ -244,8 +250,11 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isAllActive
-                                            ? palette.accentSubtle
+                                            ? palette.accentWash
                                             : 'transparent',
+                                        borderColor: isAllActive
+                                            ? 'transparent'
+                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -288,8 +297,11 @@ export function LibraryFilterControls({
                                     styles.mediaFilterPill,
                                     {
                                         backgroundColor: isActive
-                                            ? palette.accentSubtle
+                                            ? palette.accentWash
                                             : 'transparent',
+                                        borderColor: isActive
+                                            ? 'transparent'
+                                            : palette.border,
                                         opacity: pressed ? 0.6 : 1,
                                     },
                                 ]}
@@ -337,15 +349,24 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     mediaFilterPill: {
-        // Transparent when inactive, soft accent wash (accentSubtle)
-        // when active. No border — matches the SegmentedControl
-        // segment treatment so the top row (segmented status picker)
-        // and this row read as the same design family. Pill shape
-        // (radius.full) gives the chip-ness; the fill + text-color
-        // shift carries the active state without needing an outline.
+        // Grey outline (unselected) → wash fill, no border (selected),
+        // so the chips read as tappable buttons rather than plain labels
+        // AND the selected "fill, no border" state matches the segmented
+        // control + grid selector exactly. Unselected: transparent fill
+        // + palette.border (grey) outline + textMuted text. Selected:
+        // accentWash fill (the shared filter-zone selected fill — also
+        // used by the segmented control + grid selector) + accent text,
+        // border flipped to 'transparent' so the fill alone carries
+        // selection (no outline, matching the other zone controls).
+        // borderWidth stays constant (1) across states — the transparent
+        // border still occupies its 1px box, so there's no layout shift
+        // on select. Deliberately the SOFTER tier: a wash fill here, far
+        // softer than solid plum (reserved for nav/buttons) — chips stay
+        // secondary.
         paddingHorizontal: spacing.sm,
         paddingVertical: spacing.xs,
         borderRadius: radius.full,
+        borderWidth: 1,
     },
     chipText: {
         // 14/Medium — same treatment as SegmentedControl labels so
@@ -367,7 +388,12 @@ const styles = StyleSheet.create({
     sortButton: {
         // Right-aligned tappable cluster: icon + current sort label.
         // Tap opens the Alert.alert menu — known v1 shape; refine to
-        // a proper menu/bottom-sheet later.
+        // a proper menu/bottom-sheet later. Icon + label use
+        // palette.text (not textMuted) — a small visibility lift so it
+        // reads as a present, tappable control. Deliberately NOT an
+        // accent state: sort isn't a "selected" filter, it's a neutral
+        // trigger, so it sits below the wash chips in the hierarchy
+        // (solid-plum tabs > plum-wash chips > neutral-but-visible sort).
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.xs,

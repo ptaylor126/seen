@@ -7,9 +7,12 @@
 //   - Container: palette.surface (a step lighter than the surfaceAlt
 //     zone we sit in), radius.md outer corners, internal spacing.xs
 //     padding so the selected segment is inset from the container edge.
-//   - Selected segment: palette.accentSubtle (soft accent wash) +
-//     palette.accent text — accent is present but muted, distinct
-//     from the loud solid-accent pills the previous version used.
+//   - Selected segment: palette.accentWash (the shared filter-zone
+//     selected fill — same token the chips + grid selector use) +
+//     palette.accent text bumped to semibold — a confident wash that
+//     reads clearly in the white container, but deliberately NOT a
+//     solid-accent fill or an outline (a segmented control suits a
+//     fill; solid accent is reserved for nav/buttons).
 //   - Unselected segments: transparent background + palette.textMuted
 //     text — read as inactive but tappable.
 //   - Labels at 14/Medium (caption size + medium weight) — reads as a
@@ -69,7 +72,7 @@ export function SegmentedControl<T extends string>({
                             styles.segment,
                             {
                                 backgroundColor: isActive
-                                    ? palette.accentSubtle
+                                    ? palette.accentWash
                                     : 'transparent',
                                 opacity: pressed ? 0.7 : 1,
                             },
@@ -82,6 +85,13 @@ export function SegmentedControl<T extends string>({
                                     color: isActive
                                         ? palette.accent
                                         : palette.textMuted,
+                                    // Selected segment bumps to semibold
+                                    // for extra confidence on top of the
+                                    // deeper accentWash fill; inactive
+                                    // stays medium (set in styles.label).
+                                    fontFamily: isActive
+                                        ? fontFamily.semibold
+                                        : fontFamily.medium,
                                 },
                             ]}
                         >
