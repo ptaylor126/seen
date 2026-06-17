@@ -5,8 +5,9 @@ import {
     Search as SearchIcon,
     Send,
     UserPlus,
+    X,
 } from 'lucide-react-native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Dimensions,
@@ -156,6 +157,13 @@ export default function FriendDetailScreen() {
     // SELECT policy is owner-or-friend); calling this for a non-friend
     // would return an empty array, not throw — but the loader effect
     // below only fires when state.kind === 'friends' anyway.
+    // Focus state + ref for the local search field — drives the
+    // Cancel-on-focus affordance (mirrors Home's SearchBarInput
+    // pattern). The ref is needed so Cancel can blur the input
+    // directly rather than fall back to Keyboard.dismiss() (which
+    // doesn't update RN's tracked focus on Android).
+    const localSearchInputRef = useRef<TextInput | null>(null);
+    const [localFocused, setLocalFocused] = useState(false);
     const [favorites, setFavorites] = useState<UserFavorites>({
         movies: [],
         tv: [],
@@ -713,33 +721,87 @@ export default function FriendDetailScreen() {
 
             {/* Local title search — mirrors the library tab's local-
                 filter bar, minus the `+` button + add-overlay (you
-                can't add to someone else's library). Wired to the
-                shared hook's localQuery state. */}
-            <View
-                style={[
-                    styles.searchBar,
-                    { backgroundColor: palette.surface },
-                ]}
-            >
-                <SearchIcon
-                    color={palette.textMuted}
-                    size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
-                />
-                <TextInput
-                    value={filters.localQuery}
-                    onChangeText={filters.setLocalQuery}
-                    placeholder={`Search ${profile.displayName}'s library`}
-                    placeholderTextColor={palette.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
+                can't add to someone else's library). Outer row hosts
+                the search pill + a Cancel sibling that appears when
+                the input is focused (mirrors Home's SearchBarInput
+                pattern: Cancel-on-focus dismisses the keyboard +
+                clears the query). Wired to the shared hook's
+                localQuery state. */}
+            <View style={styles.searchRow}>
+                <View
                     style={[
-                        styles.searchInput,
-                        typography.body,
-                        { color: palette.text },
+                        styles.searchBar,
+                        { backgroundColor: palette.surface },
                     ]}
-                />
+                >
+                    <SearchIcon
+                        color={palette.textMuted}
+                        size={20}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <TextInput
+                        ref={localSearchInputRef}
+                        value={filters.localQuery}
+                        onChangeText={filters.setLocalQuery}
+                        placeholder={`Search ${profile.displayName}'s library`}
+                        placeholderTextColor={palette.textMuted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        returnKeyType="search"
+                        onFocus={() => setLocalFocused(true)}
+                        onBlur={() => setLocalFocused(false)}
+                        style={[
+                            styles.searchInput,
+                            typography.body,
+                            { color: palette.text },
+                        ]}
+                    />
+                    {/* Inline clear-X: visible when the field has text.
+                        Clear-only — keeps focus + keyboard up so the
+                        user can re-type. The sibling Cancel button
+                        (rendered when localFocused) is what fully
+                        exits and dismisses the keyboard. Two-
+                        affordance pattern matching Home: X = clear-
+                        but-stay, Cancel = exit. */}
+                    {filters.localQuery.length > 0 ? (
+                        <Pressable
+                            onPress={() => filters.setLocalQuery('')}
+                            hitSlop={spacing.sm}
+                            accessibilityRole="button"
+                            accessibilityLabel="Clear search"
+                            style={({ pressed }) => [
+                                pressed && { opacity: 0.6 },
+                            ]}
+                        >
+                            <X
+                                color={palette.textMuted}
+                                size={18}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                        </Pressable>
+                    ) : null}
+                </View>
+                {localFocused ? (
+                    <Pressable
+                        onPress={() => {
+                            filters.setLocalQuery('');
+                            localSearchInputRef.current?.blur();
+                        }}
+                        hitSlop={spacing.sm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel search"
+                        style={({ pressed }) => [
+                            styles.cancelButton,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
+                        <Text
+                            style={[typography.body, { color: palette.accent }]}
+                        >
+                            Cancel
+                        </Text>
+                    </Pressable>
+                ) : null}
             </View>
 
             {/* Filter zone — segmented status picker + media/sort/genre
@@ -828,6 +890,8 @@ export default function FriendDetailScreen() {
                     keyExtractor={(item) => item.id}
                     renderItem={renderRow}
                     contentContainerStyle={styles.listContent}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
                     ItemSeparatorComponent={() => (
                         <View
                             style={[
@@ -851,6 +915,8 @@ export default function FriendDetailScreen() {
                     columnWrapperStyle={{
                         columnGap: GRID_GAP_BY_COLS[gridCols],
                     }}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
                     ItemSeparatorComponent={() => (
                         <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
                     )}
@@ -887,23 +953,38 @@ const styles = StyleSheet.create({
         // null), so no stray padding appears in the no-favorites case.
         marginBottom: spacing.md,
     },
+    searchRow: {
+        // Outer row hosting the search pill + the conditional Cancel
+        // sibling. Margins live here (not on the pill) so the pill
+        // can flex to fill available width when Cancel appears /
+        // disappears. Mirrors Home's SearchBarInput row layout.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        marginHorizontal: spacing.base,
+        marginBottom: spacing.md,
+    },
     searchBar: {
         // Local title-filter input. Mirrors the own library's
         // .localSearchBar pill shape so the two screens read the
-        // same, minus the `+` button wrapper / row flex — friend
-        // libraries have no add affordance, so this stands alone.
-        // Border deliberately omitted (matches the own-library
-        // search bar) — the surface fill against the page bg is
-        // the visual separation; pairing fill + border reads as a
-        // generic input pill.
+        // same, minus the `+` button (friend libraries have no add
+        // affordance). Border deliberately omitted — the surface
+        // fill against the page bg is the visual separation;
+        // pairing fill + border reads as a generic input pill.
+        // flex: 1 so the pill shrinks when Cancel appears in the
+        // outer row.
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.md,
         borderRadius: radius.full,
         height: 44,
-        marginHorizontal: spacing.base,
-        marginBottom: spacing.md,
+    },
+    cancelButton: {
+        // Plain text Pressable, sized via horizontal padding.
+        // Mirrors Home SearchBarInput's cancel button styling.
+        paddingHorizontal: spacing.xs,
     },
     searchInput: {
         flex: 1,

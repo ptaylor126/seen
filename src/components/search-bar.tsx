@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Search } from 'lucide-react-native';
+import { Search, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -221,6 +221,27 @@ export function SearchBarInput({ state }: { state: SearchBarState }) {
                     returnKeyType="search"
                     style={[styles.input, typography.body, { color: palette.text }]}
                 />
+                {/* Inline clear-X: shows when the field has text. Tap
+                    clears the query but keeps focus + the overlay open
+                    so the user can re-type without exiting search. The
+                    sibling Cancel button (rendered when overlayVisible)
+                    is what fully exits — X is the "clear and keep
+                    typing" sub-action. */}
+                {state.query.length > 0 ? (
+                    <Pressable
+                        onPress={() => state.setQuery('')}
+                        hitSlop={spacing.sm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear search"
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <X
+                            color={palette.textMuted}
+                            size={18}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    </Pressable>
+                ) : null}
             </View>
             {state.overlayVisible ? (
                 <Pressable
@@ -460,15 +481,17 @@ const styles = StyleSheet.create({
         marginTop: spacing.sm,
     },
     bar: {
+        // Borderless — the surface fill against the page bg is the
+        // visual separation (matches the borderless local search bars
+        // on Library + friend's-library). Pairing fill + border reads
+        // as a generic input pill; dropping the border lets the
+        // accent + pill shape do the work.
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.md,
-        // Fully pill-shaped — search inputs read as their own object
-        // class (vs. content inputs which use radius.md).
         borderRadius: radius.full,
-        borderWidth: 1,
         height: 44,
     },
     cancelButton: {

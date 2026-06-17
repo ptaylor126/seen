@@ -1356,7 +1356,21 @@ export default function HomeScreen() {
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             {renderHeader()}
-            <SearchBarInput state={search} />
+            {/* Persistent gap below the search bar so scroll content
+                doesn't tuck flush against it as the user scrolls.
+                SearchBarInput is a sibling of the ScrollView (not
+                inside it / not absolutely-positioned), so the
+                ScrollView's frame top edge sits at the bottom of
+                this wrapper. Without the wrapper's marginBottom, the
+                first section's paddingTop (24pt from styles.section)
+                only provides clearance at scroll position 0 —
+                scrolled past, the next item sits flush. The wrapper
+                puts a bg-coloured strip between the search bar and
+                the ScrollView frame that persists across all scroll
+                positions. */}
+            <View style={styles.searchBarWrapper}>
+                <SearchBarInput state={search} />
+            </View>
             {body}
             <RatingSheet
                 visible={!!ratingTarget}
@@ -1411,6 +1425,15 @@ const styles = StyleSheet.create({
     badgeText: {
         fontSize: 10,
         fontWeight: '700',
+    },
+    searchBarWrapper: {
+        // Persistent gap between the pinned search bar and the
+        // ScrollView frame below it — see the JSX comment for the
+        // mechanism. spacing.md (12pt) is the minimum that reads as
+        // deliberate breath without feeling like a void; tune up to
+        // spacing.base (16pt) if the on-device pass shows it still
+        // feels cramped.
+        marginBottom: spacing.md,
     },
     scrollContent: {
         // paddingBottom set inline at the consuming ScrollView via

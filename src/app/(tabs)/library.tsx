@@ -160,6 +160,14 @@ export default function LibraryScreen() {
     const screenWidth = Dimensions.get('window').width;
     const insets = useSafeAreaInsets();
     const search = useSearchBar();
+    // Local-filter mode focus state — Home's SearchBarInput tracks
+    // focus inside useSearchBar (via overlayVisible) and uses that
+    // to render the Cancel button. Library's TextInput is custom
+    // (dual-mode local/overlay) so the local-filter mode needs its
+    // own focus flag to drive the same Cancel-on-focus affordance.
+    // overlayVisible state still owns the add-mode flow; this flag
+    // only matters when overlayVisible is false.
+    const [localFocused, setLocalFocused] = useState(false);
 
     // Shared filter / sort / search state + derived visibleRows.
     // Lives in `useLibraryFilters` so the friend library can consume
@@ -631,61 +639,131 @@ export default function LibraryScreen() {
                         autoCapitalize="none"
                         autoCorrect={false}
                         returnKeyType="search"
+                        onFocus={() => setLocalFocused(true)}
+                        onBlur={() => setLocalFocused(false)}
                         style={[
                             styles.localSearchInput,
                             typography.body,
                             { color: palette.text },
                         ]}
                     />
+                    {/* Inline clear-X: visible whenever the active
+                        value has text. Clear-only in both modes —
+                        keeps the keyboard up + the input focused so
+                        the user can re-type fresh. The trailing slot
+                        (round X in overlay-mode / "Cancel" text in
+                        local-focused mode) is what fully exits and
+                        dismisses the keyboard. Two-affordance pattern
+                        matching Home's SearchBarInput: X = clear-but-
+                        stay, trailing slot = exit. */}
+                    {(search.overlayVisible
+                        ? search.query
+                        : filters.localQuery
+                    ).length > 0 ? (
+                        <Pressable
+                            onPress={() => {
+                                if (search.overlayVisible) {
+                                    search.setQuery('');
+                                } else {
+                                    filters.setLocalQuery('');
+                                }
+                            }}
+                            hitSlop={spacing.sm}
+                            accessibilityRole="button"
+                            accessibilityLabel="Clear search"
+                            style={({ pressed }) => [
+                                pressed && { opacity: 0.6 },
+                            ]}
+                        >
+                            <X
+                                color={palette.textMuted}
+                                size={18}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                        </Pressable>
+                    ) : null}
                 </View>
-                <Pressable
-                    onPress={() => {
-                        if (search.overlayVisible) {
-                            // Toggle slot is in X mode — dismiss the
-                            // search overlay. The bar dual-modes back
-                            // to local-filter via overlayVisible going
-                            // false, and the slot reverts to Plus on
-                            // the next render.
-                            search.dismiss();
-                        } else {
-                            // Toggle slot is in + mode — open the
-                            // search overlay and focus the bar so the
-                            // keyboard comes up immediately (saves the
-                            // second tap of "now tap the bar").
-                            search.handleFocus();
-                            search.inputRef.current?.focus();
-                        }
-                    }}
-                    hitSlop={spacing.xs}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                        search.overlayVisible
-                            ? 'Cancel search'
-                            : 'Add a title'
-                    }
-                    style={({ pressed }) => [
-                        styles.addButton,
-                        {
-                            backgroundColor: palette.surface,
-                            borderColor: palette.border,
-                        },
-                        pressed && { opacity: 0.6 },
-                    ]}
-                >
-                    {search.overlayVisible ? (
+                {/* Trailing slot — intent-aware, 3 states with
+                    clear precedence (top wins):
+                      1. overlayVisible → round X (cancel add overlay,
+                         full dismiss via search.dismiss())
+                      2. localFocused   → "Cancel" text (blur input +
+                         clear localQuery; matches Home's Cancel)
+                      3. resting        → round + (open add overlay)
+                    Cancel REPLACES + while locally focused — single
+                    intent-aware slot, mirrors the iOS pattern. Tapping
+                    Cancel triggers onBlur → localFocused goes false →
+                    slot reverts to + on next render. */}
+                {search.overlayVisible ? (
+                    <Pressable
+                        onPress={() => search.dismiss()}
+                        hitSlop={spacing.xs}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel search"
+                        style={({ pressed }) => [
+                            styles.addButton,
+                            {
+                                backgroundColor: palette.surface,
+                                borderColor: palette.border,
+                            },
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
                         <X
                             color={palette.accent}
                             size={22}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
-                    ) : (
+                    </Pressable>
+                ) : localFocused ? (
+                    <Pressable
+                        onPress={() => {
+                            filters.setLocalQuery('');
+                            search.inputRef.current?.blur();
+                        }}
+                        hitSlop={spacing.sm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel search"
+                        style={({ pressed }) => [
+                            styles.cancelButton,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
+                        <Text
+                            style={[typography.body, { color: palette.accent }]}
+                        >
+                            Cancel
+                        </Text>
+                    </Pressable>
+                ) : (
+                    <Pressable
+                        onPress={() => {
+                            // Open the search overlay AND focus the bar
+                            // so the keyboard comes up immediately
+                            // (saves the second tap of "now tap the
+                            // bar").
+                            search.handleFocus();
+                            search.inputRef.current?.focus();
+                        }}
+                        hitSlop={spacing.xs}
+                        accessibilityRole="button"
+                        accessibilityLabel="Add a title"
+                        style={({ pressed }) => [
+                            styles.addButton,
+                            {
+                                backgroundColor: palette.surface,
+                                borderColor: palette.border,
+                            },
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
                         <Plus
                             color={palette.accent}
                             size={22}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
-                    )}
-                </Pressable>
+                    </Pressable>
+                )}
             </View>
 
             {/* Filter zone — the segmented status picker + the
@@ -921,6 +999,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.md,
         borderRadius: radius.full,
         height: 44,
+    },
+    cancelButton: {
+        // Plain text Pressable, sized via horizontal padding to feel
+        // tappable without competing visually with the search pill.
+        // Mirrors the Home SearchBarInput's cancel button styling.
+        paddingHorizontal: spacing.xs,
     },
     addButton: {
         // Circular control sized to match the search bar's pill height
