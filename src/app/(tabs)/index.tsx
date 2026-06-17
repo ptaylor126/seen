@@ -32,6 +32,7 @@ import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -98,15 +99,16 @@ interface HomeData {
 // the next card peeking on the right edge to invite swipe.
 const HERO_SCREEN_W = Dimensions.get('window').width;
 const REC_CARD_W = Math.round(HERO_SCREEN_W * 0.85);
-// Bumped from 200 (the old side-by-side poster+text layout's height)
-// to 220 for the cinematic full-bleed backdrop card. With
-// REC_CARD_W ≈ 331pt on a 390pt phone, 220pt gives ~1.5:1 — taller
-// than strict 16:9 (which would be ~186pt), enough vertical space
-// for the bottom gradient + title + note without cramping the
-// recommender pill up top. Backdrop image is cropped via contentFit:
-// 'cover' so a slightly taller-than-16:9 card just trims pixels
-// from the image edges.
-const REC_CARD_H = 220;
+// Bumped from 200 → 220 (cinematic redesign) → 240. The extra 20pt
+// gives the bottom title/note block more breathing room over the
+// image: at 220 the text cluster sat close to the gradient's hard
+// ramp; 240 lets the gradient start lower and the title/note settle
+// into more vertical space without crowding the clear-image zone
+// above. With REC_CARD_W ≈ 331pt on a 390pt phone, 240pt gives
+// ~1.37:1. Backdrop image is cropped via contentFit: 'cover' so a
+// slightly taller-than-16:9 card just trims pixels from the image
+// edges.
+const REC_CARD_H = 240;
 // 22pt avatar inside the top-left recommender pill on the new
 // cinematic card (was 40pt in the previous side-by-side layout).
 const REC_PILL_AVATAR_SIZE = 22;
@@ -116,16 +118,22 @@ const REC_PILL_AVATAR_SIZE = 22;
 // signalling there's more to swipe.
 //
 // Sizing math: visible budget = HERO_SCREEN_W - left inset. We want
-// 3.5 posters + 3 inter-poster gaps to fit in that budget. Solving for
-// posterW:
-//   3.5 * posterW + 3 * gap = HERO_SCREEN_W - inset
-//   posterW = (HERO_SCREEN_W - inset - 3 * gap) / 3.5
+// 2.5 posters + 2 inter-poster gaps to fit in that budget (was 3.5
+// posters + 3 gaps — bumped to 2.5 for larger, more cinematic covers
+// at the cost of one fewer visible at rest). Solving for posterW:
+//   2.5 * posterW + 2 * gap = HERO_SCREEN_W - inset
+//   posterW = (HERO_SCREEN_W - inset - 2 * gap) / 2.5
 // Math.floor keeps us strictly within the visible width (any pixel of
-// drift would push the 4th poster's edge off-screen).
+// drift would push the 3rd poster's right edge off-screen).
+//
+// Concrete sizes (rounded): SE 130×195, iPhone 14/15 Pro 136×204,
+// Pro Max 152×228. Bigger posters also gave the 4-chip avatar stack
+// plenty of breath on every phone (previously the SE 88pt poster
+// overflowed by 2pt when +N showed; now ~40pt of breath).
 const FRIENDS_ROW_GAP = spacing.base;
 const FRIENDS_ROW_INSET = spacing.base;
 const FRIENDS_ROW_POSTER_W = Math.floor(
-    (HERO_SCREEN_W - FRIENDS_ROW_INSET - 3 * FRIENDS_ROW_GAP) / 3.5,
+    (HERO_SCREEN_W - FRIENDS_ROW_INSET - 2 * FRIENDS_ROW_GAP) / 2.5,
 );
 const FRIENDS_ROW_POSTER_H = Math.floor(FRIENDS_ROW_POSTER_W * 1.5);
 const FRIENDS_GRID_LIMIT = 8;
@@ -141,19 +149,23 @@ const WATCHING_POSTER_H = 60;
 // "tiny floating thing waiting for siblings."
 const REC_CARD_SOLO_W = HERO_SCREEN_W - spacing.base * 2;
 
-// Friends row stacked-avatar overlay — small social-proof row on each
-// poster's bottom-right corner showing every friend currently watching
-// this title (cap-then-overflow). 20 px tuned to the row's ~93 pt
-// posters so the chip reads proportionally to the cell (matches the
-// ~26% chip-to-cell ratio the previous 18 px gave on the old 80 pt
-// squares). At 5 chips + "+N" with 50% overlap, the stack is ~84 pt
-// wide and fits the cell comfortably with room to spare.
-const FRIENDS_GRID_AVATAR_SIZE = 20;
-const FRIENDS_GRID_MAX_AVATARS = 5;
-// Negative marginLeft applied to every chip after the first so each
-// overlaps its left neighbour. Scales with the chip outer (avatar +
-// 4 pt of border on each side = 24 pt outer, half = 12 pt overlap).
-const FRIENDS_GRID_STACK_OVERLAP = 12;
+// Friends row stacked-avatar overlay — bottom-right of each poster.
+// "2.5 arrangement": 2 avatars fully visible + a 3rd peeking half-
+// behind the 2nd to echo the 3-full-plus-peek poster row's visual
+// language. +N pill appears as a 4th left-most chip when
+// totalWatchers > 3. Avatar bumped from 20 → 26pt for more presence
+// at the new arrangement (5 tiny chips → 3 bigger ones reads
+// cleaner). Each chip's OUTER is avatar + 2pt border × 2 sides =
+// 30pt.
+const FRIENDS_GRID_AVATAR_SIZE = 26;
+const FRIENDS_GRID_MAX_AVATARS = 3;
+// Two overlap values for the 2.5 arrangement: MAIN between av1↔av2
+// (small, both clearly visible — av1 just slightly covers av2's
+// right edge), PEEK between av2↔av3 and av3↔+N (half-chip, so av3
+// shows only its left half from behind av2; +N similarly peeks from
+// behind av3). Half-chip = chip_outer / 2 = 15pt for the 30pt chip.
+const FRIENDS_GRID_MAIN_OVERLAP = 4;
+const FRIENDS_GRID_PEEK_OVERLAP = 15;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -783,12 +795,12 @@ export default function HomeScreen() {
                         />
                         {/* Gradient: transparent at top, near-opaque
                             warm-dark at bottom. locations={[0.45, 1]}
-                            keeps the upper half of the image readable
-                            (where the recommender pill floats) while
-                            ramping aggressively into the bottom half
-                            so the title + note text always reads
-                            regardless of the underlying image
-                            lightness. */}
+                            keeps the upper half of the image
+                            unobstructed (the recommender pill floats
+                            there with its own dark bg) while ramping
+                            aggressively into the bottom half so the
+                            title + note text always reads regardless
+                            of the underlying image lightness. */}
                         <LinearGradient
                             colors={[
                                 'rgba(10,6,10,0)',
@@ -815,19 +827,23 @@ export default function HomeScreen() {
                     </View>
                 )}
 
-                {/* Recommender pill, top-left. Solid palette.accent
-                    (plum) in BOTH the backdrop and fallback variants
-                    — the recommender is the whole social-signal point
-                    of the card, so it gets a deliberate brand-coloured
-                    chip rather than blending into the image or the
-                    surfaceAlt wash. White firstName + 85%-white
-                    "recommends" gives the two-step hierarchy inside
-                    the pill (name = primary, verb = supporting) at
-                    legible contrast on plum. */}
+                {/* Recommender pill — top-left, floating over the
+                    open upper half of the image. Dark plum-tint
+                    background (#241A20@0.88, same hue family as the
+                    floating nav bar's light-mode surface) replaces
+                    the previous solid plum — less loud against the
+                    image, image shows through ~12%. The lighter
+                    plum (#D4A8C5) name on the dark bg has 8.2:1
+                    contrast — comfortably legible AND keeps the
+                    plum hue family in play without the loud
+                    solid-fill. Dark pill over bright images = great
+                    contrast; dark pill over dark images relies on
+                    the pill's own dark fill for separation from
+                    the surrounding pixels. */}
                 <View
                     style={[
                         styles.recommenderPill,
-                        { backgroundColor: palette.accent },
+                        { backgroundColor: 'rgba(36, 26, 32, 0.88)' },
                     ]}
                 >
                     <Avatar
@@ -839,7 +855,7 @@ export default function HomeScreen() {
                     <Text
                         style={[
                             typography.caption,
-                            { color: 'rgba(255,255,255,0.85)' },
+                            { color: 'rgba(255,255,255,0.6)' },
                         ]}
                         numberOfLines={1}
                     >
@@ -847,7 +863,7 @@ export default function HomeScreen() {
                             style={[
                                 typography.caption,
                                 styles.recommenderName,
-                                { color: '#FFFFFF' },
+                                { color: '#D4A8C5' },
                             ]}
                         >
                             {firstName(rec.sender.displayName)}
@@ -886,18 +902,28 @@ export default function HomeScreen() {
 
     function renderRecsForYou(data: HomeData) {
         return (
-            <View style={styles.section}>
+            // styles.sectionFirst overrides styles.section's
+            // paddingTop only — applied as a later-array entry so the
+            // override wins for that single property. The recs hero
+            // gets a tighter top gap (4pt) than other sections (24pt)
+            // because it's the FIRST section under the search bar:
+            // the inter-section rhythm of 24pt is too much against
+            // the search bar (felt like a void), and the bar's own
+            // 8pt wrapper marginBottom provides the persistent
+            // separation. Other sections keep styles.section as-is so
+            // Friends are watching ↔ Currently watching stay at 24pt
+            // apart. Total search-bar-to-hero gap: 8pt wrapper +
+            // 4pt sectionFirst = 12pt.
+            <View style={[styles.section, styles.sectionFirst]}>
                 {/* No "Recs for you" section heading. The card already
                     leads with "{firstName} recommends" in the plum
                     pill, so a separate heading would just restate the
                     same idea louder. Leading the screen with the
                     cinematic card (no label) is a more confident
-                    image-forward open. styles.section's
-                    paddingTop: spacing.lg keeps a 24pt gap below the
-                    search bar so the card doesn't jam. The other
-                    sections (Friends are watching, Currently watching)
-                    keep their headings — those do real structural
-                    work separating sections. */}
+                    image-forward open. The other sections (Friends
+                    are watching, Currently watching) keep their
+                    headings — those do real structural work
+                    separating sections. */}
                 {data.recsForYou.length > 0 ? (
                     // Single rec → render at near-full width without
                     // the horizontal scroller, since there's nothing
@@ -998,17 +1024,23 @@ export default function HomeScreen() {
                                             ]}
                                         />
                                     )}
-                                    {/* Stacked-avatar social proof. Render
-                                        order is left-to-right (front-of-
-                                        stack = last drawn = rightmost):
-                                        [+N (if any), …shown.reverse()] so
-                                        the most-recent watcher (first
-                                        item in `shown`) lands rightmost
-                                        and on top, with older watchers
-                                        and the +N pill tucked behind to
-                                        the left. Each non-first chip
-                                        overlaps its predecessor via a
-                                        negative marginLeft. */}
+                                    {/* Stacked-avatar social proof, 2.5
+                                        arrangement. Visual L→R:
+                                        [+N (if any)][av3][av2][av1].
+                                        Render order is left-to-right
+                                        (front-of-stack = last drawn =
+                                        rightmost), so the most-recent
+                                        watcher (first item in `shown`)
+                                        lands rightmost and on top.
+                                        Each chip after the first
+                                        overlaps its left neighbour via
+                                        a negative marginLeft. Two
+                                        overlap values: MAIN (4pt)
+                                        between av1↔av2 so both stay
+                                        clearly visible, PEEK (15pt =
+                                        half-chip) between av2↔av3 and
+                                        av3↔+N so the back chips peek
+                                        from behind. */}
                                     <View style={styles.friendsGridStack}>
                                         {extra > 0 ? (
                                             <View
@@ -1035,16 +1067,38 @@ export default function HomeScreen() {
                                             .slice()
                                             .reverse()
                                             .map((w, idx) => {
+                                                // Per-chip overlap: the
+                                                // rightmost chip (idx
+                                                // === shown.length - 1
+                                                // = the most-recent
+                                                // watcher) gets MAIN
+                                                // (minimal) so it sits
+                                                // alongside av2 without
+                                                // hiding it. Anything
+                                                // else non-leftmost
+                                                // gets PEEK (half-chip)
+                                                // so it tucks behind
+                                                // its right neighbour.
+                                                // The leftmost chip
+                                                // (idx 0 AND no +N
+                                                // before it) gets no
+                                                // overlap.
                                                 const isLeftmost =
                                                     idx === 0 && extra === 0;
+                                                const isMostRecent =
+                                                    idx === shown.length - 1;
+                                                const overlap = isLeftmost
+                                                    ? 0
+                                                    : isMostRecent
+                                                        ? FRIENDS_GRID_MAIN_OVERLAP
+                                                        : FRIENDS_GRID_PEEK_OVERLAP;
                                                 return (
                                                     <View
                                                         key={w.userId}
                                                         style={[
                                                             styles.friendsGridStackChip,
-                                                            !isLeftmost && {
-                                                                marginLeft:
-                                                                    -FRIENDS_GRID_STACK_OVERLAP,
+                                                            overlap > 0 && {
+                                                                marginLeft: -overlap,
                                                             },
                                                             { borderColor: palette.bg },
                                                         ]}
@@ -1429,11 +1483,11 @@ const styles = StyleSheet.create({
     searchBarWrapper: {
         // Persistent gap between the pinned search bar and the
         // ScrollView frame below it — see the JSX comment for the
-        // mechanism. spacing.md (12pt) is the minimum that reads as
-        // deliberate breath without feeling like a void; tune up to
-        // spacing.base (16pt) if the on-device pass shows it still
-        // feels cramped.
-        marginBottom: spacing.md,
+        // mechanism. spacing.sm (8pt) was previously 12pt; tightened
+        // because the on-device pass showed 12pt felt slightly
+        // void-y. Tune back up to spacing.md (12pt) or spacing.base
+        // (16pt) if the cluster feels cramped instead.
+        marginBottom: spacing.sm,
     },
     scrollContent: {
         // paddingBottom set inline at the consuming ScrollView via
@@ -1442,6 +1496,14 @@ const styles = StyleSheet.create({
     },
     section: {
         paddingTop: spacing.lg,
+    },
+    sectionFirst: {
+        // Override for the first section under the search bar (the
+        // recs hero). Applied as `[styles.section, styles.sectionFirst]`
+        // so the override wins for paddingTop only. Other sections
+        // keep the default 24pt inter-section rhythm; only the
+        // search-bar-to-first-section gap is tightened.
+        paddingTop: spacing.xs,
     },
     sectionHeader: {
         paddingHorizontal: spacing.base,
@@ -1488,11 +1550,16 @@ const styles = StyleSheet.create({
         opacity: 0.3,
     },
     recommenderPill: {
-        // Top-left badge with the recommender's avatar + "{firstName}
-        // recommends". Floats over the card, so absolute positioning
-        // with a generous top/left inset. maxWidth keeps long display
-        // names from running off the right edge into the dead zone
-        // where there's no peek visual.
+        // Top-left floating badge with the recommender's avatar +
+        // "{firstName} recommends". Absolute positioning with a
+        // generous top/left inset keeps it clear of the rounded
+        // card corner. maxWidth caps long display names so the pill
+        // doesn't run off the right edge into the dead zone where
+        // there's no peek visual. Asymmetric horizontal padding:
+        // tight on the left (avatar already provides visual weight)
+        // and roomier on the right so the text doesn't crowd the
+        // pill edge. backgroundColor applied inline at the JSX
+        // (dark plum-tint #241A20@0.88).
         position: 'absolute',
         top: spacing.md,
         left: spacing.md,
@@ -1500,19 +1567,20 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
-        // Asymmetric horizontal padding: tight on the left (the avatar
-        // already provides visual weight) and roomier on the right so
-        // the text doesn't crowd the pill edge.
         paddingLeft: spacing.xs,
         paddingRight: spacing.sm,
         paddingVertical: spacing.xs,
         borderRadius: radius.full,
     },
     recommenderName: {
-        // Slight weight bump on the firstName chunk inside the
-        // recommender pill — separates the name from the "recommends"
-        // trailing text without needing a different typography token.
-        fontWeight: '600',
+        // Bold Geist face on the firstName chunk inside the pill —
+        // separates the name from the "recommends" trailing word.
+        // fontFamily explicitly set (not just fontWeight) because RN
+        // resolves font weight by family name; setting fontWeight
+        // alone falls back to a synthesized bold which doesn't render
+        // as cleanly as the real Geist_700Bold face.
+        fontFamily: fontFamily.bold,
+        fontWeight: '700',
     },
     recHeroContent: {
         // Bottom-anchored title + note block. Sits inside the dark
@@ -1590,10 +1658,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     friendsGridOverflowText: {
-        // Scaled up alongside the avatar bump: 10 pt in a 24 pt chip's
-        // 20 pt inner content area reads at the same proportional
-        // weight that 9 pt had inside the previous 22 pt chip.
-        fontSize: 10,
+        // 12pt sized to the bumped 30pt chip (was 10pt at 24pt chip).
+        // Same proportional weight inside the chip's inner content
+        // area; reads as a peer to the avatar letterforms.
+        fontSize: 12,
         fontWeight: '700',
     },
     // Currently watching — compact list rows: small poster + inline
