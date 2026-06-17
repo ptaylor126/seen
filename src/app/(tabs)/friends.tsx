@@ -1,12 +1,19 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ChevronRight, Plus, Users } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import {
+    ChevronRight,
+    Plus,
+    Search as SearchIcon,
+    Users,
+    X,
+} from 'lucide-react-native';
+import { useCallback, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
     Pressable,
     StyleSheet,
     Text,
+    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -44,6 +51,14 @@ export default function FriendsScreen() {
     const [pendingIncoming, setPendingIncoming] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // Local name/handle filter — mirrors the library + friend-library
+    // local-search pattern (borderless bar, Cancel-on-focus, inline
+    // clear-X). localFocused drives the Cancel sibling; the ref lets
+    // Cancel blur the input.
+    const [localQuery, setLocalQuery] = useState('');
+    const [localFocused, setLocalFocused] = useState(false);
+    const localSearchInputRef = useRef<TextInput | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -152,6 +167,18 @@ export default function FriendsScreen() {
     const showEmptyState =
         !loading && !error && friends.length === 0 && pendingIncoming === 0;
 
+    // Case-insensitive match against display name AND @handle (the
+    // haystack includes the "@" so typing it or omitting it both work).
+    const normalizedQuery = localQuery.trim().toLowerCase();
+    const filteredFriends =
+        normalizedQuery.length === 0
+            ? friends
+            : friends.filter((f) =>
+                  `${f.displayName} @${f.handle}`
+                      .toLowerCase()
+                      .includes(normalizedQuery),
+              );
+
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader
@@ -170,13 +197,24 @@ export default function FriendsScreen() {
                         hitSlop={spacing.sm}
                         accessibilityRole="button"
                         accessibilityLabel="Add friend by handle"
-                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                        style={({ pressed }) => [
+                            styles.addAction,
+                            pressed && { opacity: 0.6 },
+                        ]}
                     >
                         <Plus
-                            color={palette.text}
-                            size={24}
+                            color={palette.accent}
+                            size={20}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.accent },
+                            ]}
+                        >
+                            Add
+                        </Text>
                     </Pressable>
                 }
             />
@@ -265,23 +303,118 @@ export default function FriendsScreen() {
                     )}
 
                     {friends.length > 0 ? (
-                        <FlatList
-                            data={friends}
-                            keyExtractor={(item) => item.userId}
-                            renderItem={renderFriendRow}
-                            contentContainerStyle={[
-                                styles.listContent,
-                                { paddingBottom: tabBarInset },
-                            ]}
-                            ItemSeparatorComponent={() => (
+                        <>
+                            {/* Local name/handle filter. Mirrors the
+                                library + friend-library local-search:
+                                borderless surface pill, inline clear-X
+                                (clear-but-stay), and a Cancel sibling
+                                that appears on focus (blur + clear). */}
+                            <View style={styles.searchRow}>
                                 <View
                                     style={[
-                                        styles.separator,
-                                        { backgroundColor: palette.border },
+                                        styles.searchBar,
+                                        { backgroundColor: palette.surface },
                                     ]}
+                                >
+                                    <SearchIcon
+                                        color={palette.textMuted}
+                                        size={20}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                    <TextInput
+                                        ref={localSearchInputRef}
+                                        value={localQuery}
+                                        onChangeText={setLocalQuery}
+                                        placeholder="Search friends"
+                                        placeholderTextColor={palette.textMuted}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        returnKeyType="search"
+                                        onFocus={() => setLocalFocused(true)}
+                                        onBlur={() => setLocalFocused(false)}
+                                        style={[
+                                            styles.searchInput,
+                                            typography.body,
+                                            { color: palette.text },
+                                        ]}
+                                    />
+                                    {localQuery.length > 0 ? (
+                                        <Pressable
+                                            onPress={() => setLocalQuery('')}
+                                            hitSlop={spacing.sm}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Clear search"
+                                            style={({ pressed }) => [
+                                                pressed && { opacity: 0.6 },
+                                            ]}
+                                        >
+                                            <X
+                                                color={palette.textMuted}
+                                                size={18}
+                                                strokeWidth={ICON_STROKE_WIDTH}
+                                            />
+                                        </Pressable>
+                                    ) : null}
+                                </View>
+                                {localFocused ? (
+                                    <Pressable
+                                        onPress={() => {
+                                            setLocalQuery('');
+                                            localSearchInputRef.current?.blur();
+                                        }}
+                                        hitSlop={spacing.sm}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Cancel search"
+                                        style={({ pressed }) => [
+                                            styles.cancelButton,
+                                            pressed && { opacity: 0.6 },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                typography.body,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            Cancel
+                                        </Text>
+                                    </Pressable>
+                                ) : null}
+                            </View>
+
+                            {filteredFriends.length > 0 ? (
+                                <FlatList
+                                    data={filteredFriends}
+                                    keyExtractor={(item) => item.userId}
+                                    renderItem={renderFriendRow}
+                                    keyboardShouldPersistTaps="handled"
+                                    keyboardDismissMode="on-drag"
+                                    contentContainerStyle={[
+                                        styles.listContent,
+                                        { paddingBottom: tabBarInset },
+                                    ]}
+                                    ItemSeparatorComponent={() => (
+                                        <View
+                                            style={[
+                                                styles.separator,
+                                                { backgroundColor: palette.border },
+                                            ]}
+                                        />
+                                    )}
                                 />
+                            ) : (
+                                <View style={styles.fillCenter}>
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        No friends found.
+                                    </Text>
+                                </View>
                             )}
-                        />
+                        </>
                     ) : (
                         <View style={styles.fillCenter}>
                             <Text style={[typography.body, { color: palette.textMuted }]}>
@@ -298,11 +431,55 @@ export default function FriendsScreen() {
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
+    addAction: {
+        // Header-right "+ Add" — icon + label so it reads as a clear
+        // action rather than a bare ambiguous "+". Accent-coloured to
+        // mark it as the primary affordance (matches the accent "Add by
+        // handle" / Cancel text used elsewhere). Routes to /friends/add.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
     fillCenter: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
+    },
+    searchRow: {
+        // Outer row hosting the search pill + the conditional Cancel
+        // sibling. Margins live here (not on the pill) so the pill can
+        // flex to fill width when Cancel appears/disappears. Mirrors the
+        // friend-library searchRow exactly.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        marginHorizontal: spacing.base,
+        marginTop: spacing.sm,
+        marginBottom: spacing.md,
+    },
+    searchBar: {
+        // Borderless surface pill — the surface fill against the page bg
+        // is the separation (no border, matching library/friend-library
+        // local search). flex: 1 so it shrinks when Cancel appears.
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.full,
+        height: 44,
+    },
+    cancelButton: {
+        // Plain text Pressable, sized via horizontal padding. Mirrors
+        // the other local-search Cancel buttons.
+        paddingHorizontal: spacing.xs,
+    },
+    searchInput: {
+        flex: 1,
+        // padding zeroed: the parent's fixed height owns vertical sizing
+        // so the icon and text stay aligned.
+        paddingVertical: 0,
     },
     pendingBanner: {
         flexDirection: 'row',
