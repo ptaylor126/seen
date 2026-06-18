@@ -39,7 +39,7 @@
           "image": "./assets/logo.png",
           "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#FAF7F2"
+          "backgroundColor": "#EFE7EC"
         }
       ],
       "expo-font",
@@ -52,7 +52,7 @@
       [
         "expo-notifications",
         {
-          "color": "#208AEF",
+          "color": "#7A3960",
           "defaultChannel": "default"
         }
       ],
