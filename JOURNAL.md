@@ -33,6 +33,35 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-18
+
+**Done**
+
+- **Nav/plum design sweep COMPLETE — all four tabs now in the plum language.** Home, Library, Friends, and Profile have all had their plum pass. (Library filter-zone unification + Friends search/"+Add" landed 2026-06-17; Profile completes the sweep today.)
+- Profile styling pass (`394e465`). Name+handle tightened into one unit; circular plum pencil **edit badge** on the avatar → `/profile/edit` (the "Edit profile" list row removed); **Top 5** posters resized to fit all 5 across the width with title labels removed (rank badge kept; shared `TopFiveSections`, so the friend profile gets it too); **Sign out** restyled as a subtle outlined button, separated from the nav rows, with extra scroll bottom-padding so it clears the floating nav.
+- Avatar fallback recolor (`2e58718`). The two warm gradient slots (bronze, warm-brown) read as orange against the plum UI → replaced with **indigo** (`#474C93`/`#5A5FA8`) and **cerulean** (`#2D6E96`/`#387394`) in both light + dark `avatarFallbacks`. All from-stops verified ≥4.5:1 on white; deterministic (no migration — affected users just render the new hue). All 8 fallbacks are now cool/plum-leaning.
+- Home wordmark consolidated (`af1b38e`). Home header now uses `logo.png` (`#7A3960`) — the same wordmark onboarding/sign-in/splash already use, so **every surface shows one plum logo**. Removed the now-unused `logo-black.png` and `logo-plum.png` (the latter was `#241A20`, a dark nav-tint that read near-black at header size — the source of the "logo won't go plum" confusion: it WAS plum, just too dark).
+- App identity → plum (`bb6169e`, native). `app.json` splash `backgroundColor` `#FAF7F2`→`#EFE7EC`, `expo-notifications` color `#208AEF`→`#7A3960`; app icon recolored to plum (same format/dims as the previously-shipped icon — no re-export needed).
+
+**Bug fixed**
+
+- **Orphan-title items (missing `titles` rows, NOT stubs).** Two items pointed at `(tmdb_id, media_type)` pairs with no `public.titles` row — `179144` (Arron's watched movie) and `1634949` — so they rendered with the item's rating/date but a blank title/poster (the friend-library loader left-merges titles via `fetchTitlesByItems`; a missing row → `title:'' / posterPath:null`). The initial "stub row" theory was wrong (0 stubs in `titles`); the rows were *absent entirely*, which an inner join hid. Healed by re-running `scripts/backfill-titles.mjs` (computes `missing = items pairs − titles pairs`, so genuinely-absent pairs get fetched + inserted — its actual purpose; it does NOT heal stubs, but these weren't stubs). **Root cause:** `ensureTitle` swallows RPC failures silently (`src/lib/titles.ts:127-129`), so during the 2026-06-16 `ensure_title` `p_*`-rename deploy window, the client↔DB argument-name skew (PGRST202) failed the catalogue write while the items insert succeeded → orphan items.
+
+**Decisions / lessons worth remembering**
+
+- **`ensureTitle` failing silently is how orphans go unnoticed** (the swallow at `titles.ts:127-129` is intentional — a catalogue stamp shouldn't block adding to your library — but it means a deploy-window failure leaves invisible orphans). FUTURE: make `ensureTitle` failures observable (telemetry/log surface, or a periodic orphan-sweep) so the next skew surfaces instead of waiting for a user to notice a blank poster.
+- **A black screen on a *clean* bundle was just the phone's Wi-Fi being off** — the dev build couldn't reach Metro. `expo export` built cleanly (exit 0), which proved the code/require were fine. Don't chase code/asset causes when the bundle exports clean; check the device↔Metro connection first.
+- **"0 MB free / ENOSPC" was Claude Code's container filesystem, not the Mac** (Mac had 62 GB free). Don't chase Mac disk space when CC reports a full temp fs — it's CC-side; route command output to a project file + read it back as a workaround.
+- **Stub vs missing are different failure modes with different fixes.** `backfill-titles.mjs` heals *missing* rows (its job); the `ensure_title` `DO UPDATE COALESCE` self-heal (2026-06-16) heals *stubs*. Diagnose which before picking the tool.
+
+**Next / queued (NOT done)**
+
+- **iOS REBUILD PENDING** — icon/splash/notification colors are native; they will NOT show until `eas build --profile production --platform ios` + `eas submit` (or `--profile development` for a dev client). Icon file format matches the previously-shipped one, so no re-export.
+- **Phase-2 Profile features (real builds):** (1) **in-app feedback** — form + screenshot attach + delivery, replacing the current `mailto:`; (2) **delete account** — in the Account screen: confirmation flow + server-side multi-table deletion (auth, profile, items, favorites, recommendations, friendships, push_tokens). **LAUNCH REQUIREMENT** (App Store guideline + privacy law).
+- **Smaller:** onboarding/sign-in already plum (they use `logo.png`) — nothing to do there; Android `adaptiveIcon.backgroundColor` still `#E6F4FE` (only matters if/when Android ships); profile avatar still bespoke (not the shared `<Avatar>`, misses the gradient fallback) — fold into the avatar-sweep cleanup; `borderStrong #D4CCC1` warm hue-mismatch against the plum ramp.
+
+---
+
 ## 2026-06-17
 
 **Done**
