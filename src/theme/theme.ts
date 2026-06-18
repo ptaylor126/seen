@@ -71,18 +71,21 @@ export const palette = {
         // initial sits as WHITE text on top in both themes, so the
         // LIGHTER stop (the "from" / top-left of the diagonal) is
         // contrast-verified at ≥4.5:1 against white via WCAG. Hue
-        // families chosen to harmonize with the plum accent — plum
-        // and its harmonics (violet, rose) + warm earthy tones
-        // (bronze, brown) + cool counterpoints (blue, teal, green).
+        // families chosen to harmonize with the plum accent — all
+        // cool/plum-leaning, no warm tones: plum and its harmonics
+        // (violet, rose) + cool counterpoints (indigo, blue, cerulean,
+        // teal, green). The previous bronze + warm-brown slots read as
+        // orange against the plum UI and were replaced with indigo +
+        // cerulean.
         avatarFallbacks: [
             { from: '#7A3960', to: '#5A2A48' }, // plum (matches accent)
             { from: '#3F587A', to: '#2D3F5C' }, // blue
-            { from: '#8B6135', to: '#6E4925' }, // bronze
+            { from: '#474C93', to: '#353A73' }, // indigo
             { from: '#3F6B4F', to: '#2E5238' }, // green
             { from: '#5C497F', to: '#443560' }, // violet
             { from: '#8C4555', to: '#6B3242' }, // rose
             { from: '#2F6068', to: '#1F484F' }, // teal
-            { from: '#6F4A37', to: '#543526' }, // warm brown
+            { from: '#2D6E96', to: '#1F5274' }, // cerulean
         ],
     },
     dark: {
@@ -118,12 +121,12 @@ export const palette = {
         avatarFallbacks: [
             { from: '#9B5079', to: '#7A3960' }, // plum (matches accent)
             { from: '#587398', to: '#3F587A' }, // blue
-            { from: '#8C6440', to: '#6E4925' }, // bronze
+            { from: '#5A5FA8', to: '#474C93' }, // indigo
             { from: '#4F7A60', to: '#3F6B4F' }, // green
             { from: '#7A669D', to: '#5C497F' }, // violet
             { from: '#A85F73', to: '#8C4555' }, // rose
             { from: '#3F757E', to: '#2F6068' }, // teal
-            { from: '#8C6450', to: '#6F4A37' }, // warm brown
+            { from: '#387394', to: '#2D6E96' }, // cerulean
         ],
     },
 } as const;
