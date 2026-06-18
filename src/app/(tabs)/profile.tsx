@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ChevronRight } from 'lucide-react-native';
+import { ChevronRight, Pencil } from 'lucide-react-native';
 import { Fragment, useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -23,7 +23,13 @@ import { useProfile } from '@/hooks/use-profile';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
-import { getPalette, ICON_STROKE_WIDTH, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 const AVATAR_SIZE = 96;
 
@@ -128,12 +134,10 @@ export default function ProfileScreen() {
         }
     }
 
+    // Nav rows only. "Edit profile" moved to the avatar pencil badge;
+    // "Sign out" is rendered separately below as a visually-distinct
+    // exit action (not a neutral nav row).
     const rows: Array<{ id: string; label: string; onPress: () => void }> = [
-        {
-            id: 'edit',
-            label: 'Edit profile',
-            onPress: () => router.push('/profile/edit'),
-        },
         {
             id: 'favorites',
             label: 'Edit Top 5',
@@ -149,7 +153,6 @@ export default function ProfileScreen() {
             label: 'Account',
             onPress: () => router.push('/profile/account'),
         },
-        { id: 'signout', label: 'Sign out', onPress: confirmSignOut },
     ];
 
     if (status === 'loading') {
@@ -193,38 +196,73 @@ export default function ProfileScreen() {
             <ScrollView
                 contentContainerStyle={[
                     styles.scrollContent,
-                    { paddingBottom: tabBarInset },
+                    // tabBarInset clears the floating nav exactly (bar
+                    // height + gap + safe-area) — fine for a list whose
+                    // last row tucks just above the bar, but the solo
+                    // Sign out button at the very bottom reads as jammed
+                    // against it. + spacing.xl gives a comfortable gap
+                    // below the button before the nav.
+                    { paddingBottom: tabBarInset + spacing.xl },
                 ]}
             >
                 <View style={styles.card}>
-                    {profile.avatarUrl ? (
-                        <Image
-                            source={{ uri: profile.avatarUrl }}
-                            style={[styles.avatar, { backgroundColor: palette.accent }]}
-                            contentFit="cover"
-                            transition={200}
-                        />
-                    ) : (
-                        <View
-                            style={[
-                                styles.avatar,
-                                styles.avatarFallback,
-                                { backgroundColor: palette.accent },
+                    <View style={styles.avatarWrapper}>
+                        {profile.avatarUrl ? (
+                            <Image
+                                source={{ uri: profile.avatarUrl }}
+                                style={[styles.avatar, { backgroundColor: palette.accent }]}
+                                contentFit="cover"
+                                transition={200}
+                            />
+                        ) : (
+                            <View
+                                style={[
+                                    styles.avatar,
+                                    styles.avatarFallback,
+                                    { backgroundColor: palette.accent },
+                                ]}
+                            >
+                                <Text style={[typography.display, { color: palette.textInverse }]}>
+                                    {firstLetter}
+                                </Text>
+                            </View>
+                        )}
+                        {/* Edit badge — bottom-right of the avatar, the
+                            standard profile-edit affordance. Replaces the
+                            removed "Edit profile" list row; routes to the
+                            same /profile/edit screen. palette.bg ring so
+                            the plum badge separates from the avatar. */}
+                        <Pressable
+                            onPress={() => router.push('/profile/edit')}
+                            accessibilityRole="button"
+                            accessibilityLabel="Edit profile"
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                styles.editBadge,
+                                {
+                                    backgroundColor: palette.accent,
+                                    borderColor: palette.bg,
+                                },
+                                pressed && { opacity: 0.6 },
                             ]}
                         >
-                            <Text style={[typography.display, { color: palette.textInverse }]}>
-                                {firstLetter}
-                            </Text>
-                        </View>
-                    )}
-                    <Text
-                        style={[typography.display, styles.displayName, { color: palette.text }]}
-                    >
-                        {profile.displayName}
-                    </Text>
-                    <Text style={[typography.body, { color: palette.textMuted }]}>
-                        @{profile.handle}
-                    </Text>
+                            <Pencil
+                                color={palette.textInverse}
+                                size={16}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                        </Pressable>
+                    </View>
+                    {/* Name + handle grouped tight so they read as one
+                        unit (the card's old uniform gap spread them out). */}
+                    <View style={styles.nameBlock}>
+                        <Text style={[typography.display, { color: palette.text }]}>
+                            {profile.displayName}
+                        </Text>
+                        <Text style={[typography.body, { color: palette.textMuted }]}>
+                            @{profile.handle}
+                        </Text>
+                    </View>
                 </View>
 
                 {/* Top 5 sections — render nothing when both lists are
@@ -286,6 +324,27 @@ export default function ProfileScreen() {
                         </Fragment>
                     ))}
                 </View>
+
+                {/* Sign out — a subtle OUTLINED button (1px border,
+                    transparent fill), separated from the neutral nav
+                    rows by a gap so it reads as a deliberate exit
+                    action rather than another setting. Not red:
+                    sign out is reversible; the confirm dialog carries
+                    the emphasis. */}
+                <Pressable
+                    onPress={confirmSignOut}
+                    accessibilityRole="button"
+                    accessibilityLabel="Sign out"
+                    style={({ pressed }) => [
+                        styles.signOutButton,
+                        { borderColor: palette.border },
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <Text style={[typography.body, { color: palette.text }]}>
+                        Sign out
+                    </Text>
+                </Pressable>
             </ScrollView>
         </View>
     );
@@ -308,11 +367,20 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.lg,
     },
     card: {
+        // No uniform `gap` — the avatar→name and name↔handle gaps are
+        // set explicitly (nameBlock.marginTop / nameBlock natural line
+        // spacing) so the name + handle can sit tight as one unit.
         alignItems: 'center',
-        gap: spacing.sm,
         paddingTop: spacing.xl,
         paddingBottom: spacing.xl,
         paddingHorizontal: spacing.base,
+    },
+    avatarWrapper: {
+        // Relative box sized to the avatar so the edit badge can anchor
+        // to its bottom-right corner.
+        width: AVATAR_SIZE,
+        height: AVATAR_SIZE,
+        position: 'relative',
     },
     avatar: {
         width: AVATAR_SIZE,
@@ -323,7 +391,21 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    displayName: {
+    editBadge: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        borderWidth: 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    nameBlock: {
+        // Gap from the avatar; name + handle inside stack at natural
+        // line spacing (no extra gap) so they read as one unit.
+        alignItems: 'center',
         marginTop: spacing.md,
     },
     settingsRow: {
@@ -336,5 +418,18 @@ const styles = StyleSheet.create({
     separator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: spacing.base,
+    },
+    signOutButton: {
+        // Subtle outlined button: 1px border (color set inline via
+        // palette.border), transparent fill, centered label. Full-width
+        // within the screen margins. marginTop separates the exit from
+        // the nav list above; radius.sm matches the app's button shape.
+        marginTop: spacing.lg,
+        marginHorizontal: spacing.base,
+        paddingVertical: spacing.md,
+        borderWidth: 1,
+        borderRadius: radius.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

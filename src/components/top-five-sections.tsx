@@ -13,8 +13,8 @@
 
 import { Image } from 'expo-image';
 import {
+    Dimensions,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     View,
@@ -84,11 +84,10 @@ function Section({
             >
                 {heading}
             </Text>
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.row}
-            >
+            {/* Non-scrolling row: all 5 posters fit the screen width
+                (POSTER_W computed below). No labels under the posters —
+                the artwork is recognisable on its own. */}
+            <View style={styles.row}>
                 {items.map((item) => (
                     <Pressable
                         key={`${item.mediaType}:${item.tmdbId}`}
@@ -142,25 +141,22 @@ function Section({
                                 </Text>
                             </View>
                         </View>
-                        <Text
-                            style={[
-                                typography.caption,
-                                styles.cardTitle,
-                                { color: palette.text },
-                            ]}
-                            numberOfLines={2}
-                        >
-                            {item.title}
-                        </Text>
                     </Pressable>
                 ))}
-            </ScrollView>
+            </View>
         </View>
     );
 }
 
-const POSTER_W = 80;
-const POSTER_H = 120;
+// Fit all 5 posters across the screen width: 5 posters + 4 inter-poster
+// gaps inside the row's horizontal padding. Math.floor so sub-pixel
+// rounding never overflows the row (an overflow would wrap the 5th
+// poster onto a second line). 2:3 aspect preserved (H = W * 1.5).
+const SCREEN_W = Dimensions.get('window').width;
+const H_PADDING = spacing.base;
+const POSTER_GAP = spacing.sm;
+const POSTER_W = Math.floor((SCREEN_W - 2 * H_PADDING - 4 * POSTER_GAP) / 5);
+const POSTER_H = Math.round(POSTER_W * 1.5);
 
 const styles = StyleSheet.create({
     container: {
@@ -173,12 +169,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
     },
     row: {
-        paddingHorizontal: spacing.base,
-        gap: spacing.md,
+        flexDirection: 'row',
+        paddingHorizontal: H_PADDING,
+        gap: POSTER_GAP,
     },
     card: {
         width: POSTER_W,
-        gap: spacing.xs,
     },
     posterWrapper: {
         position: 'relative',
@@ -201,8 +197,5 @@ const styles = StyleSheet.create({
     },
     rankText: {
         fontWeight: '700',
-    },
-    cardTitle: {
-        textAlign: 'center',
     },
 });
