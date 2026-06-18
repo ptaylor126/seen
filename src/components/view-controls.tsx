@@ -1,5 +1,5 @@
 import { LayoutGrid, LayoutList } from 'lucide-react-native';
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import {
     Pressable,
     StyleSheet,
@@ -37,21 +37,41 @@ export function ViewControls({
     palette: Palette;
 }) {
     const densityOptions: LibraryGridCols[] = [2, 3, 4];
+    // Only animate in response to a real user toggle — never on mount or
+    // on the async AsyncStorage hydration. useLibraryView starts on the
+    // 'list' default, then a moment later setView() flips to the
+    // persisted mode; that post-mount list→grid flip is hydration, not a
+    // user action, and is what was sliding the controls in from the
+    // top-right on load. `interacted` flips true ONLY inside the press
+    // handlers below, so hydration-driven changes render statically while
+    // genuine toggles animate. (A "has mounted" flag can't distinguish
+    // the two — the hydration flip happens after mount.)
+    const interacted = useRef(false);
+    const handleModeChange = (next: LibraryMode) => {
+        interacted.current = true;
+        onModeChange(next);
+    };
+    const handleGridColsChange = (next: LibraryGridCols) => {
+        interacted.current = true;
+        onGridColsChange(next);
+    };
     return (
         // LinearTransition animates the container's width on density
-        // mount/unmount so the toggle doesn't pop sideways. Reanimated
-        // is used here rather than LayoutAnimation because the latter
-        // silently no-ops for mount/unmount on the New Architecture
-        // (Fabric, which Expo SDK 54 turns on by default) — that's why
-        // the previous LayoutAnimation attempt was invisible.
+        // mount/unmount so the toggle doesn't pop sideways — gated on
+        // `interacted` so it only runs after a user toggle, not on the
+        // initial hydration. Reanimated rather than LayoutAnimation
+        // because the latter silently no-ops for mount/unmount on the
+        // New Architecture (Fabric, default in Expo SDK 54).
         <Animated.View
-            layout={LinearTransition.duration(180)}
+            layout={
+                interacted.current ? LinearTransition.duration(180) : undefined
+            }
             style={[styles.viewControls, { backgroundColor: palette.surfaceAlt }]}
         >
             <View style={styles.toggleGroup}>
                 <ViewControlsCell
                     active={mode === 'list'}
-                    onPress={() => onModeChange('list')}
+                    onPress={() => handleModeChange('list')}
                     palette={palette}
                     accessibilityLabel="List view"
                 >
@@ -65,7 +85,7 @@ export function ViewControls({
                 </ViewControlsCell>
                 <ViewControlsCell
                     active={mode === 'grid'}
-                    onPress={() => onModeChange('grid')}
+                    onPress={() => handleModeChange('grid')}
                     palette={palette}
                     accessibilityLabel="Grid view"
                 >
@@ -81,10 +101,18 @@ export function ViewControls({
             {mode === 'grid' ? (
                 // Density group fades in/out as one cohesive unit so the
                 // three numbers read as a single control appearing,
-                // rather than three staggered cells popping in.
+                // rather than three staggered cells popping in. `entering`
+                // is gated on `interacted` so it only plays on a user-
+                // initiated list→grid toggle — never on mount or on the
+                // hydration flip (if the screen loads already in grid
+                // mode the picker just appears, no animation). `exiting`
+                // is always kept — it can only fire on a real grid→list
+                // unmount, which is always user-initiated.
                 <Animated.View
                     style={styles.densityGroup}
-                    entering={FadeIn.duration(180)}
+                    entering={
+                        interacted.current ? FadeIn.duration(180) : undefined
+                    }
                     exiting={FadeOut.duration(140)}
                 >
                     {densityOptions.map((opt) => {
@@ -93,7 +121,7 @@ export function ViewControls({
                             <ViewControlsCell
                                 key={opt}
                                 active={isActive}
-                                onPress={() => onGridColsChange(opt)}
+                                onPress={() => handleGridColsChange(opt)}
                                 palette={palette}
                                 accessibilityLabel={`${opt} columns`}
                                 cellStyle={styles.densityCell}
