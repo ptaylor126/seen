@@ -700,10 +700,13 @@ export default function HomeScreen() {
             <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
                 <View style={styles.header}>
                     <Image
-                        // Black variant on the home header — coral is
-                        // reserved for the onboarding welcome
-                        // marquee.
-                        source={require('../../../assets/logo-black.png')}
+                        // Shared bright-plum wordmark (logo.png, letters
+                        // #7A3960 = the brand accent) — same asset used
+                        // by onboarding / sign-in / splash, so every
+                        // surface shows one consistent plum logo. The
+                        // earlier logo-plum.png was #241A20 (the dark
+                        // nav-bar tint) and read as near-black here.
+                        source={require('../../../assets/logo.png')}
                         style={styles.headerLogo}
                         contentFit="contain"
                         accessibilityLabel="Seen"
