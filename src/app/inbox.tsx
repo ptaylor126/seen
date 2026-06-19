@@ -14,6 +14,7 @@ import {
 
 import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
+import { SegmentedControl } from '@/components/segmented-control';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
@@ -132,6 +133,13 @@ interface TitleMeta {
 }
 
 type InboxView = 'received' | 'sent';
+
+// Options for the shared SegmentedControl (Received / Sent toggle).
+// Module-scope so the array reference is stable across renders.
+const INBOX_VIEW_OPTIONS: ReadonlyArray<{ value: InboxView; label: string }> = [
+    { value: 'received', label: 'Received' },
+    { value: 'sent', label: 'Sent' },
+];
 
 const AVATAR_SIZE = 44;
 const SENT_POSTER_WIDTH = 56;
@@ -1003,45 +1011,19 @@ export default function InboxScreen() {
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader title="Inbox" showBackButton hideBell />
 
-            {/* Segmented toggle. Doesn't refetch — both lists are
-                already in state, so switching is instant. */}
+            {/* Received / Sent toggle — shared SegmentedControl (same
+                accentWash treatment as the Library filter zone). Doesn't
+                refetch — both lists are already in state, so switching is
+                instant. The padded wrapper keeps the control inset from
+                the screen edges (it sits on the page bg, not a surfaceAlt
+                zone — correct for a solo toggle). */}
             <View style={styles.segmentRow}>
-                {(['received', 'sent'] as const).map((v) => {
-                    const active = view === v;
-                    return (
-                        <Pressable
-                            key={v}
-                            onPress={() => setView(v)}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected: active }}
-                            style={({ pressed }) => [
-                                styles.segmentButton,
-                                {
-                                    backgroundColor: active
-                                        ? palette.accent
-                                        : 'transparent',
-                                    borderColor: active
-                                        ? palette.accent
-                                        : palette.border,
-                                    opacity: pressed ? 0.6 : 1,
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    {
-                                        color: active
-                                            ? palette.textInverse
-                                            : palette.textMuted,
-                                    },
-                                ]}
-                            >
-                                {v === 'received' ? 'Received' : 'Sent'}
-                            </Text>
-                        </Pressable>
-                    );
-                })}
+                <SegmentedControl
+                    options={INBOX_VIEW_OPTIONS}
+                    value={view}
+                    onChange={setView}
+                    palette={palette}
+                />
             </View>
 
             {loading ? (
@@ -1172,19 +1154,11 @@ const styles = StyleSheet.create({
         marginLeft: AVATAR_SIZE + spacing.md,
     },
     segmentRow: {
-        flexDirection: 'row',
-        gap: spacing.sm,
+        // Inset wrapper around the shared SegmentedControl — keeps it off
+        // the screen edges and spaced from the header / list below.
         paddingHorizontal: spacing.base,
         paddingTop: spacing.sm,
         paddingBottom: spacing.md,
-    },
-    segmentButton: {
-        flex: 1,
-        paddingVertical: spacing.sm,
-        borderRadius: radius.sm,
-        borderWidth: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     sentPoster: {
         width: SENT_POSTER_WIDTH,
