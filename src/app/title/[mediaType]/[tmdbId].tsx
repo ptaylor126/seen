@@ -23,7 +23,11 @@ import { RatingSheet } from '@/components/rating-sheet';
 import { formatYourMarker, type ItemStatus } from '@/lib/item-status';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
-import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import {
+    applyWatchedRating,
+    formatRatingStars,
+    type MediaType,
+} from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import {
@@ -36,6 +40,7 @@ import {
     type TMDBCrewMember,
     type TMDBMovie,
     type TMDBTV,
+    type TMDBWatchProvider,
     type TMDBWatchProvidersRegion,
 } from '@/lib/tmdb';
 import {
@@ -98,6 +103,11 @@ interface ReviewItem {
     body: string;
     containsSpoilers: boolean;
     updatedAt: string;
+    // The author's stored 1-10 rating for this title (items.rating),
+    // merged in by user_id. null when they have no rating (watched
+    // without rating, or status that can't carry one) — the row then
+    // degrades to avatar + name + text with no stars.
+    rating: number | null;
     author: {
         displayName: string;
         avatarUrl: string | null;
@@ -531,6 +541,28 @@ export default function TitleDetailScreen() {
                         }
                     }
 
+                    // Per-author rating for this title (items.rating),
+                    // keyed by user_id. Same RLS as the reviews: an item
+                    // is visible only when it's the viewer's own OR
+                    // friends-visible AND a friend — so this never
+                    // surfaces a stranger's rating. Absent = the review
+                    // row shows no stars.
+                    const ratingByUser = new Map<string, number>();
+                    if (authorIds.length > 0) {
+                        const { data: itemRows } = await supabase
+                            .from('items')
+                            .select('user_id, rating')
+                            .eq('tmdb_id', tmdbId)
+                            .eq('media_type', mediaType)
+                            .in('user_id', authorIds);
+                        if (!active) return;
+                        for (const it of itemRows ?? []) {
+                            if (typeof it.rating === 'number') {
+                                ratingByUser.set(it.user_id, it.rating);
+                            }
+                        }
+                    }
+
                     const items: ReviewItem[] = (reviewRows ?? []).map(
                         (r) => ({
                             id: r.id,
@@ -538,6 +570,7 @@ export default function TitleDetailScreen() {
                             body: r.body,
                             containsSpoilers: r.contains_spoilers,
                             updatedAt: r.updated_at,
+                            rating: ratingByUser.get(r.user_id) ?? null,
                             author: profileById.get(r.user_id) ?? null,
                         }),
                     );
@@ -1491,14 +1524,30 @@ function ReviewsSection({
                                         ? 'You'
                                         : r.author?.displayName ?? 'Former user'}
                                 </Text>
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    {reviewTimestamp(r.updatedAt)}
-                                </Text>
+                                {/* Rating (if any) + timestamp on one
+                                    meta line. No rating → timestamp alone
+                                    (avatar + name + text only). */}
+                                <View style={styles.reviewMetaRow}>
+                                    {r.rating !== null ? (
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                styles.reviewRating,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            {formatRatingStars(r.rating)}
+                                        </Text>
+                                    ) : null}
+                                    <Text
+                                        style={[
+                                            typography.caption,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        {reviewTimestamp(r.updatedAt)}
+                                    </Text>
+                                </View>
                             </View>
                         </View>
                         {shouldHide ? (
@@ -1661,6 +1710,44 @@ function WhereToWatch({
         return null;
     }
 
+    // De-dupe providers across the three method arrays: ONE entry per
+    // provider_id, collecting which methods it offers (canonical order
+    // stream → rent → buy). A service offering several methods (e.g.
+    // Prime Video stream+rent+buy) now renders once with method tags,
+    // not as a duplicate logo per line. Sorted by display_priority
+    // (TMDB's ranking, lower = more prominent), taking the best priority
+    // a provider has across its methods.
+    const mergedProviders = (() => {
+        const byId = new Map<
+            number,
+            { provider: TMDBWatchProvider; methods: string[]; priority: number }
+        >();
+        const collect = (list: TMDBWatchProvider[], method: string) => {
+            for (const p of list) {
+                const existing = byId.get(p.provider_id);
+                if (existing) {
+                    if (!existing.methods.includes(method)) {
+                        existing.methods.push(method);
+                    }
+                    existing.priority = Math.min(
+                        existing.priority,
+                        p.display_priority,
+                    );
+                } else {
+                    byId.set(p.provider_id, {
+                        provider: p,
+                        methods: [method],
+                        priority: p.display_priority,
+                    });
+                }
+            }
+        };
+        collect(flatrate, 'stream');
+        collect(rent, 'rent');
+        collect(buy, 'buy');
+        return [...byId.values()].sort((a, b) => a.priority - b.priority);
+    })();
+
     function openJustWatch() {
         // Linking.openURL handles browser launch for http(s) URLs. It
         // returns a promise that rejects if the URL is malformed; the
@@ -1697,27 +1784,57 @@ function WhereToWatch({
                 </Text>
             </View>
 
-            {flatrate.length > 0 && (
-                <WhereToWatchGroup
-                    label="Stream"
-                    providers={flatrate}
-                    palette={palette}
-                />
-            )}
-            {rent.length > 0 && (
-                <WhereToWatchGroup
-                    label="Rent"
-                    providers={rent}
-                    palette={palette}
-                />
-            )}
-            {buy.length > 0 && (
-                <WhereToWatchGroup
-                    label="Buy"
-                    providers={buy}
-                    palette={palette}
-                />
-            )}
+            {/* One row per provider, de-duped across methods. The
+                methods a provider offers show as a tag line beneath its
+                name (e.g. "stream · rent · buy"). */}
+            <View style={styles.wtwProviderList}>
+                {mergedProviders.map((entry) => (
+                    <View
+                        key={entry.provider.provider_id}
+                        style={styles.wtwProviderRow}
+                        accessible
+                        accessibilityLabel={`${entry.provider.provider_name}: ${entry.methods.join(', ')}`}
+                    >
+                        <View
+                            style={[
+                                styles.wtwLogoChip,
+                                { borderColor: palette.border },
+                            ]}
+                        >
+                            <Image
+                                source={{
+                                    uri: imageUrl(
+                                        entry.provider.logo_path,
+                                        'original',
+                                    ),
+                                }}
+                                style={styles.wtwLogo}
+                                contentFit="cover"
+                                transition={150}
+                            />
+                        </View>
+                        <View style={styles.wtwProviderText}>
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.text },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {entry.provider.provider_name}
+                            </Text>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {entry.methods.join(' · ')}
+                            </Text>
+                        </View>
+                    </View>
+                ))}
+            </View>
 
             <Text
                 style={[
@@ -1754,55 +1871,6 @@ function WhereToWatch({
                     strokeWidth={ICON_STROKE_WIDTH}
                 />
             </Pressable>
-        </View>
-    );
-}
-
-function WhereToWatchGroup({
-    label,
-    providers,
-    palette,
-}: {
-    label: string;
-    providers: { provider_id: number; provider_name: string; logo_path: string; display_priority: number }[];
-    palette: Palette;
-}) {
-    // TMDB returns providers in arbitrary order; display_priority is
-    // their recommended ranking (lower = more prominent).
-    const ordered = [...providers].sort(
-        (a, b) => a.display_priority - b.display_priority,
-    );
-    return (
-        <View style={styles.wtwGroup}>
-            <Text
-                style={[
-                    typography.caption,
-                    styles.wtwGroupLabel,
-                    { color: palette.text },
-                ]}
-            >
-                {label}
-            </Text>
-            <View style={styles.wtwLogoRow}>
-                {ordered.map((p) => (
-                    <View
-                        key={p.provider_id}
-                        style={[
-                            styles.wtwLogoChip,
-                            { borderColor: palette.border },
-                        ]}
-                        accessibilityLabel={p.provider_name}
-                        accessible
-                    >
-                        <Image
-                            source={{ uri: imageUrl(p.logo_path, 'original') }}
-                            style={styles.wtwLogo}
-                            contentFit="cover"
-                            transition={150}
-                        />
-                    </View>
-                ))}
-            </View>
         </View>
     );
 }
@@ -1959,16 +2027,18 @@ const styles = StyleSheet.create({
         borderRadius: radius.full,
         letterSpacing: 0.5,
     },
-    wtwGroup: {
-        gap: spacing.sm,
+    wtwProviderList: {
+        gap: spacing.md,
     },
-    wtwGroupLabel: {
-        fontWeight: '600',
-    },
-    wtwLogoRow: {
+    wtwProviderRow: {
+        // One row per de-duped provider: logo chip + name/method tags.
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: spacing.sm,
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    wtwProviderText: {
+        flex: 1,
+        gap: 2,
     },
     wtwLogoChip: {
         // Square-ish chip wrapping the provider's square logo. Border
@@ -2050,6 +2120,16 @@ const styles = StyleSheet.create({
     reviewHeaderText: {
         flex: 1,
         gap: spacing.xs,
+    },
+    reviewMetaRow: {
+        // Rating (accent) + timestamp (muted) on one line under the name.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    reviewRating: {
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
     },
     reviewSpoilerCover: {
         fontStyle: 'italic',
