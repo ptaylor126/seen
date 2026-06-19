@@ -33,6 +33,29 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-18 (cont.) — in-app feedback + Supabase CLI/infra lessons
+
+**Shipped**
+
+- **In-app feedback feature** (`971705b`). Replaces the old `mailto:` with a real form: free-form body, optional screenshot (private `feedback` bucket, owner-folder-scoped upload), optional reply email. Submits to a `submit-feedback` Edge Function that inserts the row (RLS **insert-only, no read-back**) and emails me via Resend — **best-effort: an email failure never fails the request** (the row is the source of truth). Success screen says "Sent!"; the email includes a `Reply to:` line when the user left an address. Two migrations (`20260618120000_create_feedback`, `20260618130000_add_reply_email_to_feedback`) applied by hand in the dashboard (see infra note); function deployed via `env -u SUPABASE_ACCESS_TOKEN supabase functions deploy submit-feedback`.
+- **ViewControls first-mount animation fix** (`df81fc4`, earlier today). The grid/list + density controls no longer slide in on load/hydration; only the density picker animates, and only on a real user toggle.
+
+**Infra lessons (the painful ones) — Supabase CLI on this Mac**
+
+- **Keychain login is broken**: `supabase login` reports success but reads back nothing from the macOS Keychain entry. Workaround: prefix Management-API commands with `SUPABASE_AUTH_KEYRING=false` (forces the on-disk token). **TODO (permanent fix): repair/clear the Keychain entry.**
+- **Stale `SUPABASE_ACCESS_TOKEN` in Claude Code's shell 401s deploys.** Workaround: `env -u SUPABASE_ACCESS_TOKEN <deploy cmd>`. **TODO: find and remove the export.**
+- **`db push` / migration-list fail entirely on this machine** (the DB-connection channel needs `SUPABASE_DB_PASSWORD`, separate from login). Workaround: apply migrations by hand in the dashboard SQL editor.
+- **Migration history is out of sync**: because the two feedback migrations were applied manually (not via `db push`), Supabase's migration history doesn't record them. If `db push` ever works again and errors "already exists", run: `supabase migration repair --status applied 20260618120000 20260618130000`.
+- **SQL editor gotcha**: pasting a second query over the first and running shows "Success, no rows" for the SELECT while the CREATE never ran. **Verify object existence** with `select to_regclass('public.feedback')` / `information_schema`, not by trusting "Success".
+- **`.insert().select()` needs SELECT privilege** — it issues `INSERT … RETURNING`, which fails `42501` on an insert-only grant. For write-only tables, insert WITHOUT `.select()/.single()` and stamp any needed values (e.g. `created_at`) locally. (This bit the feedback function — fixed by dropping the returning.)
+- **"Docker is not running" warning on `functions deploy` is harmless** on this CLI version — it deploys fine anyway.
+
+**Tooling note**
+
+- Claude Code reported an edit "done" twice when the file was actually unchanged. **Lesson: gate "done" on a grep of the real file, not the assistant's claim.**
+
+---
+
 ## 2026-06-18
 
 **Done**
