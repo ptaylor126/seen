@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -38,6 +39,7 @@ import {
     type TMDBWatchProvidersRegion,
 } from '@/lib/tmdb';
 import {
+    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -57,8 +59,11 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
     watching: 'Watching',
     watched: 'Watched',
 };
-
-const BACKDROP_HEIGHT = 240;
+// Backdrop band — ~32% of screen height. Deliberately SHORTER than the
+// rec view's full-bleed ~50% header so the two heroes read as distinct:
+// there the title sits ON the image; here the image is a band the poster
+// straddles, with the title beside it on the plum page.
+const BACKDROP_HEIGHT = Math.round(Dimensions.get('window').height * 0.32);
 const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
 
@@ -861,8 +866,12 @@ export default function TitleDetailScreen() {
                     </View>
                 )}
 
-                {/* Backdrop with a gradient fade at the bottom so the
-                    seam between image and the surrounding content blends. */}
+                {/* Backdrop band — shorter than the rec hero. The lower
+                    portion fades into the page via a pure ALPHA ramp of
+                    the bg colour (bgTransparent → bg, same lesson as the
+                    rec view): no grey/pale seam, and the bottom stop is
+                    exactly palette.bg so the poster straddles a clean
+                    image→page transition. */}
                 <View style={styles.backdropContainer}>
                     {detail.data.backdrop_path ? (
                         <Image
@@ -882,8 +891,9 @@ export default function TitleDetailScreen() {
                         />
                     )}
                     <LinearGradient
-                        colors={['transparent', palette.bg]}
-                        style={styles.backdropGradient}
+                        colors={[palette.bgTransparent, palette.bg]}
+                        locations={[0.4, 1]}
+                        style={StyleSheet.absoluteFill}
                     />
                 </View>
 
@@ -925,51 +935,40 @@ export default function TitleDetailScreen() {
                                 {metaLine}
                             </Text>
                         ) : null}
+                        {/* Status confirmation, directly under the meta
+                            line (title → year · meta → status). The slot
+                            ALWAYS renders with a reserved minHeight, so
+                            setting/clearing a status never shifts the
+                            layout. Plum status text + a muted inline
+                            tap-hint; tappable only when watched, to
+                            (re)open the rating sheet. */}
+                        <Pressable
+                            onPress={() => {
+                                if (currentStatus === 'watched') {
+                                    setShowRatingSheet(true);
+                                }
+                            }}
+                            disabled={currentStatus !== 'watched'}
+                            style={styles.statusLine}
+                        >
+                            <Text numberOfLines={1} style={typography.caption}>
+                                <Text style={{ color: palette.accent }}>
+                                    {formatYourMarker(
+                                        currentStatus,
+                                        currentRating,
+                                    ) ?? ''}
+                                </Text>
+                                {currentStatus === 'watched' ? (
+                                    <Text style={{ color: palette.textMuted }}>
+                                        {currentRating !== null
+                                            ? '  ·  Tap to edit'
+                                            : '  ·  Tap to rate'}
+                                    </Text>
+                                ) : null}
+                            </Text>
+                        </Pressable>
                     </View>
                 </View>
-
-                {/* YOUR row — singular personal marker for this title.
-                    Sits right under the title block so existing
-                    library status is one of the first things the user
-                    reads, not buried below the Where-to-Watch block.
-                    Tappable when status is 'watched' so the user can
-                    edit (or first-set) their rating without going
-                    through the toggle-off / status pill flow. */}
-                {currentStatus !== null && (
-                    <Pressable
-                        onPress={() => {
-                            if (currentStatus === 'watched') {
-                                setShowRatingSheet(true);
-                            }
-                        }}
-                        disabled={currentStatus !== 'watched'}
-                        style={({ pressed }) => [
-                            styles.yourMarker,
-                            pressed && { opacity: 0.6 },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.text },
-                            ]}
-                        >
-                            {formatYourMarker(currentStatus, currentRating)}
-                        </Text>
-                        {currentStatus === 'watched' && (
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {currentRating !== null
-                                    ? 'Tap to edit'
-                                    : 'Tap to rate'}
-                            </Text>
-                        )}
-                    </Pressable>
-                )}
 
                 {detail.data.tagline ? (
                     <Text
@@ -1021,6 +1020,60 @@ export default function TitleDetailScreen() {
                         ))}
                     </View>
                 )}
+
+                {/* Status actions — the SINGLE status control on this
+                    screen (the legacy full-width bottom button row was
+                    removed; this is its replacement). A distinct chip row
+                    on the plum bg, BELOW the header block + genre tags and
+                    ABOVE Cast (not overlaid on the image). Borderless +
+                    text-only, compact/left-aligned: unselected = soft
+                    accentWash fill + plum text; selected = solid accent
+                    fill + white text. Wired to setStatus — tap to set, tap
+                    the active chip to clear, watched opens the rating
+                    sheet. */}
+                <View style={styles.statusChipRow}>
+                    {STATUSES.map((status) => {
+                        const isActive = currentStatus === status;
+                        return (
+                            <Pressable
+                                key={status}
+                                onPress={() => setStatus(status)}
+                                hitSlop={spacing.xs}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: isActive }}
+                                accessibilityLabel={STATUS_LABELS[status]}
+                                style={({ pressed }) => [
+                                    styles.statusChip,
+                                    {
+                                        // Borderless: soft plum wash fill
+                                        // when unselected, solid accent when
+                                        // selected. No outline on either.
+                                        backgroundColor: isActive
+                                            ? palette.accent
+                                            : palette.accentWash,
+                                        opacity: pressed ? 0.6 : 1,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.statusChipText,
+                                        {
+                                            // Plum text on the wash;
+                                            // white on the solid-accent
+                                            // selected fill.
+                                            color: isActive
+                                                ? palette.textInverse
+                                                : palette.accent,
+                                        },
+                                    ]}
+                                >
+                                    {STATUS_LABELS[status]}
+                                </Text>
+                            </Pressable>
+                        );
+                    })}
+                </View>
 
                 {/* Cast — top ~10 by billing order. Tapping any card
                     routes to the existing /person/[personId] screen so
@@ -1078,48 +1131,6 @@ export default function TitleDetailScreen() {
                     providers={providersForRegion}
                     palette={palette}
                 />
-
-                {/* Status pills — a choice. The selected status is
-                    filled accent; the others are outline-only with a
-                    muted border so they read as "available options",
-                    distinct from the primary Recommend action below. */}
-                <View style={styles.actions}>
-                    {STATUSES.map((status) => {
-                        const isActive = currentStatus === status;
-                        return (
-                            <Pressable
-                                key={status}
-                                onPress={() => setStatus(status)}
-                                disabled={updating}
-                                style={({ pressed }) => [
-                                    styles.actionButton,
-                                    {
-                                        backgroundColor: isActive
-                                            ? palette.accent
-                                            : 'transparent',
-                                        borderColor: isActive
-                                            ? palette.accent
-                                            : palette.border,
-                                        opacity: pressed || updating ? 0.6 : 1,
-                                    },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        {
-                                            color: isActive
-                                                ? palette.textInverse
-                                                : palette.text,
-                                        },
-                                    ]}
-                                >
-                                    {STATUS_LABELS[status]}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
-                </View>
 
                 {/* Recommend — a primary outgoing action. Filled accent
                     (vs. the outlined status pills above) so the visual
@@ -1826,13 +1837,6 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
-    backdropGradient: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: BACKDROP_HEIGHT / 2,
-    },
     titleBlock: {
         flexDirection: 'row',
         gap: spacing.base,
@@ -1847,8 +1851,39 @@ const styles = StyleSheet.create({
     titleText: {
         flex: 1,
         gap: spacing.xs,
-        justifyContent: 'flex-end',
-        paddingBottom: spacing.sm,
+        // Vertically centered against the poster so title + meta read as
+        // one unit beside it, rather than dropping to the poster's bottom
+        // edge with a tall empty gap above them.
+        justifyContent: 'center',
+    },
+    // Status chip row — a distinct row on the plum bg, between the genre
+    // tags and Cast (NOT overlaid on the image). Left-aligned and content-
+    // sized (chips size to their text — never full-width). Horizontal
+    // inset matches the other sections; generous marginTop/Bottom give the
+    // row clear breathing room above (genres) and below (Cast).
+    statusChipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        marginBottom: spacing.md,
+    },
+    // Substantial pill: more internal padding (md/sm) than the Library
+    // filter chips so it feels tappable and present — taller, NOT wider.
+    // Borderless — the fill alone defines the chip (soft plum wash
+    // unselected / solid accent selected, applied inline per state).
+    statusChip: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.full,
+    },
+    statusChipText: {
+        // 14/Medium — same label treatment as the Library chips.
+        ...typography.caption,
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
     },
     tagline: {
         paddingHorizontal: spacing.base,
@@ -1980,15 +2015,11 @@ const styles = StyleSheet.create({
     friendActivityCaption: {
         flex: 1,
     },
-    yourMarker: {
-        paddingHorizontal: spacing.base,
-        // spacing.base (vs spacing.lg in the prior bottom location) so
-        // this sits inside the upper title-metadata cluster (title
-        // block → marker → tagline → credits → genres → cast) at the
-        // same rhythm as its siblings, not as a large gap separating
-        // sections.
-        marginTop: spacing.base,
-        gap: spacing.xs,
+    // Status confirmation line, nested in the title column directly under
+    // the meta line. minHeight reserves one caption line (lineHeight 18)
+    // so setting or clearing a status never shifts the surrounding layout.
+    statusLine: {
+        minHeight: 18,
     },
     // Reviews section — sits between FriendActivity and WhereToWatch
     // so the "social text content" sits with the "social numbers"
@@ -2022,20 +2053,6 @@ const styles = StyleSheet.create({
     },
     reviewSpoilerCover: {
         fontStyle: 'italic',
-    },
-    actions: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        paddingHorizontal: spacing.base,
-        marginTop: spacing.md,
-    },
-    actionButton: {
-        flex: 1,
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     recommendButton: {
         // Filled accent — the border that lived here when the button
