@@ -286,7 +286,6 @@ export default function FeedbackScreen() {
                                 typography.body,
                                 {
                                     backgroundColor: palette.surface,
-                                    borderColor: palette.border,
                                     color: palette.text,
                                 },
                             ]}
@@ -321,9 +320,10 @@ export default function FeedbackScreen() {
                                     typography.body,
                                     {
                                         backgroundColor: palette.surface,
-                                        borderColor: emailError
-                                            ? palette.error
-                                            : palette.border,
+                                        // Borderless at rest; the red error
+                                        // border only appears on invalid input.
+                                        borderWidth: emailError ? 1 : 0,
+                                        borderColor: palette.error,
                                         color: palette.text,
                                     },
                                 ]}
@@ -496,16 +496,18 @@ const styles = StyleSheet.create({
         gap: spacing.base,
     },
     textArea: {
+        // Borderless (surface fill against the page bg is the separation,
+        // matching the search bars elsewhere). No resting border.
         flex: 1,
         minHeight: 140,
         borderRadius: radius.md,
-        borderWidth: 1,
         padding: spacing.md,
     },
     emailInput: {
+        // Borderless at rest — borderWidth/borderColor for the error state
+        // are applied inline at the field (see the email TextInput).
         height: 48,
         borderRadius: radius.md,
-        borderWidth: 1,
         paddingHorizontal: spacing.md,
     },
     emailError: {
