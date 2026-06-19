@@ -1,10 +1,12 @@
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowRight, Send, X } from 'lucide-react-native';
+import { ArrowUp, ChevronRight, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -23,6 +25,7 @@ import { type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -41,10 +44,17 @@ function isReactionEmoji(value: string): value is ReactionEmoji {
 }
 
 const COMMENT_MAX_CHARS = 500;
-const POSTER_W = 64;
-const POSTER_H = 96;
-const AVATAR_SIZE = 32;
 const REACTION_PICKER_SIZE = 40;
+// White circular reaction buttons — larger than the comment-popover
+// cells (REACTION_PICKER_SIZE), spread across the full row width.
+const REACTION_CELL_SIZE = 52;
+// Small avatar on the recommender line above the note.
+const REC_LINE_AVATAR_SIZE = 28;
+// Composer avatar — larger, roughly the height of the taller pill field.
+const COMPOSER_AVATAR_SIZE = 40;
+// Immersive backdrop header — the hero of the screen (~50% of height).
+// Read once at module load (same pattern as the home hero / Top 5 row).
+const HEADER_HEIGHT = Math.round(Dimensions.get('window').height * 0.5);
 
 interface PartyProfile {
     userId: string;
@@ -66,6 +76,9 @@ interface TitleMeta {
     title: string;
     year: string;
     posterPath: string | null;
+    // Wide TMDB backdrop for the immersive header — the same image the
+    // home hero card uses, resolved through the shared imageUrl() util.
+    backdropPath: string | null;
 }
 
 interface ReactionRow {
@@ -234,6 +247,7 @@ export default function RecScreen() {
                             ? data.release_date?.slice(0, 4) ?? ''
                             : data.first_air_date?.slice(0, 4) ?? '',
                     posterPath: data.poster_path,
+                    backdropPath: data.backdrop_path,
                 })),
             ]);
 
@@ -605,19 +619,16 @@ export default function RecScreen() {
         );
     }
 
-    // Compose the rec-context line ("Sender recommended Title"). When
-    // the current user is the sender, flip it to "You recommended …"
-    // so the screen reads naturally regardless of which side opened it.
+    // Attribution copy for the image overlay, mirroring the home hero:
+    // recommender's first name in the accent + verb + timeago. When the
+    // current user is the sender it flips to "You recommended" so the
+    // screen reads naturally regardless of which side opened it.
     const isMeSender = myUserId === rec.fromUserId;
     const senderName = isMeSender
         ? 'You'
         : sender?.displayName ?? 'Former user';
-    const recipientName = rec.toUserId === myUserId
-        ? 'you'
-        : recipient?.displayName ?? 'them';
-    const contextLine = isMeSender
-        ? `You recommended this to ${recipientName}`
-        : `${senderName} recommended this to you`;
+    const pillName = isMeSender ? 'You' : senderName.split(/\s+/)[0] || senderName;
+    const pillVerb = isMeSender ? 'recommended' : 'recommends';
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -633,148 +644,178 @@ export default function RecScreen() {
             >
                 <ScrollView
                     ref={scrollRef}
+                    // flex: 1 so the scroll area fills the space above the
+                    // composer — without it a short rec leaves the
+                    // ScrollView content-height and the composer floats up
+                    // with empty space below it instead of bottom-anchoring.
+                    style={styles.flex}
                     contentContainerStyle={[
                         styles.scrollContent,
                         { paddingBottom: insets.bottom + spacing.base },
                     ]}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Rec header — sender attribution + title summary. */}
-                    <View style={styles.header}>
-                        <Avatar
-                            avatarUrl={
-                                isMeSender
-                                    ? recipient?.avatarUrl ?? null
-                                    : sender?.avatarUrl ?? null
-                            }
-                            displayName={
-                                isMeSender
-                                    ? recipient?.displayName ?? '?'
-                                    : sender?.displayName ?? '?'
-                            }
-                            seedId={
-                                (isMeSender
-                                    ? recipient?.userId
-                                    : sender?.userId) ?? rec.id
-                            }
-                            size={AVATAR_SIZE}
-                        />
-                        <View style={styles.headerText}>
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.text },
-                                ]}
-                                numberOfLines={2}
-                            >
-                                {contextLine}
-                            </Text>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {relativeTimestamp(rec.sentAt)}
-                            </Text>
-                        </View>
-                    </View>
-
-                    {rec.note ? (
-                        <Text
-                            style={[
-                                typography.body,
-                                styles.note,
-                                { color: palette.text },
-                            ]}
-                        >
-                            “{rec.note}”
-                        </Text>
-                    ) : null}
-
-                    {/* Title summary + "View title" bridge. */}
-                    <Pressable
-                        onPress={() =>
-                            router.push(
-                                `/title/${rec.mediaType}/${rec.tmdbId}?fromRec=${rec.id}`,
-                            )
-                        }
-                        style={({ pressed }) => [
-                            styles.titleCard,
-                            {
-                                backgroundColor: palette.surfaceAlt,
-                                opacity: pressed ? 0.6 : 1,
-                            },
-                        ]}
-                    >
-                        {titleMeta.posterPath ? (
+                    {/* Immersive backdrop header (the hero) — the title's
+                        wide TMDB backdrop (same image the home hero uses,
+                        via the shared imageUrl util), with the recommender
+                        attribution overlaid bottom-left. Fallback when
+                        there's no backdrop: a plum block, so the header
+                        always looks intentional. */}
+                    <View style={styles.headerImage}>
+                        {titleMeta.backdropPath ? (
                             <Image
                                 source={{
-                                    uri: imageUrl(titleMeta.posterPath, 'w185'),
+                                    uri: imageUrl(titleMeta.backdropPath, 'w780'),
                                 }}
-                                style={styles.poster}
+                                style={StyleSheet.absoluteFill}
                                 contentFit="cover"
-                                transition={150}
+                                transition={200}
                             />
                         ) : (
                             <View
                                 style={[
-                                    styles.poster,
-                                    { backgroundColor: palette.surface },
+                                    StyleSheet.absoluteFill,
+                                    { backgroundColor: palette.accentWash },
                                 ]}
                             />
                         )}
-                        <View style={styles.titleText}>
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.text },
-                                ]}
-                                numberOfLines={2}
-                            >
-                                {titleMeta.title}
-                            </Text>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {[
-                                    titleMeta.year,
-                                    rec.mediaType === 'movie' ? 'Movie' : 'TV',
-                                ]
-                                    .filter(Boolean)
-                                    .join(' · ')}
-                            </Text>
-                            <View style={styles.viewTitleRow}>
+                        {/* Image→page fade, bottom-anchored: a pure alpha
+                            ramp of the bg colour (transparent bg → bg),
+                            so it melts straight into the page with no grey
+                            or pale band and ends exactly on palette.bg.
+                            (Title legibility comes from the text shadow on
+                            the overlay, not a dark scrim.) */}
+                        <LinearGradient
+                            colors={[palette.bgTransparent, palette.bg]}
+                            locations={[0.55, 1]}
+                            style={StyleSheet.absoluteFill}
+                        />
+                        {/* Title block, bottom-left — the whole block is
+                            the tappable bridge to the title page. Poster +
+                            title/meta + a quiet chevron affordance. Lifted
+                            off the bottom edge so it sits in the scrim's
+                            dark band with breathing room below. */}
+                        <Pressable
+                            onPress={() =>
+                                router.push(
+                                    `/title/${rec.mediaType}/${rec.tmdbId}?fromRec=${rec.id}`,
+                                )
+                            }
+                            accessibilityRole="link"
+                            accessibilityLabel={`View details for ${titleMeta.title}`}
+                            style={({ pressed }) => [
+                                styles.identityOverlay,
+                                { opacity: pressed ? 0.7 : 1 },
+                            ]}
+                        >
+                            {titleMeta.posterPath ? (
+                                <Image
+                                    source={{
+                                        uri: imageUrl(titleMeta.posterPath, 'w185'),
+                                    }}
+                                    style={styles.identityPoster}
+                                    contentFit="cover"
+                                    transition={150}
+                                />
+                            ) : (
+                                <View
+                                    style={[
+                                        styles.identityPoster,
+                                        { backgroundColor: palette.surfaceAlt },
+                                    ]}
+                                />
+                            )}
+                            <View style={styles.identityTitleText}>
+                                <Text
+                                    style={[
+                                        styles.overlayTitle,
+                                        styles.overlayShadow,
+                                        { color: '#FFFFFF' },
+                                    ]}
+                                    numberOfLines={2}
+                                >
+                                    {titleMeta.title}
+                                </Text>
                                 <Text
                                     style={[
                                         typography.caption,
-                                        { color: palette.accent },
+                                        styles.overlayShadow,
+                                        { color: 'rgba(255,255,255,0.7)' },
                                     ]}
                                 >
-                                    View title
+                                    {[
+                                        titleMeta.year,
+                                        rec.mediaType === 'movie'
+                                            ? 'Movie'
+                                            : 'TV',
+                                    ]
+                                        .filter(Boolean)
+                                        .join(' · ')}
                                 </Text>
-                                <ArrowRight
-                                    color={palette.accent}
-                                    size={14}
-                                    strokeWidth={ICON_STROKE_WIDTH}
-                                />
+                                {/* Labelled, obvious tap affordance. */}
+                                <View style={styles.overlayCta}>
+                                    <Text
+                                        style={[
+                                            typography.caption,
+                                            styles.overlayShadow,
+                                            { color: 'rgba(255,255,255,0.9)' },
+                                        ]}
+                                    >
+                                        View details
+                                    </Text>
+                                    <ChevronRight
+                                        color="rgba(255,255,255,0.9)"
+                                        size={16}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                </View>
                             </View>
-                        </View>
-                    </Pressable>
+                        </Pressable>
+                    </View>
 
-                    {/* Reactions section. */}
-                    <Text
-                        style={[
-                            typography.micro,
-                            styles.sectionHeading,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        REACTIONS
-                    </Text>
+                    {/* Padded body. */}
+                    <View style={styles.bodyPad}>
+
+                    {/* Recommender line — small avatar + "{name} recommends
+                        · {when}", directly above the note so the note reads
+                        as that person's words. */}
+                    <View style={styles.recLine}>
+                        <Avatar
+                            avatarUrl={sender?.avatarUrl ?? null}
+                            displayName={senderName}
+                            seedId={rec.fromUserId ?? sender?.userId ?? rec.id}
+                            size={REC_LINE_AVATAR_SIZE}
+                        />
+                        <Text
+                            style={[
+                                typography.caption,
+                                { color: palette.textMuted },
+                            ]}
+                            numberOfLines={1}
+                        >
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.recommenderName,
+                                    { color: palette.accent },
+                                ]}
+                            >
+                                {pillName}
+                            </Text>{' '}
+                            {pillVerb} · {relativeTimestamp(rec.sentAt)}
+                        </Text>
+                    </View>
+
+                    {/* The note — the hero of the screen. Large quote
+                        treatment, full text (no truncation), wraps for
+                        long notes. */}
+                    {rec.note ? (
+                        <Text style={[styles.noteHero, { color: palette.text }]}>
+                            “{rec.note}”
+                        </Text>
+                    ) : null}
+
+                    {/* Reactions — curated emoji row (no label). */}
                     <View style={styles.reactionRow}>
                         {REACTION_EMOJIS.map((emoji) => {
                             const isActive = myReaction === emoji;
@@ -794,7 +835,7 @@ export default function RecScreen() {
                                         {
                                             backgroundColor: isActive
                                                 ? palette.accent
-                                                : palette.surfaceAlt,
+                                                : palette.surface,
                                             // Read-only for the sender: dim the
                                             // whole picker so the inertness is
                                             // visible, distinct from the active
@@ -845,28 +886,10 @@ export default function RecScreen() {
                         </View>
                     ) : null}
 
-                    {/* Comments section. */}
-                    <Text
-                        style={[
-                            typography.micro,
-                            styles.sectionHeading,
-                            { color: palette.textMuted, marginTop: spacing.lg },
-                        ]}
-                    >
-                        COMMENTS
-                    </Text>
-                    {comments.length === 0 ? (
-                        <Text
-                            style={[
-                                typography.caption,
-                                styles.commentsEmpty,
-                                { color: palette.textMuted },
-                            ]}
-                        >
-                            No comments yet — say something.
-                        </Text>
-                    ) : (
-                        <View style={styles.commentsList}>
+                    {/* Comments — no label; the composer placeholder
+                        carries the empty state. An empty list renders
+                        nothing. */}
+                    <View style={styles.commentsList}>
                             {comments.map((c) => {
                                 const isMine = c.userId === myUserId;
                                 const authorName =
@@ -977,7 +1000,7 @@ export default function RecScreen() {
                                 );
                             })}
                         </View>
-                    )}
+                    </View>
                 </ScrollView>
 
                 {/* Composer pinned to the bottom of the keyboard
@@ -1000,60 +1023,77 @@ export default function RecScreen() {
                         },
                     ]}
                 >
-                    <TextInput
-                        value={composer}
-                        onChangeText={setComposer}
-                        placeholder="Write a comment…"
-                        placeholderTextColor={palette.textMuted}
-                        editable={!composerBusy}
-                        multiline
-                        maxLength={COMMENT_MAX_CHARS}
-                        style={[
-                            styles.composerInput,
-                            typography.body,
-                            {
-                                color: palette.text,
-                                backgroundColor: palette.bg,
-                                borderColor: palette.borderStrong,
-                            },
-                        ]}
-                    />
-                    <Pressable
-                        onPress={handlePostComment}
-                        disabled={
-                            composerBusy ||
-                            composer.trim().length === 0 ||
-                            composer.length > COMMENT_MAX_CHARS
+                    {/* Current user's own avatar, left of the input —
+                        larger now, roughly the height of the pill field. */}
+                    <Avatar
+                        avatarUrl={
+                            (isMeSender ? sender : recipient)?.avatarUrl ?? null
                         }
-                        accessibilityRole="button"
-                        accessibilityLabel="Post comment"
-                        style={({ pressed }) => [
-                            styles.composerSend,
-                            {
-                                // Always accent-tinted so the button reads
-                                // as actionable. Empty state uses the
-                                // subtle accent wash + accent icon; with
-                                // content it flips to a filled accent
-                                // pill with inverse icon.
-                                backgroundColor:
-                                    composer.trim().length === 0
-                                        ? palette.accentSubtle
-                                        : palette.accent,
-                                opacity:
-                                    pressed || composerBusy ? 0.6 : 1,
-                            },
+                        displayName={
+                            (isMeSender ? sender : recipient)?.displayName ?? '?'
+                        }
+                        seedId={myUserId ?? rec.id}
+                        size={COMPOSER_AVATAR_SIZE}
+                    />
+                    {/* Soft pill field with the send arrow inside it at
+                        the right edge. */}
+                    <View
+                        style={[
+                            styles.composerFieldWrap,
+                            { backgroundColor: palette.bg },
                         ]}
                     >
-                        <Send
-                            color={
-                                composer.trim().length === 0
-                                    ? palette.accent
-                                    : palette.textInverse
+                        <TextInput
+                            value={composer}
+                            onChangeText={setComposer}
+                            placeholder={
+                                comments.length === 0
+                                    ? 'Start a conversation'
+                                    : 'Add to the conversation…'
                             }
-                            size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
+                            placeholderTextColor={palette.textMuted}
+                            editable={!composerBusy}
+                            multiline
+                            maxLength={COMMENT_MAX_CHARS}
+                            style={[
+                                styles.composerInput,
+                                typography.body,
+                                { color: palette.text },
+                            ]}
                         />
-                    </Pressable>
+                        <Pressable
+                            onPress={handlePostComment}
+                            disabled={
+                                composerBusy ||
+                                composer.trim().length === 0 ||
+                                composer.length > COMMENT_MAX_CHARS
+                            }
+                            accessibilityRole="button"
+                            accessibilityLabel="Post comment"
+                            style={({ pressed }) => [
+                                styles.composerSendInline,
+                                {
+                                    // Solid accent circle with a white
+                                    // up-arrow; dims when there's nothing
+                                    // to send.
+                                    backgroundColor: palette.accent,
+                                    opacity:
+                                        composerBusy ||
+                                        composer.trim().length === 0
+                                            ? 0.4
+                                            : pressed
+                                                ? 0.8
+                                                : 1,
+                                },
+                            ]}
+                        >
+                            <ArrowUp
+                                color={palette.textInverse}
+                                size={20}
+                                strokeWidth={2.5}
+                            />
+                        </Pressable>
+                    </View>
                 </View>
             </KeyboardAvoidingView>
             {/* Long-press popover for comment reactions + per-comment
@@ -1206,56 +1246,104 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
     scrollContent: {
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.xxl,
+        // No top/horizontal padding here — the backdrop header is
+        // full-bleed at the very top; text content gets its inset from
+        // bodyPad. paddingBottom is applied inline (safe-area inset).
     },
-    header: {
+    headerImage: {
+        width: '100%',
+        height: HEADER_HEIGHT,
+    },
+    bodyPad: {
+        // Below the hero image. No pull-up — the recommender is overlaid
+        // on the image now, so the body leads cleanly with the title
+        // block on the page bg.
+        paddingHorizontal: spacing.base,
+    },
+    recommenderName: {
+        // Bold Geist on the name chunk in the attribution line (mirrors
+        // the home hero's light-plum name treatment).
+        fontFamily: fontFamily.bold,
+        fontWeight: '700',
+    },
+    identityOverlay: {
+        // Tappable title block, bottom-left: poster + title/meta/CTA.
+        // Lifted off the bottom edge (bottom: xl) for breathing room —
+        // nudged a touch lower than before.
+        position: 'absolute',
+        left: spacing.base,
+        right: spacing.base,
+        bottom: spacing.xl,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    identityPoster: {
+        // Larger poster thumbnail on the overlay.
+        width: 80,
+        height: 120,
+        borderRadius: radius.sm,
+    },
+    identityTitleText: {
+        flex: 1,
+        gap: spacing.xs,
+    },
+    overlayShadow: {
+        // Soft dark halo so white overlay text stays legible over any
+        // backdrop now that the gradient is a clean transparent→bg fade
+        // (no dark scrim).
+        textShadowColor: 'rgba(0, 0, 0, 0.55)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 8,
+    },
+    overlayCta: {
+        // "View details ›" labelled tap affordance under the metadata.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        marginTop: spacing.xs,
+    },
+    overlayTitle: {
+        // Larger than typography.heading — the title is the headline of
+        // the overlay.
+        fontFamily: fontFamily.bold,
+        fontWeight: '700',
+        fontSize: 26,
+        lineHeight: 30,
+    },
+    recLine: {
+        // Recommender attribution row above the note: small avatar + the
+        // "{name} recommends · {when}" line. Generous gap above (below the
+        // image), tight tie to the note below.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
-    },
-    headerText: {
-        flex: 1,
-        gap: spacing.xs,
-    },
-    note: {
-        fontStyle: 'italic',
-        marginTop: spacing.md,
-    },
-    titleCard: {
         marginTop: spacing.lg,
-        flexDirection: 'row',
-        gap: spacing.md,
-        padding: spacing.md,
-        borderRadius: radius.sm,
     },
-    poster: {
-        width: POSTER_W,
-        height: POSTER_H,
-        borderRadius: radius.sm,
-    },
-    titleText: {
-        flex: 1,
-        gap: spacing.xs,
-        justifyContent: 'space-between',
-    },
-    viewTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.xs,
-    },
-    sectionHeading: {
-        letterSpacing: 1.2,
-        marginTop: spacing.xl,
-        marginBottom: spacing.sm,
+    noteHero: {
+        // The hero note — large pull-quote. Geist regular at a generous
+        // size + line height, italic to read as a quote. No numberOfLines
+        // — the full note wraps, however long (~500-char composer cap).
+        // Tight marginTop ties it to the recommender line above (his
+        // attribution → his words).
+        fontFamily: fontFamily.default,
+        fontWeight: '400',
+        fontSize: 25,
+        lineHeight: 34,
+        fontStyle: 'italic',
+        marginTop: spacing.sm,
     },
     reactionRow: {
         flexDirection: 'row',
-        gap: spacing.sm,
+        // Spread the white reaction buttons evenly across the full row
+        // width (space-between) instead of clustering them at the left.
+        justifyContent: 'space-between',
+        // Replaces the spacing the removed "Reactions" label used to give.
+        marginTop: spacing.xl,
     },
     reactionCell: {
-        width: REACTION_PICKER_SIZE,
-        height: REACTION_PICKER_SIZE,
+        width: REACTION_CELL_SIZE,
+        height: REACTION_CELL_SIZE,
         borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',
@@ -1270,11 +1358,10 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
         marginTop: spacing.md,
     },
-    commentsEmpty: {
-        marginTop: spacing.xs,
-    },
     commentsList: {
         gap: spacing.md,
+        // Replaces the spacing the removed "Comments" label used to give.
+        marginTop: spacing.xl,
     },
     commentRow: {
         flexDirection: 'row',
@@ -1292,7 +1379,8 @@ const styles = StyleSheet.create({
     },
     composer: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
+        // Avatar vertically centered against the taller pill field.
+        alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
         paddingTop: spacing.sm,
@@ -1313,17 +1401,38 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 8,
     },
+    composerFieldWrap: {
+        // Fully-rounded pill holding the input + the inline filled send
+        // circle. The surface fill + border live here (the TextInput
+        // inside is transparent). alignItems flex-end keeps the send
+        // circle bottom-aligned as the field grows. Small inner vertical
+        // padding gives the circle breathing room inside the pill.
+        flex: 1,
+        flexDirection: 'row',
+        // Center the send circle (and single-line text) vertically in the
+        // pill so the arrow reads centered.
+        alignItems: 'center',
+        borderRadius: radius.full,
+        // No border/outline — just the filled pill.
+        paddingLeft: spacing.md,
+        // Roomier right padding so the send circle sits comfortably off
+        // the field's right edge (moves the whole circle in, not the
+        // arrow within it).
+        paddingRight: spacing.sm,
+        paddingVertical: spacing.xs,
+    },
     composerInput: {
         flex: 1,
         maxHeight: 120,
-        paddingHorizontal: spacing.md,
+        // Transparent text area inside the pill; the pill chrome lives on
+        // composerFieldWrap.
         paddingVertical: spacing.sm,
-        borderRadius: radius.sm,
-        borderWidth: StyleSheet.hairlineWidth,
     },
-    composerSend: {
-        width: 40,
-        height: 40,
+    composerSendInline: {
+        // Solid filled circle (accent set inline) with a white up-arrow,
+        // sitting at the field's right edge.
+        width: 32,
+        height: 32,
         borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',

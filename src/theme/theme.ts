@@ -27,6 +27,11 @@ export const palette = {
         // — dark isn't rendered/validated (app.json pinned to light);
         // the parallel plum-tint belongs in the dark-mode pass.
         bg: '#EFE7EC',
+        // bg at zero alpha — the top stop for the rec header's image→page
+        // fade. Identical colour to bg so the gradient is a pure ALPHA
+        // ramp (no grey/pale midpoint); the bottom stop is bg exactly, so
+        // the image melts straight into the page with no seam.
+        bgTransparent: 'rgba(239, 231, 236, 0)',
         surface: '#FFFFFF',
         surfaceAlt: '#E4DAE1',
         text: '#1A1614',
@@ -90,6 +95,9 @@ export const palette = {
     },
     dark: {
         bg: '#16120F',
+        // Parallel to light.bgTransparent — bg at 0 alpha for the rec
+        // header image→page fade. (Dark mode not yet validated.)
+        bgTransparent: 'rgba(22, 18, 15, 0)',
         surface: '#211B17',
         surfaceAlt: '#2A2420',
         text: '#F5F1EB',
