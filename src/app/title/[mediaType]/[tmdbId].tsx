@@ -44,6 +44,7 @@ import {
     type TMDBWatchProvidersRegion,
 } from '@/lib/tmdb';
 import {
+    elevation,
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
@@ -1458,12 +1459,12 @@ function ReviewsSection({
         <View style={styles.reviewsSection}>
             <Text
                 style={[
-                    typography.micro,
+                    typography.bodyEmphasis,
                     styles.reviewsHeading,
-                    { color: palette.textMuted },
+                    { color: palette.text },
                 ]}
             >
-                REVIEWS
+                Reviews
             </Text>
             {canWrite && !ownReview ? (
                 <Pressable
@@ -1637,13 +1638,9 @@ function FriendActivitySection({
     return (
         <View style={styles.friendActivity}>
             <Text
-                style={[
-                    typography.micro,
-                    styles.friendActivityHeading,
-                    { color: palette.textMuted },
-                ]}
+                style={[typography.bodyEmphasis, { color: palette.text }]}
             >
-                FRIENDS
+                Friends
             </Text>
             {watchers.length > 0 && (
                 <View style={styles.friendActivityRow}>
@@ -1693,6 +1690,32 @@ function FriendActivitySection({
 //     dropped cleanly so the layout doesn't acquire a useless heading.
 type Palette = ReturnType<typeof getPalette>;
 
+// Trailing variant phrases TMDB appends to a provider's name for an
+// ad-supported / reseller tier that is really the SAME service (e.g.
+// "Netflix Standard with Ads" → "Netflix", "AMC+ Amazon Channel" →
+// "AMC+"). Stripped so each real service collapses to one card. Longest
+// phrases first so "Standard with Ads" wins over the "with Ads" subset.
+const PROVIDER_VARIANT_SUFFIXES: RegExp[] = [
+    /\s+standard with ads$/i,
+    /\s+premium with ads$/i,
+    /\s+basic with ads$/i,
+    /\s+with ads$/i,
+    /\s+amazon channel$/i,
+    /\s+apple tv channel$/i,
+    /\s+roku premium channel$/i,
+];
+
+// Canonical service name = the provider name with any known variant
+// suffix removed. Variants of one service share a root, so keying the
+// merge on this collapses them into a single card.
+function providerRoot(name: string): string {
+    let n = name.trim();
+    for (const re of PROVIDER_VARIANT_SUFFIXES) {
+        n = n.replace(re, '');
+    }
+    return n.trim();
+}
+
 function WhereToWatch({
     region,
     providers,
@@ -1710,32 +1733,44 @@ function WhereToWatch({
         return null;
     }
 
-    // De-dupe providers across the three method arrays: ONE entry per
-    // provider_id, collecting which methods it offers (canonical order
-    // stream → rent → buy). A service offering several methods (e.g.
-    // Prime Video stream+rent+buy) now renders once with method tags,
-    // not as a duplicate logo per line. Sorted by display_priority
-    // (TMDB's ranking, lower = more prominent), taking the best priority
-    // a provider has across its methods.
+    // De-dupe providers into ONE entry per real service, keyed by the
+    // canonical root name (providerRoot) so ad/reseller variants collapse
+    // into their parent (e.g. "Netflix" + "Netflix Standard with Ads" →
+    // one "Netflix"). Collects which methods the service offers (canonical
+    // order stream → rent → buy) into tags, and keeps the lowest-priority
+    // member's logo + id as the representative. Sorted by display_priority
+    // (TMDB's ranking, lower = more prominent).
     const mergedProviders = (() => {
-        const byId = new Map<
-            number,
-            { provider: TMDBWatchProvider; methods: string[]; priority: number }
+        const byRoot = new Map<
+            string,
+            {
+                name: string;
+                logoPath: string;
+                key: number;
+                methods: string[];
+                priority: number;
+            }
         >();
         const collect = (list: TMDBWatchProvider[], method: string) => {
             for (const p of list) {
-                const existing = byId.get(p.provider_id);
+                const root = providerRoot(p.provider_name);
+                const existing = byRoot.get(root);
                 if (existing) {
                     if (!existing.methods.includes(method)) {
                         existing.methods.push(method);
                     }
-                    existing.priority = Math.min(
-                        existing.priority,
-                        p.display_priority,
-                    );
+                    // Representative = the lowest-priority (most prominent)
+                    // member, so the parent's logo wins over a variant's.
+                    if (p.display_priority < existing.priority) {
+                        existing.priority = p.display_priority;
+                        existing.logoPath = p.logo_path;
+                        existing.key = p.provider_id;
+                    }
                 } else {
-                    byId.set(p.provider_id, {
-                        provider: p,
+                    byRoot.set(root, {
+                        name: root,
+                        logoPath: p.logo_path,
+                        key: p.provider_id,
                         methods: [method],
                         priority: p.display_priority,
                     });
@@ -1745,7 +1780,7 @@ function WhereToWatch({
         collect(flatrate, 'stream');
         collect(rent, 'rent');
         collect(buy, 'buy');
-        return [...byId.values()].sort((a, b) => a.priority - b.priority);
+        return [...byRoot.values()].sort((a, b) => a.priority - b.priority);
     })();
 
     function openJustWatch() {
@@ -1763,12 +1798,11 @@ function WhereToWatch({
             <View style={styles.wtwHeaderRow}>
                 <Text
                     style={[
-                        typography.micro,
-                        styles.sectionLabel,
-                        { color: palette.textMuted },
+                        typography.bodyEmphasis,
+                        { color: palette.text },
                     ]}
                 >
-                    WHERE TO WATCH
+                    Where to watch
                 </Text>
                 <Text
                     style={[
@@ -1784,16 +1818,19 @@ function WhereToWatch({
                 </Text>
             </View>
 
-            {/* One row per provider, de-duped across methods. The
-                methods a provider offers show as a tag line beneath its
-                name (e.g. "stream · rent · buy"). */}
-            <View style={styles.wtwProviderList}>
+            {/* Two-up grid of provider cards, de-duped to one card per
+                real service. Logo + name + the methods it offers as tags
+                (e.g. "stream · rent · buy"). */}
+            <View style={styles.wtwGrid}>
                 {mergedProviders.map((entry) => (
                     <View
-                        key={entry.provider.provider_id}
-                        style={styles.wtwProviderRow}
+                        key={entry.key}
+                        style={[
+                            styles.wtwCard,
+                            { backgroundColor: palette.surface },
+                        ]}
                         accessible
-                        accessibilityLabel={`${entry.provider.provider_name}: ${entry.methods.join(', ')}`}
+                        accessibilityLabel={`${entry.name}: ${entry.methods.join(', ')}`}
                     >
                         <View
                             style={[
@@ -1803,17 +1840,14 @@ function WhereToWatch({
                         >
                             <Image
                                 source={{
-                                    uri: imageUrl(
-                                        entry.provider.logo_path,
-                                        'original',
-                                    ),
+                                    uri: imageUrl(entry.logoPath, 'original'),
                                 }}
                                 style={styles.wtwLogo}
                                 contentFit="cover"
                                 transition={150}
                             />
                         </View>
-                        <View style={styles.wtwProviderText}>
+                        <View style={styles.wtwCardText}>
                             <Text
                                 style={[
                                     typography.bodyEmphasis,
@@ -1821,7 +1855,7 @@ function WhereToWatch({
                                 ]}
                                 numberOfLines={1}
                             >
-                                {entry.provider.provider_name}
+                                {entry.name}
                             </Text>
                             <Text
                                 style={[
@@ -2003,12 +2037,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         marginTop: spacing.base,
     },
-    sectionLabel: {
-        // Consistent micro-caps treatment used by other section labels
-        // (Recommend modal mirrors this). Letter-spacing makes the
-        // all-caps read as a label rather than a shouty header.
-        letterSpacing: 0.5,
-    },
     wtw: {
         paddingHorizontal: spacing.base,
         marginTop: spacing.lg,
@@ -2027,17 +2055,25 @@ const styles = StyleSheet.create({
         borderRadius: radius.full,
         letterSpacing: 0.5,
     },
-    wtwProviderList: {
-        gap: spacing.md,
-    },
-    wtwProviderRow: {
-        // One row per de-duped provider: logo chip + name/method tags.
+    wtwGrid: {
+        // Two-up grid of provider cards. flexWrap + 48% card width fits a
+        // pair per row at ~380px with the gap between; an odd last card
+        // sits half-width, left-aligned.
         flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.md,
+        flexWrap: 'wrap',
+        gap: spacing.sm,
     },
-    wtwProviderText: {
-        flex: 1,
+    wtwCard: {
+        width: '48%',
+        // Distinct card: surface fill (warm white on the plum page) +
+        // rounded corners + a soft lift. backgroundColor is applied inline
+        // (palette token).
+        borderRadius: radius.md,
+        padding: spacing.md,
+        gap: spacing.sm,
+        ...elevation.sm,
+    },
+    wtwCardText: {
         gap: 2,
     },
     wtwLogoChip: {
@@ -2074,9 +2110,6 @@ const styles = StyleSheet.create({
         marginTop: spacing.lg,
         gap: spacing.sm,
     },
-    friendActivityHeading: {
-        letterSpacing: 1.2,
-    },
     friendActivityRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -2101,7 +2134,6 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     reviewsHeading: {
-        letterSpacing: 1.2,
         marginBottom: spacing.xs,
     },
     writeReviewLink: {
