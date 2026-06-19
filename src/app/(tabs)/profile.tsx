@@ -1,4 +1,3 @@
-import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ChevronRight, Pencil } from 'lucide-react-native';
@@ -6,8 +5,6 @@ import { Fragment, useCallback, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    Linking,
-    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -95,45 +92,6 @@ export default function ProfileScreen() {
         ]);
     }
 
-    // Build a mailto: with blank space at the top of the body for the
-    // tester to write freely; device + app version sit below a `---`
-    // separator as a footer. The previous structured-prompt template
-    // (I was doing / What happened / What I expected) felt prescriptive
-    // — a blank canvas + footer reads more like "tell me anything."
-    // Falls back to a plain alert if no mail client is configured.
-    async function handleSendFeedback() {
-        const appVersion = Constants.expoConfig?.version ?? 'unknown';
-        const deviceLabel =
-            Platform.OS === 'ios'
-                ? `iOS ${Platform.Version}`
-                : `Android API ${Platform.Version}`;
-        const subject = 'Seen feedback';
-        // Four leading newlines drop the cursor onto a blank area; the
-        // separator + footer sit below the user's drafting space.
-        const body = `\n\n\n\n---\nDevice: ${deviceLabel}\nApp version: ${appVersion}`;
-        const url = `mailto:thisispaultaylor@icloud.com?subject=${encodeURIComponent(
-            subject,
-        )}&body=${encodeURIComponent(body)}`;
-
-        try {
-            const canOpen = await Linking.canOpenURL(url);
-            if (!canOpen) {
-                Alert.alert(
-                    'No mail app found',
-                    'Please email feedback to thisispaultaylor@icloud.com directly.',
-                );
-                return;
-            }
-            await Linking.openURL(url);
-        } catch (err) {
-            console.warn('open mailto failed:', err);
-            Alert.alert(
-                'No mail app found',
-                'Please email feedback to thisispaultaylor@icloud.com directly.',
-            );
-        }
-    }
-
     // Nav rows only. "Edit profile" moved to the avatar pencil badge;
     // "Sign out" is rendered separately below as a visually-distinct
     // exit action (not a neutral nav row).
@@ -146,7 +104,9 @@ export default function ProfileScreen() {
         {
             id: 'feedback',
             label: 'Send feedback',
-            onPress: handleSendFeedback,
+            // In-app feedback screen (submits to the submit-feedback Edge
+            // Function). Replaced the previous mailto: composer.
+            onPress: () => router.push('/profile/feedback'),
         },
         {
             id: 'account',
