@@ -50,7 +50,7 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 **Parked (revised priority — supersedes the list below)**
 
 1. **Home-screen friend-activity section — NOW UNBLOCKED** by the per-item privacy toggle (same gate the friends-watched card needed). Surface watched friends on home with the same `visibility='friends'` filter + the shared card/AvatarStack treatment.
-2. **Rec lifecycle / inbox states** — watched recs should NOT leave the inbox (the conversation happens after watching); rework to keep them visible showing their state. Plus the decline action (silent dismiss default) and hero-card quick status actions. (The un-watch reopen fix landed earlier; this is the inbox-presentation half.)
+2. **Rec lifecycle / inbox states** — **inbox-visibility half DONE** (`708ea9a`): watched recs now stay in the Received list (query `in('status', ['pending','watched'])`), in their chronological/dated position, with an accent "Watched · N★" marker; tapping still opens the rec view for the post-watch conversation; un-watch round-trips back to pending. **Still open:** the **decline action** (silent dismiss vs decline-with-optional-note — leaning silent dismiss default) and **hero-card quick status actions** (watchlist/watched/watching/decline shown conditionally on library state). (The un-watch→reopen DB fix landed earlier; the rec_watched-notification-retraction tech debt remains — see Minor.)
 3. **Account deletion** — Apple App Store requirement (5.1.1(v)); launch blocker.
 4. **Production EAS build** — splash/icon + notification colours, and the photo-permission string (broaden beyond "profile picture" to cover feedback screenshots). Also gates the cross-user reviews privacy device-verification.
 
