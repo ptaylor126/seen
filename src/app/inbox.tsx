@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { CheckCircle } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -17,9 +18,16 @@ import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { maybeEnablePushAfterAccept } from '@/lib/push';
+import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 type MediaType = 'movie' | 'tv';
 
@@ -40,6 +48,10 @@ interface IncomingRecItem {
     note: string | null;
     sender: ProfileSummary;
     titleName: string | null;
+    // The rec's own lifecycle state. 'pending' = active "wants you to
+    // watch this"; 'watched' = the recipient has watched it (the rec
+    // stays in the list for the post-watch conversation, visually marked).
+    recStatus: 'pending' | 'watched';
     // The recipient's existing relationship to this title, if any.
     // Drives the compact "Watched · 4★" / "Watchlist" / "Watching"
     // badge on the rec card so the user sees their library status
@@ -223,11 +235,18 @@ export default function InboxScreen() {
                 sentRecsResult,
                 _markReadResult,
             ] = await Promise.all([
+                // Received = pending + watched recs (NOT pending-only).
+                // The post-watch conversation lives on the rec, so a
+                // watched rec stays in the list, shown in its watched
+                // state. 'dismissed' (and the unused 'accepted') are
+                // excluded so decline/dismiss don't resurface here.
                 supabase
                     .from('recommendations')
-                    .select('id, from_user_id, tmdb_id, media_type, note, sent_at')
+                    .select(
+                        'id, from_user_id, tmdb_id, media_type, note, sent_at, status',
+                    )
                     .eq('to_user_id', userId)
-                    .eq('status', 'pending')
+                    .in('status', ['pending', 'watched'])
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
                 supabase
@@ -458,6 +477,7 @@ export default function InboxScreen() {
                     titleName:
                         titleByKey.get(`${r.media_type}:${r.tmdb_id}`)?.title ??
                         null,
+                    recStatus: r.status === 'watched' ? 'watched' : 'pending',
                     libraryStatus:
                         libraryStatusByKey.get(
                             `${r.media_type}:${r.tmdb_id}`,
@@ -689,29 +709,61 @@ export default function InboxScreen() {
                         </Text>{' '}
                         recommended <Text style={typography.bodyEmphasis}>{title}</Text>
                     </Text>
-                    {item.libraryStatus && (
+                    {item.recStatus === 'watched' ? (
+                        // Watched rec — a distinct accent marker ("Watched"
+                        // + the user's rating if any) so it reads at a
+                        // glance as done, not an active ask. Rating comes
+                        // from the recipient's items row (libraryStatus).
                         <View
                             style={[
-                                styles.libraryBadge,
-                                { backgroundColor: palette.surfaceAlt },
+                                styles.watchedMarker,
+                                { backgroundColor: palette.accentSubtle },
                             ]}
-                            accessibilityLabel={`Your status: ${formatLibraryBadge(
-                                item.libraryStatus.status,
-                                item.libraryStatus.rating,
-                            )}`}
+                            accessibilityLabel="You watched this"
                         >
+                            <CheckCircle
+                                color={palette.accent}
+                                size={12}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
                             <Text
                                 style={[
                                     typography.micro,
-                                    { color: palette.text },
+                                    { color: palette.accent },
                                 ]}
                             >
-                                {formatLibraryBadge(
-                                    item.libraryStatus.status,
-                                    item.libraryStatus.rating,
-                                )}
+                                {item.libraryStatus?.rating != null
+                                    ? `Watched · ${formatRatingStars(
+                                          item.libraryStatus.rating,
+                                      )}`
+                                    : 'Watched'}
                             </Text>
                         </View>
+                    ) : (
+                        item.libraryStatus && (
+                            <View
+                                style={[
+                                    styles.libraryBadge,
+                                    { backgroundColor: palette.surfaceAlt },
+                                ]}
+                                accessibilityLabel={`Your status: ${formatLibraryBadge(
+                                    item.libraryStatus.status,
+                                    item.libraryStatus.rating,
+                                )}`}
+                            >
+                                <Text
+                                    style={[
+                                        typography.micro,
+                                        { color: palette.text },
+                                    ]}
+                                >
+                                    {formatLibraryBadge(
+                                        item.libraryStatus.status,
+                                        item.libraryStatus.rating,
+                                    )}
+                                </Text>
+                            </View>
+                        )
                     )}
                     {notePreview && (
                         <Text
@@ -1128,6 +1180,18 @@ const styles = StyleSheet.create({
         // pill sizes to its content rather than stretching across
         // the row. rowText's gap: spacing.xs handles vertical
         // spacing from its sibling rows.
+        alignSelf: 'flex-start',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+    },
+    watchedMarker: {
+        // Accent-tinted "Watched" marker for watched recs — check icon +
+        // label, distinct from the neutral grey libraryBadge so a watched
+        // rec reads as done at a glance. Content-sized pill.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
         alignSelf: 'flex-start',
         paddingHorizontal: spacing.sm,
         paddingVertical: 2,
