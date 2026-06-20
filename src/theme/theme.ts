@@ -33,6 +33,15 @@ export const palette = {
         // the image melts straight into the page with no seam.
         bgTransparent: 'rgba(239, 231, 236, 0)',
         surface: '#FFFFFF',
+        // Elevated card fill for cards sitting ON the plum page bg (the
+        // title page's friends-watched + where-to-watch provider cards).
+        // A CLEARLY plum-tinted light panel — distinctly more plum than
+        // the page bg (#EFE7EC) so the card reads as an obvious soft plum
+        // surface, not a near-white whisper. Earlier passes (#F8F0F5,
+        // #EFDCEC) lightened it too far and it read as white; this is an
+        // explicit, present soft plum — close to accentWash (#E4CADB) but a
+        // touch lighter, still legible under provider logos + avatars.
+        surfaceElevated: '#E4D3DF',
         surfaceAlt: '#E4DAE1',
         text: '#1A1614',
         textMuted: '#6B6661',
@@ -99,6 +108,9 @@ export const palette = {
         // header image→page fade. (Dark mode not yet validated.)
         bgTransparent: 'rgba(22, 18, 15, 0)',
         surface: '#211B17',
+        // Parallel to light.surfaceElevated — a clearly plum-leaning card
+        // fill lifted above the dark bg. (Dark mode not yet validated.)
+        surfaceElevated: '#33243A',
         surfaceAlt: '#2A2420',
         text: '#F5F1EB',
         textMuted: '#A39E97',

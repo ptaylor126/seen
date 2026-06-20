@@ -2,6 +2,9 @@ import * as Haptics from 'expo-haptics';
 import { Star, StarHalf } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
+    Animated,
+    Dimensions,
+    Easing,
     Modal,
     PanResponder,
     Pressable,
@@ -39,6 +42,13 @@ const HALF_COUNT = STAR_COUNT * 2; // = 10
 // PanResponder claims the gesture from the per-half Pressables.
 // Below: a tap, the Pressable handles it. Above: a drag.
 const DRAG_THRESHOLD_PX = 5;
+
+// Bottom-sheet open/close motion: backdrop fades while the panel slides
+// (see the animation effect below). Standard pattern, replacing Modal's
+// animationType="slide" (which slid backdrop + panel as one unit).
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const OPEN_MS = 240;
+const CLOSE_MS = 180;
 
 type StarVariant = 'empty' | 'half' | 'full';
 
@@ -79,6 +89,15 @@ export function RatingSheet({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    // Keep the Modal mounted while the close animation plays.
+    const [mounted, setMounted] = useState(visible);
+    // 0 = closed (backdrop transparent, panel off-screen), 1 = open.
+    const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
+    // Panel height drives the slide distance; tall fallback until first
+    // onLayout so the panel starts fully off-screen.
+    const [sheetHeight, setSheetHeight] = useState(
+        Dimensions.get('window').height,
+    );
     // Tentative selection — committed only when Done is pressed.
     // Tapping the same half-star value a second time deselects it.
     const [selected, setSelected] = useState<number | null>(initialRating);
@@ -115,6 +134,34 @@ export function RatingSheet({
             lastHapticValueRef.current = null;
         }
     }, [visible, initialRating]);
+
+    // Open/close motion: backdrop fades + panel slides off ONE value.
+    // Stay mounted through the close animation, then unmount.
+    useEffect(() => {
+        if (visible) {
+            setMounted(true);
+            Animated.timing(progress, {
+                toValue: 1,
+                duration: OPEN_MS,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start();
+        } else {
+            Animated.timing(progress, {
+                toValue: 0,
+                duration: CLOSE_MS,
+                easing: Easing.in(Easing.cubic),
+                useNativeDriver: true,
+            }).start(({ finished }) => {
+                if (finished) setMounted(false);
+            });
+        }
+    }, [visible, progress]);
+
+    const translateY = progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [sheetHeight, 0],
+    });
 
     // Captures both the row's width and its absolute page-X position
     // (via measure()). pageX is required to translate the gesture's
@@ -195,24 +242,34 @@ export function RatingSheet({
 
     return (
         <Modal
-            visible={visible}
+            visible={mounted}
             transparent
-            animationType="slide"
+            animationType="none"
             onRequestClose={handleSkip}
         >
-            <Pressable
-                style={[styles.backdrop, { backgroundColor: palette.overlay }]}
-                onPress={handleSkip}
-            >
-                <Pressable
+            <View style={styles.backdrop}>
+                {/* Backdrop: fades only, never moves. */}
+                <AnimatedPressable
+                    style={[
+                        StyleSheet.absoluteFill,
+                        { backgroundColor: palette.overlay, opacity: progress },
+                    ]}
+                    onPress={handleSkip}
+                />
+                {/* Panel: slides up; on top of the backdrop so taps on it
+                    don't fall through to dismiss. */}
+                <Animated.View
+                    onLayout={(e) =>
+                        setSheetHeight(e.nativeEvent.layout.height)
+                    }
                     style={[
                         styles.sheet,
                         {
                             backgroundColor: palette.surface,
                             paddingBottom: insets.bottom + spacing.lg,
+                            transform: [{ translateY }],
                         },
                     ]}
-                    onPress={() => {}}
                 >
                     <Text
                         style={[
@@ -356,8 +413,8 @@ export function RatingSheet({
                             Skip
                         </Text>
                     </Pressable>
-                </Pressable>
-            </Pressable>
+                </Animated.View>
+            </View>
         </Modal>
     );
 }

@@ -25,8 +25,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
-import { AvatarStack, type AvatarStackItem } from '@/components/avatar-stack';
+import { AvatarStack } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
+import {
+    WatchersSheet,
+    type WatcherSheetItem,
+} from '@/components/watchers-sheet';
 import {
     formatYourMarker,
     setItemVisibility,
@@ -56,7 +60,6 @@ import {
     type TMDBWatchProvidersRegion,
 } from '@/lib/tmdb';
 import {
-    elevation,
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
@@ -146,18 +149,23 @@ function reviewTimestamp(iso: string): string {
     return date.toLocaleDateString();
 }
 
-// Compact social signal for this title across the user's friends.
-// Watchers = friends with status='watching'; ratings summary aggregates
-// across friends with a non-null rating. Watchlist entries are
-// intentionally excluded — the section is about engagement, not intent,
-// and including watchlist would make it noisy without adding signal.
-// Privacy is enforced by RLS (`visibility = 'friends'` for non-self
-// rows), AND we filter visibility explicitly client-side as defence
-// in depth.
+// "Friends watched this" signal for the title screen. Built ONLY from
+// friends whose item on this title is status='watched' AND
+// visibility='friends' — privately-watched friends are excluded from
+// both the avatars and the average. Privacy is enforced by RLS
+// (`visibility = 'friends'` for non-self rows) AND filtered explicitly
+// in the query as defence in depth. Watchlist/watching are deliberately
+// not surfaced here — this card is specifically "who has watched it".
 interface FriendActivity {
-    watchers: AvatarStackItem[];
-    // Mean of stored 1-10 values across rating-bearing friends. Convert
-    // to stars at render time via formatRatingStars-style division.
+    // ALL friends with status='watched' (visibility='friends'), most-
+    // recent-first — the full privacy-filtered set. Drives the avatar
+    // stack + caption AND the watchers sheet (which lists everyone, each
+    // with their rating), so card and sheet share one source and can't
+    // drift. Carries per-user rating for the sheet rows.
+    watchedFriends: WatcherSheetItem[];
+    // Mean of stored 1-10 ratings among those SAME watched friends who
+    // left a rating (a watched-but-unrated friend still appears in the
+    // avatars but doesn't move the average). null when none rated.
     ratingsAverage: number | null;
     ratingsCount: number;
 }
@@ -241,6 +249,8 @@ export default function TitleDetailScreen() {
     const [friendActivity, setFriendActivity] = useState<FriendActivity | null>(
         null,
     );
+    // Watchers bottom sheet (full list behind the friends-watched card).
+    const [showWatchersSheet, setShowWatchersSheet] = useState(false);
     // Watch providers for the device's region. `null` covers loading +
     // "no data in this region" + "fetch failed" — all three should render
     // identically (hide the section), so collapsing them into one state
@@ -404,71 +414,80 @@ export default function TitleDetailScreen() {
                     }
                 }
 
-                // Friend activity: pull every friends-visible items row
-                // for this title that isn't mine. RLS scopes the result
-                // to friends only; the explicit visibility filter is
-                // defence-in-depth. Failure is silent — the social block
-                // simply hides.
+                // Friends-watched: pull friends' WATCHED items for this
+                // title (status='watched'), excluding mine and anything
+                // private. RLS scopes to friends; the explicit
+                // visibility='friends' filter is defence-in-depth, so a
+                // privately-watched friend is excluded from both the
+                // avatars AND the average. Failure is silent — the card
+                // simply hides. `updated_at` desc → most-recent watcher
+                // leads the stack/caption.
                 if (userId) {
                     const { data: friendRows, error: friendErr } = await supabase
                         .from('items')
-                        .select('user_id, status, rating')
+                        .select('user_id, rating, updated_at')
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
+                        .eq('status', 'watched')
                         .eq('visibility', 'friends')
-                        .neq('user_id', userId);
+                        .neq('user_id', userId)
+                        .order('updated_at', { ascending: false });
                     if (friendErr) {
                         console.warn('friend activity fetch failed:', friendErr);
                     } else if (active && friendRows) {
-                        const watcherIds: string[] = [];
-                        const watcherSeen = new Set<string>();
+                        // Dedupe by user (one items row per user/title by
+                        // constraint, but guard anyway), preserving the
+                        // most-recent-first order. Keep each user's rating
+                        // (for the sheet rows) AND collect ratings over the
+                        // SAME watched set for the average.
+                        const watchedIds: string[] = [];
+                        const seen = new Set<string>();
+                        const ratingByUser = new Map<string, number | null>();
                         const ratings: number[] = [];
                         for (const row of friendRows) {
-                            if (
-                                row.status === 'watching' &&
-                                row.user_id &&
-                                !watcherSeen.has(row.user_id)
-                            ) {
-                                watcherSeen.add(row.user_id);
-                                watcherIds.push(row.user_id);
-                            }
-                            if (
-                                row.status === 'watched' &&
+                            if (!row.user_id || seen.has(row.user_id)) continue;
+                            seen.add(row.user_id);
+                            watchedIds.push(row.user_id);
+                            const rating =
                                 typeof row.rating === 'number'
-                            ) {
-                                ratings.push(row.rating);
-                            }
+                                    ? row.rating
+                                    : null;
+                            ratingByUser.set(row.user_id, rating);
+                            if (rating !== null) ratings.push(rating);
                         }
 
-                        // Resolve watcher profiles in one trip so the
-                        // avatar stack carries display name + image.
-                        let watcherProfiles: AvatarStackItem[] = [];
-                        if (watcherIds.length > 0) {
+                        // Resolve profiles in one trip; merge in each
+                        // user's rating to build the full watcher list.
+                        let watchedFriends: WatcherSheetItem[] = [];
+                        if (watchedIds.length > 0) {
                             const { data: profileRows } = await supabase
                                 .from('profiles')
-                                .select('id, display_name, avatar_url')
-                                .in('id', watcherIds);
+                                .select('id, handle, display_name, avatar_url')
+                                .in('id', watchedIds);
                             const byId = new Map(
                                 (profileRows ?? []).map((p) => [p.id, p]),
                             );
-                            // Preserve watcherIds order — DB doesn't
-                            // promise an order on .in(), so explicit
-                            // mapping keeps the stack deterministic.
-                            watcherProfiles = watcherIds
+                            // Preserve watchedIds order — DB doesn't promise
+                            // an order on .in(), so explicit mapping keeps
+                            // the stack deterministic.
+                            watchedFriends = watchedIds
                                 .map((id) => byId.get(id))
                                 .filter(
                                     (
                                         p,
                                     ): p is {
                                         id: string;
+                                        handle: string;
                                         display_name: string;
                                         avatar_url: string | null;
                                     } => !!p,
                                 )
                                 .map((p) => ({
                                     userId: p.id,
+                                    handle: p.handle,
                                     displayName: p.display_name,
                                     avatarUrl: p.avatar_url,
+                                    rating: ratingByUser.get(p.id) ?? null,
                                 }));
                         }
 
@@ -480,7 +499,7 @@ export default function TitleDetailScreen() {
 
                         if (active) {
                             setFriendActivity({
-                                watchers: watcherProfiles,
+                                watchedFriends,
                                 ratingsAverage,
                                 ratingsCount: ratings.length,
                             });
@@ -1015,9 +1034,13 @@ export default function TitleDetailScreen() {
                             {title}
                         </Text>
                         {metaLine ? (
+                            // Secondary reference info — smaller (micro) +
+                            // muted so it sits below both the title above
+                            // and the "You rated this" status line below,
+                            // rather than competing with them.
                             <Text
                                 style={[
-                                    typography.caption,
+                                    typography.micro,
                                     { color: palette.textMuted },
                                 ]}
                             >
@@ -1145,6 +1168,38 @@ export default function TitleDetailScreen() {
                                 </Pressable>
                             </View>
                         )}
+                        {/* Genre chips — last child of the title column so
+                            they sit DIRECTLY under the "You rated this"
+                            line (column gap = spacing.xs), grouped with the
+                            title/year/rating as one metadata unit rather
+                            than a separated block below the poster row.
+                            Non-interactive labels, distinct from the status
+                            chips below. */}
+                        {detail.data.genres.length > 0 && (
+                            <View style={styles.genres}>
+                                {detail.data.genres.map((g) => (
+                                    <View
+                                        key={g.id}
+                                        style={[
+                                            styles.genrePill,
+                                            {
+                                                backgroundColor:
+                                                    palette.surfaceAlt,
+                                            },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                typography.micro,
+                                                { color: palette.text },
+                                            ]}
+                                        >
+                                            {g.name}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
                     </View>
                 </View>
 
@@ -1179,34 +1234,26 @@ export default function TitleDetailScreen() {
                     />
                 )}
 
-                {detail.data.genres.length > 0 && (
-                    <View style={styles.genres}>
-                        {detail.data.genres.map((g) => (
-                            <View
-                                key={g.id}
-                                style={[
-                                    styles.genrePill,
-                                    { backgroundColor: palette.surfaceAlt },
-                                ]}
-                            >
-                                <Text
-                                    style={[typography.micro, { color: palette.text }]}
-                                >
-                                    {g.name}
-                                </Text>
-                            </View>
-                        ))}
-                    </View>
-                )}
+                {/* Synopsis — "what is this", placed ABOVE the cast
+                    ("who's in it"). */}
+                {detail.data.overview ? (
+                    <Text
+                        style={[styles.overview, typography.body, { color: palette.text }]}
+                    >
+                        {detail.data.overview}
+                    </Text>
+                ) : null}
 
-                {/* Status actions — the SINGLE status control on this
-                    screen (the legacy full-width bottom buttons were
+                {/* Status actions — the SINGLE interactive status control on
+                    this screen (the legacy full-width bottom buttons were
                     removed). Borderless, text-only chips: unselected = soft
                     accentWash fill + plum text, selected = solid accent +
                     white. Wired to setStatus — tap to set, re-tap to clear,
-                    watched opens the rating sheet. Privacy + the "your
-                    relationship" line live under the title metadata, not
-                    here. */}
+                    watched opens the rating sheet. Sits AFTER the synopsis —
+                    "track this" is an action that reads best once you've
+                    seen what the title is (esp. when discovering via a rec).
+                    Its own marginTop/Bottom set it apart as the interactive
+                    row between the synopsis and the cast. */}
                 <View style={styles.statusChipRow}>
                     {STATUSES.map((status) => {
                         const isActive = currentStatus === status;
@@ -1270,17 +1317,10 @@ export default function TitleDetailScreen() {
                         />
                     )}
 
-                {detail.data.overview ? (
-                    <Text
-                        style={[styles.overview, typography.body, { color: palette.text }]}
-                    >
-                        {detail.data.overview}
-                    </Text>
-                ) : null}
-
                 <FriendActivitySection
                     activity={friendActivity}
                     palette={palette}
+                    onPress={() => setShowWatchersSheet(true)}
                 />
 
                 <ReviewsSection
@@ -1351,6 +1391,21 @@ export default function TitleDetailScreen() {
                 busy={ratingBusy}
                 initialRating={currentRating}
                 onSubmit={handleRate}
+            />
+
+            {/* Full watchers list behind the friends-watched card. Fed the
+                SAME privacy-filtered set the card is built from, so the
+                sheet can't surface anyone the card excludes. */}
+            <WatchersSheet
+                visible={showWatchersSheet}
+                watchers={friendActivity?.watchedFriends ?? []}
+                onClose={() => setShowWatchersSheet(false)}
+                onSelectWatcher={(handle) => {
+                    // Close the sheet first, then open the friend's profile
+                    // (avoids pushing a route underneath the open modal).
+                    setShowWatchersSheet(false);
+                    router.push(`/friends/${handle}`);
+                }}
             />
         </View>
     );
@@ -1729,89 +1784,95 @@ function ReviewsSection({
     );
 }
 
-// Social signal block — friends watching + a one-line ratings summary.
-// Hidden entirely when no friend has any non-private engagement (no
-// "Friends" header sitting over an empty section). Watchers and
-// ratings each get their own row; both can render, either can render
-// alone, neither = block is null.
+// "Friends watched this" card — overlapping avatars of friends who've
+// watched the title (privacy-filtered to visibility='friends' upstream),
+// a "[Name] and N others watched this" caption, and a small average of
+// those same friends' ratings. Renders NOTHING when no non-private
+// friend has watched it (no empty card). Tapping opens the watchers sheet
+// (onPress) — the card only shows the first few avatars, so the sheet
+// lists everyone.
 function FriendActivitySection({
     activity,
     palette,
+    onPress,
 }: {
     activity: FriendActivity | null;
     palette: Palette;
+    onPress: () => void;
 }) {
     if (!activity) return null;
-    const { watchers, ratingsAverage, ratingsCount } = activity;
-    if (watchers.length === 0 && ratingsCount === 0) return null;
+    const { watchedFriends, ratingsAverage, ratingsCount } = activity;
+    if (watchedFriends.length === 0) return null;
 
-    // Watcher caption: "Jane watching", "Jane & Bob watching",
-    // "Jane, Bob & N others watching". Mirrors the rec-sender line
-    // pattern used at the top of this screen for consistency.
-    let watcherCaption = '';
-    if (watchers.length > 0) {
-        const names = watchers.map((w) => firstName(w.displayName));
-        const verb = 'watching';
-        if (names.length === 1) {
-            watcherCaption = `${names[0]} ${verb}`;
-        } else if (names.length === 2) {
-            watcherCaption = `${names[0]} & ${names[1]} ${verb}`;
-        } else {
-            const others = names.length - 2;
-            watcherCaption = `${names[0]}, ${names[1]} & ${others} other${
-                others === 1 ? '' : 's'
-            } ${verb}`;
-        }
+    // Caption: "Jane watched this", "Jane and Bob watched this",
+    // "Jane and N others watched this". Sentence case, "and" throughout.
+    const names = watchedFriends.map((w) => firstName(w.displayName));
+    let caption: string;
+    if (names.length === 1) {
+        caption = `${names[0]} watched this`;
+    } else if (names.length === 2) {
+        caption = `${names[0]} and ${names[1]} watched this`;
+    } else {
+        const others = names.length - 1;
+        caption = `${names[0]} and ${others} others watched this`;
     }
 
-    // Ratings summary: convert the mean stored 1-10 value to stars (÷2)
-    // with one decimal. Suppress the trailing .0 (e.g. 4★ not 4.0★) so
-    // round-number averages read cleanly.
-    let ratingsCaption = '';
+    // Average over the SAME watched set: mean stored 1-10 → stars (÷2),
+    // trailing .0 suppressed (4★ not 4.0★), space before the star. Only
+    // when ≥1 of them rated.
+    let ratingsLabel = '';
     if (ratingsAverage !== null && ratingsCount > 0) {
         const stars = ratingsAverage / 2;
-        const starsLabel = Number.isInteger(stars)
-            ? `${stars}★`
-            : `${stars.toFixed(1)}★`;
-        ratingsCaption = `Friends · ${starsLabel} avg · ${ratingsCount} rated`;
+        ratingsLabel = `${
+            Number.isInteger(stars) ? stars : stars.toFixed(1)
+        } ★ avg`;
     }
 
     return (
-        <View style={styles.friendActivity}>
-            <Text
-                style={[typography.bodyEmphasis, { color: palette.text }]}
-            >
-                Friends
-            </Text>
-            {watchers.length > 0 && (
-                <View style={styles.friendActivityRow}>
-                    <AvatarStack
-                        items={watchers}
-                        limit={5}
-                        size={28}
-                        overlap={10}
-                        borderColor={palette.bg}
-                    />
+        <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel={`${caption}. Tap to see everyone.`}
+            style={({ pressed }) => [
+                styles.friendsWatchedCard,
+                { backgroundColor: palette.surfaceElevated },
+                pressed && { opacity: 0.6 },
+            ]}
+        >
+            {/* Avatars on the LEFT, vertically centred against the text
+                block. Big enough (42) to feel present. leadFirst so the
+                lead avatar is the named friend (watchedFriends[0]);
+                borderColor = card fill so chips read cleanly cut-out. */}
+            <AvatarStack
+                items={watchedFriends}
+                limit={5}
+                size={42}
+                overlap={16}
+                borderColor={palette.surfaceElevated}
+                leadFirst
+            />
+            {/* Text block to the RIGHT: caption (up to 2 lines) with the
+                avg directly beneath it. flex:1 so it takes the remaining
+                width beside the avatars. */}
+            <View style={styles.friendsWatchedText}>
+                <Text
+                    style={[typography.bodyEmphasis, { color: palette.text }]}
+                    numberOfLines={2}
+                >
+                    {caption}
+                </Text>
+                {ratingsLabel !== '' && (
                     <Text
                         style={[
                             typography.caption,
-                            styles.friendActivityCaption,
-                            { color: palette.text },
+                            { color: palette.textMuted },
                         ]}
-                        numberOfLines={2}
                     >
-                        {watcherCaption}
+                        {ratingsLabel}
                     </Text>
-                </View>
-            )}
-            {ratingsCaption !== '' && (
-                <Text
-                    style={[typography.caption, { color: palette.textMuted }]}
-                >
-                    {ratingsCaption}
-                </Text>
-            )}
-        </View>
+                )}
+            </View>
+        </Pressable>
     );
 }
 
@@ -1987,7 +2048,7 @@ function WhereToWatch({
                         key={entry.key}
                         style={[
                             styles.wtwCard,
-                            { backgroundColor: palette.surface },
+                            { backgroundColor: palette.surfaceElevated },
                         ]}
                         accessible
                         accessibilityLabel={`${entry.name}: ${entry.methods.join(', ')}`}
@@ -2129,8 +2190,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
+        // Sits between the synopsis and the cast. Equal breathing room on
+        // both sides so it reads as its own interactive row: marginTop lg
+        // above, and the following section's own marginTop (lg) carries the
+        // gap below, so marginBottom stays 0 to avoid doubling it.
         marginTop: spacing.lg,
-        marginBottom: spacing.md,
+        marginBottom: 0,
     },
     // Substantial pill: more internal padding (md/sm) than the Library
     // filter chips so it feels tappable and present — taller, NOT wider.
@@ -2174,8 +2239,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: spacing.xs,
-        paddingHorizontal: spacing.base,
-        marginTop: spacing.base,
+        // Lives inside the title column now (no own paddingHorizontal —
+        // the column is already inset, and the column's `gap: spacing.xs`
+        // gives the tight 4px break under the rating line). A small
+        // marginTop adds a hair more separation from the rating line
+        // without re-opening the old gap.
+        marginTop: spacing.xs,
     },
     genrePill: {
         paddingHorizontal: spacing.sm,
@@ -2249,14 +2318,16 @@ const styles = StyleSheet.create({
         // Uniform fixed-width card (logo over name over method tags). The
         // fixed width means a long name wraps to two lines (numberOfLines
         // =2) without changing card width. Cross-axis stretch in the row
-        // gives all cards a matching height. Surface fill (warm white on
-        // the plum page) + rounded corners + a soft lift; backgroundColor
-        // applied inline (token).
+        // gives all cards a matching height. The plum surfaceElevated fill
+        // (applied inline) is what separates the card from the page — NO
+        // shadow: a drop shadow here gets clipped by the horizontal
+        // ScrollView viewport (no vertical slack) and renders as a hard
+        // line on the bottom/right edges. Matches the friends-watched
+        // card, which is also fill-only.
         width: 132,
         gap: spacing.sm,
         borderRadius: radius.md,
         padding: spacing.md,
-        ...elevation.sm,
     },
     wtwCardText: {
         // Fill the space below the logo (cards are uniform height via
@@ -2305,18 +2376,24 @@ const styles = StyleSheet.create({
         // caption groups visually with the provider cards, not the CTA.
         marginTop: spacing.sm,
     },
-    friendActivity: {
-        paddingHorizontal: spacing.base,
-        marginTop: spacing.lg,
-        gap: spacing.sm,
-    },
-    friendActivityRow: {
+    // "Friends watched this" card — a distinct plum panel, set in from the
+    // page edges. Row: avatars on the left, text block on the right,
+    // vertically centred against each other. Even `padding` inside the
+    // card; `gap` separates the avatars from the text.
+    friendsWatchedCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.sm,
+        gap: spacing.md,
+        marginHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        padding: spacing.md,
+        borderRadius: radius.md,
     },
-    friendActivityCaption: {
+    friendsWatchedText: {
+        // Takes the width beside the avatars; caption (≤2 lines) stacked
+        // over the avg with a small consistent gap.
         flex: 1,
+        gap: spacing.xs,
     },
     // "Your relationship" line, nested in the title column directly under
     // the meta line: status/rating (left) + privacy lock (right) as two

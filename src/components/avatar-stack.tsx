@@ -22,6 +22,12 @@ interface AvatarStackProps {
      *  pass the surface colour behind the stack so the chips read as
      *  cleanly cut-out, not bordered. */
     borderColor: string;
+    /** When true, the FIRST item leads the stack on the LEFT and on top
+     *  (subsequent items tuck behind to the right, +N chip trails right).
+     *  Use when a caption names items[0] ("Jane and N others…") so the
+     *  lead avatar matches the name. Default keeps the original
+     *  front-of-stack-rightmost ordering. */
+    leadFirst?: boolean;
 }
 
 // Stacked-avatar social proof. Render order is left-to-right
@@ -42,6 +48,7 @@ export function AvatarStack({
     size,
     overlap,
     borderColor,
+    leadFirst = false,
 }: AvatarStackProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -56,6 +63,66 @@ export function AvatarStack({
     const chipBorderWidth = 2;
     const chipSize = size + chipBorderWidth * 2;
     const chipBorderRadius = chipSize / 2;
+
+    // leadFirst: items[0] leftmost AND on top (descending zIndex), with
+    // any +N chip trailing on the right. Keeps the named lead avatar
+    // matching a "[name0] and N others" caption.
+    if (leadFirst) {
+        return (
+            <View style={styles.row}>
+                {shown.map((item, idx) => (
+                    <View
+                        key={item.userId}
+                        style={[
+                            styles.chip,
+                            {
+                                width: chipSize,
+                                height: chipSize,
+                                borderRadius: chipBorderRadius,
+                                borderWidth: chipBorderWidth,
+                                borderColor,
+                                zIndex: shown.length - idx,
+                            },
+                            idx !== 0 && { marginLeft: -overlap },
+                        ]}
+                    >
+                        <Avatar
+                            avatarUrl={item.avatarUrl}
+                            displayName={item.displayName}
+                            seedId={item.userId}
+                            size={size}
+                        />
+                    </View>
+                ))}
+                {extra > 0 ? (
+                    <View
+                        style={[
+                            styles.chip,
+                            {
+                                width: chipSize,
+                                height: chipSize,
+                                borderRadius: chipBorderRadius,
+                                borderWidth: chipBorderWidth,
+                                borderColor,
+                                backgroundColor: palette.accent,
+                                marginLeft: -overlap,
+                                zIndex: 0,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.micro,
+                                { color: palette.textInverse },
+                            ]}
+                        >
+                            +{extra}
+                        </Text>
+                    </View>
+                ) : null}
+            </View>
+        );
+    }
 
     return (
         <View style={styles.row}>
