@@ -5,9 +5,39 @@
 // user sees one wording on the inbox row and a different wording
 // when they tap through.
 
-import { formatRatingStars } from './rating';
+import { formatRatingStars, type MediaType } from './rating';
+import supabase from './supabase';
 
 export type ItemStatus = 'watchlist' | 'watching' | 'watched';
+
+// Per-item visibility — who can see the user's activity (status, rating)
+// on a title. Mirrors items.visibility ('friends' default | 'private')
+// from migration 20260607140000; 'private' hides the activity from
+// friends but does NOT hide/remove the title from the user's own
+// library. A future 'public' tier would extend the DB CHECK + this union.
+export type ItemVisibility = 'friends' | 'private';
+
+// Single write path for items.visibility, reused by every reachable
+// privacy control (title page, library row, and — in shape — the review
+// flow's "who can see this" toggle). A bare UPDATE keyed on the identity
+// triple: items RLS already restricts this to the author's own row, so no
+// guard beyond the explicit eq is needed. Caller supplies userId from the
+// active session.
+export async function setItemVisibility(args: {
+    userId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    visibility: ItemVisibility;
+}): Promise<void> {
+    const { userId, tmdbId, mediaType, visibility } = args;
+    const { error } = await supabase
+        .from('items')
+        .update({ visibility })
+        .eq('user_id', userId)
+        .eq('tmdb_id', tmdbId)
+        .eq('media_type', mediaType);
+    if (error) throw error;
+}
 
 // Full-sentence form used on the title detail screen as the YOUR
 // marker above the status pills — reads as a personal statement.

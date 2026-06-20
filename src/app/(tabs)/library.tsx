@@ -1,8 +1,10 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
+    Lock,
     Plus,
     Search as SearchIcon,
+    Users,
     X,
 } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
@@ -34,6 +36,10 @@ import {
     useLibraryView,
 } from '@/lib/library-view';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
+import {
+    setItemVisibility,
+    type ItemVisibility,
+} from '@/lib/item-status';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
@@ -57,6 +63,9 @@ interface LibraryRow {
     tmdbId: number;
     mediaType: MediaType;
     rating: number | null;
+    // items.visibility — 'private' hides this item's activity from
+    // friends; drives the per-row privacy toggle.
+    visibility: ItemVisibility;
     watchedAt: string | null;
     updatedAt: string;
     createdAt: string;
@@ -156,6 +165,11 @@ export default function LibraryScreen() {
     const [rows, setRows] = useState<LibraryRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Per-row privacy writes in flight, keyed by row id, so a row's
+    // toggle disables itself without blocking the rest of the list.
+    const [visibilityBusyIds, setVisibilityBusyIds] = useState<Set<string>>(
+        () => new Set(),
+    );
     const { mode, gridCols, setMode, setGridCols } = useLibraryView();
     const screenWidth = Dimensions.get('window').width;
     const insets = useSafeAreaInsets();
@@ -208,7 +222,7 @@ export default function LibraryScreen() {
                     const itemsQuery = supabase
                         .from('items')
                         .select(
-                            'id, tmdb_id, media_type, rating, watched_at, updated_at, created_at',
+                            'id, tmdb_id, media_type, rating, visibility, watched_at, updated_at, created_at',
                         )
                         .eq('user_id', userId)
                         .eq('status', activeTab)
@@ -305,6 +319,10 @@ export default function LibraryScreen() {
                             tmdbId: row.tmdb_id,
                             mediaType: row.media_type as MediaType,
                             rating: row.rating,
+                            visibility:
+                                row.visibility === 'private'
+                                    ? 'private'
+                                    : 'friends',
                             watchedAt: row.watched_at,
                             updatedAt: row.updated_at,
                             createdAt: row.created_at,
@@ -495,6 +513,51 @@ export default function LibraryScreen() {
         );
     }
 
+    // Flip one row's privacy. Optimistic: update the row in local state,
+    // write via the shared setItemVisibility path, revert that row on
+    // failure. Per-row busy flag so toggling one row doesn't lock others.
+    async function toggleRowVisibility(row: LibraryRow) {
+        if (visibilityBusyIds.has(row.id)) return;
+        const next: ItemVisibility =
+            row.visibility === 'private' ? 'friends' : 'private';
+
+        setRows((prev) =>
+            prev.map((r) =>
+                r.id === row.id ? { ...r, visibility: next } : r,
+            ),
+        );
+        setVisibilityBusyIds((prev) => new Set(prev).add(row.id));
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+            await setItemVisibility({
+                userId,
+                tmdbId: row.tmdbId,
+                mediaType: row.mediaType,
+                visibility: next,
+            });
+        } catch (err) {
+            // Revert the optimistic flip for just this row.
+            setRows((prev) =>
+                prev.map((r) =>
+                    r.id === row.id
+                        ? { ...r, visibility: row.visibility }
+                        : r,
+                ),
+            );
+            console.error('visibility toggle failed:', err);
+        } finally {
+            setVisibilityBusyIds((prev) => {
+                const nextSet = new Set(prev);
+                nextSet.delete(row.id);
+                return nextSet;
+            });
+        }
+    }
+
     function renderRow({ item }: { item: LibraryRow }) {
         const mediaLabel = item.mediaType === 'movie' ? 'Movie' : 'TV Show';
         const metaLine = [item.year, mediaLabel].filter(Boolean).join(' · ');
@@ -572,6 +635,42 @@ export default function LibraryScreen() {
                         </Text>
                     ) : null}
                 </View>
+                {/* Per-row privacy toggle — its own Pressable so tapping
+                    it flips Friends/Private without triggering the row's
+                    navigation. Lock (accent) = private; Users (muted) =
+                    friends. Unobtrusive: icon-only at the row's right
+                    edge. 'private' hides this item's activity from
+                    friends; it does not remove the title. */}
+                <Pressable
+                    onPress={() => toggleRowVisibility(item)}
+                    disabled={visibilityBusyIds.has(item.id)}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: item.visibility === 'private' }}
+                    accessibilityLabel={
+                        item.visibility === 'private'
+                            ? 'Private — only you can see your activity. Tap to let friends see it.'
+                            : 'Friends can see your activity. Tap to make private.'
+                    }
+                    style={({ pressed }) => [
+                        styles.privacyToggle,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    {item.visibility === 'private' ? (
+                        <Lock
+                            color={palette.accent}
+                            size={18}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    ) : (
+                        <Users
+                            color={palette.textMuted}
+                            size={18}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    )}
+                </Pressable>
             </Pressable>
         );
     }
@@ -1041,6 +1140,13 @@ const styles = StyleSheet.create({
     rowText: {
         flex: 1,
         gap: spacing.xs,
+    },
+    privacyToggle: {
+        // Icon-only tap target at the row's right edge; padding gives it a
+        // comfortable hit area without a visible chrome.
+        padding: spacing.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     separator: {
         height: StyleSheet.hairlineWidth,

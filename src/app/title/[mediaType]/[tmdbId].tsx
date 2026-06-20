@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ExternalLink, Send, X } from 'lucide-react-native';
+import { ExternalLink, Lock, Send, Users, X } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -20,7 +20,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { AvatarStack, type AvatarStackItem } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
-import { formatYourMarker, type ItemStatus } from '@/lib/item-status';
+import {
+    formatYourMarker,
+    setItemVisibility,
+    type ItemStatus,
+    type ItemVisibility,
+} from '@/lib/item-status';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
 import {
@@ -197,6 +202,12 @@ export default function TitleDetailScreen() {
     // Existing items.rating, if any. Drives the RatingSheet's
     // initialRating so re-rates land on the user's previous pick.
     const [currentRating, setCurrentRating] = useState<number | null>(null);
+    // The item's privacy setting (items.visibility). Defaults to 'friends'
+    // (the column default); only meaningful once the title is in the
+    // user's library (currentStatus !== null), which gates the control.
+    const [currentVisibility, setCurrentVisibility] =
+        useState<ItemVisibility>('friends');
+    const [visibilityBusy, setVisibilityBusy] = useState(false);
     const [updating, setUpdating] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     // All reviews this user is allowed to see for this title (RLS does
@@ -288,7 +299,7 @@ export default function TitleDetailScreen() {
                 if (userId) {
                     const { data: item } = await supabase
                         .from('items')
-                        .select('status, rating')
+                        .select('status, rating, visibility')
                         .eq('user_id', userId)
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
@@ -299,6 +310,9 @@ export default function TitleDetailScreen() {
                     }
                     if (item && typeof item.rating === 'number') {
                         setCurrentRating(item.rating);
+                    }
+                    if (item && item.visibility === 'private') {
+                        setCurrentVisibility('private');
                     }
                 }
 
@@ -735,6 +749,8 @@ export default function TitleDetailScreen() {
 
             setCurrentStatus(null);
             setCurrentRating(null);
+            // Row is gone; next add re-creates it at the column default.
+            setCurrentVisibility('friends');
         } catch (err) {
             console.error('items delete failed:', err);
             surfaceUpdateError(err);
@@ -770,6 +786,38 @@ export default function TitleDetailScreen() {
             surfaceUpdateError(err);
         } finally {
             setRatingBusy(false);
+        }
+    }
+
+    // Flip the item's privacy. Optimistic: update local state first, write
+    // via the shared setItemVisibility path, revert on failure. Guarded so
+    // it's a no-op when the title isn't in the library (no row to update)
+    // or a write is already in flight.
+    async function handleSetVisibility(next: ItemVisibility) {
+        if (visibilityBusy || currentStatus === null || next === currentVisibility) {
+            return;
+        }
+        const previous = currentVisibility;
+        setCurrentVisibility(next);
+        setVisibilityBusy(true);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId || !mediaType) throw new Error('Not authenticated');
+            await setItemVisibility({
+                userId,
+                tmdbId,
+                mediaType,
+                visibility: next,
+            });
+        } catch (err) {
+            setCurrentVisibility(previous);
+            console.error('visibility update failed:', err);
+            surfaceUpdateError(err);
+        } finally {
+            setVisibilityBusy(false);
         }
     }
 
@@ -1108,6 +1156,80 @@ export default function TitleDetailScreen() {
                         );
                     })}
                 </View>
+
+                {/* Per-item privacy control — reachable here (not just the
+                    watched-only review flow). Only rendered once the title
+                    is in the user's library (currentStatus !== null), since
+                    visibility only exists on an items row; hidden otherwise.
+                    Same wording as the review flow ("Who can see this" /
+                    Friends / Private). 'private' hides this item's activity
+                    from friends; it does NOT remove the title. */}
+                {currentStatus !== null && (
+                    <View style={styles.visibilityBlock}>
+                        <Text
+                            style={[
+                                typography.caption,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            Who can see this
+                        </Text>
+                        <View style={styles.visibilityRow}>
+                            {(['friends', 'private'] as const).map((v) => {
+                                const isActive = currentVisibility === v;
+                                const Icon = v === 'private' ? Lock : Users;
+                                return (
+                                    <Pressable
+                                        key={v}
+                                        onPress={() => handleSetVisibility(v)}
+                                        disabled={visibilityBusy}
+                                        hitSlop={spacing.xs}
+                                        accessibilityRole="button"
+                                        accessibilityState={{ selected: isActive }}
+                                        accessibilityLabel={
+                                            v === 'friends'
+                                                ? 'Friends can see this'
+                                                : 'Private'
+                                        }
+                                        style={({ pressed }) => [
+                                            styles.visibilityChip,
+                                            {
+                                                backgroundColor: isActive
+                                                    ? palette.accent
+                                                    : palette.accentWash,
+                                                opacity: pressed ? 0.6 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Icon
+                                            color={
+                                                isActive
+                                                    ? palette.textInverse
+                                                    : palette.accent
+                                            }
+                                            size={14}
+                                            strokeWidth={ICON_STROKE_WIDTH}
+                                        />
+                                        <Text
+                                            style={[
+                                                styles.visibilityChipText,
+                                                {
+                                                    color: isActive
+                                                        ? palette.textInverse
+                                                        : palette.accent,
+                                                },
+                                            ]}
+                                        >
+                                            {v === 'friends'
+                                                ? 'Friends'
+                                                : 'Private'}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                    </View>
+                )}
 
                 {/* Cast — top ~10 by billing order. Tapping any card
                     routes to the existing /person/[personId] screen so
@@ -2002,6 +2124,33 @@ const styles = StyleSheet.create({
     },
     statusChipText: {
         // 14/Medium — same label treatment as the Library chips.
+        ...typography.caption,
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
+    },
+    // Privacy control sitting just below the status chips. Label + a
+    // two-chip Friends/Private choice, same horizontal inset as the
+    // status row (tighter top margin since it belongs to that cluster).
+    visibilityBlock: {
+        paddingHorizontal: spacing.base,
+        marginBottom: spacing.md,
+        gap: spacing.sm,
+    },
+    visibilityRow: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+    },
+    visibilityChip: {
+        // Icon + label pill, borderless, matching the status-chip
+        // treatment (soft plum wash unselected / solid accent selected).
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.full,
+    },
+    visibilityChipText: {
         ...typography.caption,
         fontFamily: fontFamily.medium,
         fontWeight: '500',
