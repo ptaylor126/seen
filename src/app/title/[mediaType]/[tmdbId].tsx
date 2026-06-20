@@ -99,13 +99,13 @@ interface Sender {
 // recommended to the current user. `senders` is the deduped list of
 // recommenders (ordered by most recent rec first); `totalCount` matches
 // senders.length but is kept distinct in case we later cap the displayed
-// list. `note` is set only when arrived via ?fromRec=<id> — that param
-// pins which rec's note to surface; without it the senders are shown
-// without a quoted note.
+// list. The pinned note (from ?fromRec=<id>) is deliberately NOT part of
+// this — it lives in its own `pinnedNote` state loaded by its own effect,
+// so the `fromRec` param can't touch the main data load (detail / cast /
+// friends-watched / reviews / where-to-watch). fromRec is banner-only.
 interface RecContext {
     senders: Sender[];
     totalCount: number;
-    note: string | null;
 }
 
 // One review row + its author profile, rendered in the Reviews
@@ -242,6 +242,10 @@ export default function TitleDetailScreen() {
     );
     const [ratingBusy, setRatingBusy] = useState(false);
     const [recContext, setRecContext] = useState<RecContext | null>(null);
+    // The note from the specific rec we arrived via (?fromRec=). Loaded by
+    // its own effect (see below), kept OUT of the main load so fromRec
+    // never affects which sections render or which data loads.
+    const [pinnedNote, setPinnedNote] = useState<string | null>(null);
     // Aggregated friend activity for the social block. `null` = not yet
     // loaded; an object with empty watchers + 0 ratings = loaded but no
     // friends have any non-private engagement (the renderer hides the
@@ -336,10 +340,10 @@ export default function TitleDetailScreen() {
                 // Always-on rec attribution: load every recommendation this
                 // user has received for this title (any non-dismissed
                 // status — pending / accepted / watched) and surface the
-                // sender list. The fromRec query param, when present, just
-                // pins which rec's note to display below the senders;
-                // without it we show senders without a note. Failures here
-                // are silent — the rest of the screen renders fine.
+                // sender list. This runs regardless of fromRec; the pinned
+                // note (from ?fromRec=) is fetched separately and shown
+                // below the senders. Failures here are silent — the rest of
+                // the screen renders fine.
                 if (userId) {
                     const { data: recRows, error: recsError } = await supabase
                         .from('recommendations')
@@ -393,22 +397,10 @@ export default function TitleDetailScreen() {
                                 }));
                         }
 
-                        // Note from the specific rec we arrived via, if any.
-                        let note: string | null = null;
-                        if (fromRec) {
-                            const { data: pinnedRec } = await supabase
-                                .from('recommendations')
-                                .select('note')
-                                .eq('id', fromRec)
-                                .maybeSingle();
-                            note = pinnedRec?.note ?? null;
-                        }
-
                         if (active && senders.length > 0) {
                             setRecContext({
                                 senders,
                                 totalCount: senders.length,
-                                note,
                             });
                         }
                     }
@@ -516,7 +508,34 @@ export default function TitleDetailScreen() {
         return () => {
             active = false;
         };
-    }, [mediaType, tmdbId, fromRec]);
+        // NOTE: fromRec is intentionally NOT a dependency. The pinned-note
+        // fetch lives in its own effect below; the main load must behave
+        // identically whether or not the screen was opened via ?fromRec=.
+    }, [mediaType, tmdbId]);
+
+    // Pinned note from the rec we arrived via (?fromRec=). Standalone so
+    // fromRec only ever drives the rec-attribution banner's quoted note —
+    // never the main load (detail / cast / friends-watched / reviews /
+    // where-to-watch). Failure is silent (no note, banner still shows
+    // senders).
+    useEffect(() => {
+        if (!fromRec) {
+            setPinnedNote(null);
+            return;
+        }
+        let active = true;
+        (async () => {
+            const { data } = await supabase
+                .from('recommendations')
+                .select('note')
+                .eq('id', fromRec)
+                .maybeSingle();
+            if (active) setPinnedNote(data?.note ?? null);
+        })();
+        return () => {
+            active = false;
+        };
+    }, [fromRec]);
 
     // Refresh ALL reviews for this title on every screen focus.
     // Returning from the /review modal lands here and gets the
@@ -866,11 +885,12 @@ export default function TitleDetailScreen() {
         }
     }
 
-    // Modal presentation sits below the status bar already, so we
-    // don't add `insets.top` — that would push the X well into the
-    // hero image. A flat spacing.base sits just inside the modal's
-    // rounded top-right corner without clipping.
-    const closeButtonTop = spacing.base;
+    // As a fullScreenModal the title page now covers the status-bar /
+    // notch area (the old 'modal' sheet gave that top gap for free), so
+    // the close button must clear it via the top safe-area inset. Works
+    // on notch + non-notch devices (insets.top is 0 where there's no
+    // notch, leaving just the spacing.base gap).
+    const closeButtonTop = insets.top + spacing.base;
 
     if (loading) {
         return (
@@ -937,7 +957,17 @@ export default function TitleDetailScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    // When the rec-attribution banner leads the page, pad
+                    // it below the status bar / notch. When there's no
+                    // banner the backdrop hero leads and stays immersive
+                    // (bleeds under the status bar) — the close button
+                    // still clears it via closeButtonTop.
+                    recContext ? { paddingTop: insets.top } : null,
+                ]}
+            >
                 {recContext && (
                     <View
                         style={[
@@ -958,7 +988,7 @@ export default function TitleDetailScreen() {
                             >
                                 {formatSenderLine(recContext.senders)}
                             </Text>
-                            {recContext.note && (
+                            {pinnedNote && (
                                 <Text
                                     style={[
                                         typography.caption,
@@ -967,7 +997,7 @@ export default function TitleDetailScreen() {
                                     ]}
                                     numberOfLines={3}
                                 >
-                                    “{recContext.note}”
+                                    “{pinnedNote}”
                                 </Text>
                             )}
                         </View>

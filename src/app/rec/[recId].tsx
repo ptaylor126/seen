@@ -587,7 +587,14 @@ export default function RecScreen() {
             accessibilityLabel="Close"
             style={[
                 styles.closeButton,
-                { top: spacing.base, backgroundColor: palette.surface },
+                // Now a full-screen card (not a modal sheet), the rec view
+                // covers the status bar / notch, so the X must clear it via
+                // the top safe-area inset. insets.top is 0 on non-notch
+                // devices, leaving just the spacing.base gap.
+                {
+                    top: insets.top + spacing.base,
+                    backgroundColor: palette.surface,
+                },
             ]}
         >
             <X color={palette.text} size={20} strokeWidth={ICON_STROKE_WIDTH} />
@@ -697,6 +704,14 @@ export default function RecScreen() {
                             dark band with breathing room below. */}
                         <Pressable
                             onPress={() =>
+                                // push: this rec view is now a CARD (see
+                                // _layout.tsx), so pushing the title presents
+                                // it as a first-level fullScreenModal over the
+                                // rec card — a genuine full-screen page with
+                                // ALL sections, and back returns here to the
+                                // conversation. (Same structure as opening the
+                                // title from inbox.) fromRec surfaces the rec
+                                // context on the title's attribution card.
                                 router.push(
                                     `/title/${rec.mediaType}/${rec.tmdbId}?fromRec=${rec.id}`,
                                 )

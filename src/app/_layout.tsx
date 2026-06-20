@@ -127,9 +127,17 @@ function RootLayoutInner() {
     return (
         <>
             <Stack screenOptions={{ headerShown: false }}>
+                {/* fullScreenModal (not 'modal'): the title page is reached
+                    both standalone AND stacked over the rec view (itself a
+                    modal). A nested 'modal' renders as a reduced card sheet
+                    that clips the title's lower sections; fullScreenModal
+                    always covers the screen, so "View details" from a rec
+                    opens the FULL page and back returns to the rec. Trade:
+                    no swipe-to-dismiss anywhere — the in-page X (CloseButton)
+                    is the dismiss affordance on every entry point. */}
                 <Stack.Screen
                     name="title/[mediaType]/[tmdbId]"
-                    options={{ presentation: 'modal' }}
+                    options={{ presentation: 'fullScreenModal' }}
                 />
                 <Stack.Screen
                     name="title/[mediaType]/[tmdbId]/recommend"
@@ -147,9 +155,19 @@ function RootLayoutInner() {
                     name="person/[personId]"
                     options={{ presentation: 'modal' }}
                 />
+                {/* Card (push), NOT modal: the rec view drills into the
+                    title page via "View details". When the rec was a modal,
+                    pushing the title stacked a second modal in the same
+                    native stack, which iOS clips to a nested card sheet
+                    (rounded edge, lower sections cut off) even with
+                    fullScreenModal. As a card, rec → title is structurally
+                    identical to inbox → title (modal opened from a normal
+                    screen) → the title presents as a first-level
+                    fullScreenModal: genuinely full-screen, all sections,
+                    and back returns to the rec. */}
                 <Stack.Screen
                     name="rec/[recId]"
-                    options={{ presentation: 'modal' }}
+                    options={{ presentation: 'card' }}
                 />
             </Stack>
             {showLoading && (
