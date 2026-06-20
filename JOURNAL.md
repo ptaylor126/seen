@@ -33,6 +33,31 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-20 (cont.) — per-item privacy + friends-watched card + watchers sheet
+
+**Shipped**
+
+- **Per-item privacy toggle** (`33149be`, `12c72b0`). Shared `setItemVisibility` helper in `lib/item-status.ts` (the one write path for `items.visibility`, reused everywhere). Title page: a quiet lock toggle on the "your relationship" line (rating/status text is its own tap target with a pencil → rating sheet; the lock flips Friends/Private). Library list: a per-row lock toggle (optimistic, per-row busy). Reachable now, not buried in the watched-only review flow.
+- **Friends-watched card** (`542b6bf`). Title page card: avatars + "[Name] and N others watched this" + a small avg rating, built ONLY from friends with `status='watched'` AND `visibility='friends'` (privacy-filtered in the query as defence-in-depth; private friends excluded from both avatars and avg). `AvatarStack` gained a `leadFirst` option so the named lead avatar is leftmost + on top. Hides entirely when no non-private friend has watched it.
+- **Card surface token** — new `surfaceElevated` (light plum `#E4D3DF`) for the friends-watched + where-to-watch cards, so they read as raised plum panels on the page bg rather than stark white. Cards are **fill-only** (removed the where-to-watch drop shadow, which the horizontal ScrollView clipped into hard edges).
+- **Watchers bottom sheet** (`542b6bf`). Tap the friends-watched card → a sheet listing EVERY watcher (the card only shows a few avatars) with their rating; rows tap through to `/friends/[handle]`. Fed the SAME privacy-filtered set as the card (can't drift). Fixed the sheet animation — backdrop **fades** (stationary) while the panel **slides** (was `animationType="slide"` moving both as one unit); applied the same fix to `RatingSheet`.
+- **Title-page hierarchy + order pass.** Muted/smaller year·seasons line; genre chips pulled tight under the rating line inside the title column; status chips moved BELOW the synopsis ("track this" reads best after you know what it is); synopsis moved ABOVE cast ("what is this" before "who's in it"). Plus the earlier where-to-watch provider de-dupe (incl. Netflix variant collapse) plumbing from this run.
+
+**Process notes**
+
+- Recurring lesson again: when a change "isn't taking" on device, first check it actually landed AND look for a second implementation / a structural cause — the genre-chip "gap" was the centered title column's bottom slack (not a margin), and the watcher rows "did nothing" because the tappable rows were never built (plain `<View>`, no handle fetched).
+
+**Parked (revised priority — supersedes the list below)**
+
+1. **Home-screen friend-activity section — NOW UNBLOCKED** by the per-item privacy toggle (same gate the friends-watched card needed). Surface watched friends on home with the same `visibility='friends'` filter + the shared card/AvatarStack treatment.
+2. **Rec lifecycle / inbox states** — watched recs should NOT leave the inbox (the conversation happens after watching); rework to keep them visible showing their state. Plus the decline action (silent dismiss default) and hero-card quick status actions. (The un-watch reopen fix landed earlier; this is the inbox-presentation half.)
+3. **Account deletion** — Apple App Store requirement (5.1.1(v)); launch blocker.
+4. **Production EAS build** — splash/icon + notification colours, and the photo-permission string (broaden beyond "profile picture" to cover feedback screenshots). Also gates the cross-user reviews privacy device-verification.
+
+Minor: point the review flow's inline `items.visibility` write at the shared `setItemVisibility` (one path everywhere); grid-view privacy affordance (corner lock badge — the row toggle is list-view only); `rec_watched` notification not retracted on un-watch (tech-debt note, lower priority).
+
+---
+
 ## 2026-06-20 — parked work for next sessions (rough priority order)
 
 Forward-looking backlog captured at end of the title-page work. Roughly ordered; cross-references the standing Open items / UX + Tech debt sections above rather than duplicating them.
