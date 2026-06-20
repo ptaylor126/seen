@@ -1780,7 +1780,18 @@ function WhereToWatch({
         collect(flatrate, 'stream');
         collect(rent, 'rent');
         collect(buy, 'buy');
-        return [...byRoot.values()].sort((a, b) => a.priority - b.priority);
+        // Order by primary (best) method — stream > rent > buy — so
+        // watch-on-subscription options lead, then pay-again ones. A
+        // provider's methods array is built in that canonical order, so
+        // methods[0] IS its primary method. Within a method group, by
+        // display_priority (lower = more prominent; the value already
+        // used to pick the winning logo).
+        const methodRank = (m: string) =>
+            m === 'stream' ? 0 : m === 'rent' ? 1 : 2;
+        return [...byRoot.values()].sort((a, b) => {
+            const byMethod = methodRank(a.methods[0]) - methodRank(b.methods[0]);
+            return byMethod !== 0 ? byMethod : a.priority - b.priority;
+        });
     })();
 
     function openJustWatch() {
@@ -1818,10 +1829,18 @@ function WhereToWatch({
                 </Text>
             </View>
 
-            {/* Two-up grid of provider cards, de-duped to one card per
-                real service. Logo + name + the methods it offers as tags
-                (e.g. "stream · rent · buy"). */}
-            <View style={styles.wtwGrid}>
+            {/* Horizontal scroll row of uniform-width provider cards,
+                de-duped to one card per real service (logo + name +
+                method tags), mirroring the cast row. Cards are a fixed
+                width so a long name wraps to two lines without changing
+                card width, and the row's right padding lets the next card
+                peek when there are more than fit — signalling scroll. */}
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.wtwScroll}
+                contentContainerStyle={styles.wtwScrollContent}
+            >
                 {mergedProviders.map((entry) => (
                     <View
                         key={entry.key}
@@ -1853,7 +1872,7 @@ function WhereToWatch({
                                     typography.bodyEmphasis,
                                     { color: palette.text },
                                 ]}
-                                numberOfLines={1}
+                                numberOfLines={2}
                             >
                                 {entry.name}
                             </Text>
@@ -1868,7 +1887,7 @@ function WhereToWatch({
                         </View>
                     </View>
                 ))}
-            </View>
+            </ScrollView>
 
             <Text
                 style={[
@@ -2055,26 +2074,46 @@ const styles = StyleSheet.create({
         borderRadius: radius.full,
         letterSpacing: 0.5,
     },
-    wtwGrid: {
-        // Two-up grid of provider cards. flexWrap + 48% card width fits a
-        // pair per row at ~380px with the gap between; an odd last card
-        // sits half-width, left-aligned.
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: spacing.sm,
+    wtwScroll: {
+        // Break the horizontal row out of the section's base padding so
+        // cards scroll edge-to-edge and the next one peeks at the screen
+        // edge (the contentContainer re-adds the inset). Mirrors the cast
+        // row's full-bleed scroll while header/attribution/CTA keep the
+        // wtw padding.
+        marginHorizontal: -spacing.base,
+    },
+    wtwScrollContent: {
+        // Matches castScrollContent: base inset on both ends + a gap
+        // between cards. The trailing inset is what makes the next card
+        // peek rather than sit flush to the edge.
+        paddingHorizontal: spacing.base,
+        gap: spacing.md,
     },
     wtwCard: {
-        width: '48%',
-        // Distinct card: surface fill (warm white on the plum page) +
-        // rounded corners + a soft lift. backgroundColor is applied inline
-        // (palette token).
+        // Uniform fixed-width card (logo over name over method tags). The
+        // fixed width means a long name wraps to two lines (numberOfLines
+        // =2) without changing card width. Cross-axis stretch in the row
+        // gives all cards a matching height. Surface fill (warm white on
+        // the plum page) + rounded corners + a soft lift; backgroundColor
+        // applied inline (token).
+        width: 132,
+        gap: spacing.sm,
         borderRadius: radius.md,
         padding: spacing.md,
-        gap: spacing.sm,
         ...elevation.sm,
     },
     wtwCardText: {
-        gap: 2,
+        // Fill the space below the logo (cards are uniform height via
+        // cross-axis stretch in the row) and split name/tag to opposite
+        // ends: the name flows from the top, the method tag pins to the
+        // bottom. Because every card's text block bottoms out at the same
+        // height, the tags line up across the row regardless of whether a
+        // name is one or two lines.
+        flex: 1,
+        justifyContent: 'space-between',
+        // Floor between a 2-line name and the tag when the text block has
+        // no slack (the tallest card), so they never touch.
+        gap: spacing.xs,
     },
     wtwLogoChip: {
         // Square-ish chip wrapping the provider's square logo. Border
@@ -2091,10 +2130,12 @@ const styles = StyleSheet.create({
         height: '100%',
     },
     wtwAttribution: {
-        // Required attribution caption. Kept visible and adjacent to the
-        // data it credits per TMDB's terms for the watch providers
-        // endpoint. Do NOT move into a tooltip or "info" sheet.
-        marginTop: spacing.xs,
+        // Required attribution caption. Kept visible and directly below
+        // the provider cards it credits, per TMDB's terms for the watch
+        // providers endpoint. Sits in the section's standard gap under the
+        // cards (no extra top margin) so it reads as their source line;
+        // the CTA below carries its own marginTop to separate from it. Do
+        // NOT move into a tooltip or "info" sheet.
     },
     wtwCta: {
         flexDirection: 'row',
@@ -2104,6 +2145,9 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
         borderWidth: 1,
+        // Extra separation from the attribution caption above, so that
+        // caption groups visually with the provider cards, not the CTA.
+        marginTop: spacing.sm,
     },
     friendActivity: {
         paddingHorizontal: spacing.base,
