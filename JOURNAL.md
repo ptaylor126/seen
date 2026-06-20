@@ -33,6 +33,31 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-20 — parked work for next sessions (rough priority order)
+
+Forward-looking backlog captured at end of the title-page work. Roughly ordered; cross-references the standing Open items / UX + Tech debt sections above rather than duplicating them.
+
+1. **Per-item privacy toggle** (unblocks two hidden features). A reachable, standalone "who can see this" control on the title page and/or library item — NOT buried in the watched-only review-write flow where it lives today. Until this exists, both of these stay hidden, because surfacing friends' watch activity without a real opt-out is a privacy problem:
+   - the title-page **friends-watched card** ("[Name] and N others watched this" — `FriendActivitySection` exists + renders but is held);
+   - the **home-screen friend-activity section**.
+   See the "Item-level visibility is plumbed but not exposed" and "Friends-activity section … built but not shipping-decided" Open items above for the existing plumbing (`items.visibility` column + `is_item_visible_to_auth`).
+
+2. **Rec lifecycle / inbox states** (the "flow" work discussed across this session). Watched recs should **NOT disappear** from the inbox — the conversation happens *after* watching. Rework so a watched rec stays visible showing its state, rather than dropping out of the Received list (which today filters `status='pending'` only). Plus:
+   - **Decline action** — silent dismiss vs decline-with-optional-note; leaning silent dismiss as the default.
+   - **Hero-card quick status actions** — watchlist / watched / watching / decline shown conditionally on the title's current library state.
+   - Note this intersects the un-watch reopen fix (2026-06-19) and the rec_watched-notification drift (below).
+
+3. **Account deletion** — Apple App Store requirement (Guideline 5.1.1(v)); launch blocker. Confirmation flow + server-side delete spanning profile / items / friendships / recommendations / reviews / feedback + the auth user. The `delete_account` Edge Function will hit `42501` on any table without a scoped `service_role` grant — audit its full table surface up front and add one grant migration (see the service_role note in Tech debt).
+
+4. **Production EAS build** — ships the deferred native changes accumulated this/last session: splash + icon colors, notification color, AND the photo-permission string (currently "to set your profile picture" — must broaden to also cover feedback screenshots now that the feedback screen uses the picker). Also the gate for the CRITICAL cross-user reviews privacy verification (needs two accounts on a real build — see Open items).
+
+**Minor / lower priority**
+
+- **rec_watched notification not retracted on un-watch** — the un-watch reopen fix (2026-06-19) restores the rec to `pending` but does NOT retract the `rec_watched` notification already sent to the sender, and re-watching re-fires it. Tracked in the "Un-watching drifts" Tech-debt note (now PARTIALLY RESOLVED).
+- **Where-to-watch card layout on edge-case provider counts** — verify the horizontal card row (`9e86b80`) on titles with very few (1) and very many providers, and with the longest provider names, on a real device.
+
+---
+
 ## 2026-06-19 — title page redesign (hero Stage 1 + content Stage 2)
 
 **Shipped**
