@@ -2,7 +2,14 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ExternalLink, Lock, Send, Users, X } from 'lucide-react-native';
+import {
+    ExternalLink,
+    Lock,
+    LockOpen,
+    Pencil,
+    Send,
+    X,
+} from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -1017,38 +1024,127 @@ export default function TitleDetailScreen() {
                                 {metaLine}
                             </Text>
                         ) : null}
-                        {/* Status confirmation, directly under the meta
-                            line (title → year · meta → status). The slot
-                            ALWAYS renders with a reserved minHeight, so
-                            setting/clearing a status never shifts the
-                            layout. Plum status text + a muted inline
-                            tap-hint; tappable only when watched, to
-                            (re)open the rating sheet. */}
-                        <Pressable
-                            onPress={() => {
-                                if (currentStatus === 'watched') {
-                                    setShowRatingSheet(true);
-                                }
-                            }}
-                            disabled={currentStatus !== 'watched'}
-                            style={styles.statusLine}
-                        >
-                            <Text numberOfLines={1} style={typography.caption}>
-                                <Text style={{ color: palette.accent }}>
-                                    {formatYourMarker(
-                                        currentStatus,
-                                        currentRating,
-                                    ) ?? ''}
-                                </Text>
+                        {/* "Your relationship to this title" line, under
+                            the meta — shown whenever the title is in the
+                            library. Carries TWO separate tap targets:
+                            (left) the status/rating, which for a watched
+                            item is tappable to (re)open the rating sheet —
+                            in plum accent with a pencil icon so the edit
+                            affordance is unambiguous (no "Tap to edit"
+                            text); for watchlist/watching it's plain
+                            informational text. (right) the quiet privacy
+                            lock toggle — Lock/accent = private, LockOpen/
+                            muted = friends — flips via setItemVisibility
+                            (optimistic, reverts on failure). 'private'
+                            hides this item's activity from friends; it does
+                            NOT remove the title. */}
+                        {currentStatus !== null && (
+                            <View style={styles.statusLine}>
                                 {currentStatus === 'watched' ? (
-                                    <Text style={{ color: palette.textMuted }}>
-                                        {currentRating !== null
-                                            ? '  ·  Tap to edit'
-                                            : '  ·  Tap to rate'}
+                                    <Pressable
+                                        onPress={() => setShowRatingSheet(true)}
+                                        hitSlop={spacing.xs}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={
+                                            currentRating !== null
+                                                ? 'Edit your rating'
+                                                : 'Rate this'
+                                        }
+                                        style={({ pressed }) => [
+                                            styles.statusEdit,
+                                            pressed && { opacity: 0.6 },
+                                        ]}
+                                    >
+                                        <Text
+                                            numberOfLines={1}
+                                            style={[
+                                                typography.caption,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            {formatYourMarker(
+                                                currentStatus,
+                                                currentRating,
+                                            ) ?? ''}
+                                        </Text>
+                                        <Pencil
+                                            color={palette.accent}
+                                            size={12}
+                                            strokeWidth={ICON_STROKE_WIDTH}
+                                        />
+                                    </Pressable>
+                                ) : (
+                                    <Text
+                                        numberOfLines={1}
+                                        style={[
+                                            typography.caption,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        {formatYourMarker(
+                                            currentStatus,
+                                            currentRating,
+                                        ) ?? ''}
                                     </Text>
-                                ) : null}
-                            </Text>
-                        </Pressable>
+                                )}
+
+                                <Pressable
+                                    onPress={() =>
+                                        handleSetVisibility(
+                                            currentVisibility === 'private'
+                                                ? 'friends'
+                                                : 'private',
+                                        )
+                                    }
+                                    disabled={visibilityBusy}
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityState={{
+                                        selected:
+                                            currentVisibility === 'private',
+                                    }}
+                                    accessibilityLabel={
+                                        currentVisibility === 'private'
+                                            ? 'Private — only you can see your activity. Tap to let friends see it.'
+                                            : 'Visible to friends. Tap to make private.'
+                                    }
+                                    style={({ pressed }) => [
+                                        styles.privacyToggle,
+                                        pressed && { opacity: 0.6 },
+                                    ]}
+                                >
+                                    {currentVisibility === 'private' ? (
+                                        <Lock
+                                            color={palette.accent}
+                                            size={12}
+                                            strokeWidth={ICON_STROKE_WIDTH}
+                                        />
+                                    ) : (
+                                        <LockOpen
+                                            color={palette.textMuted}
+                                            size={12}
+                                            strokeWidth={ICON_STROKE_WIDTH}
+                                        />
+                                    )}
+                                    <Text
+                                        style={[
+                                            styles.privacyToggleText,
+                                            {
+                                                color:
+                                                    currentVisibility ===
+                                                    'private'
+                                                        ? palette.accent
+                                                        : palette.textMuted,
+                                            },
+                                        ]}
+                                    >
+                                        {currentVisibility === 'private'
+                                            ? 'Private'
+                                            : 'Friends'}
+                                    </Text>
+                                </Pressable>
+                            </View>
+                        )}
                     </View>
                 </View>
 
@@ -1104,15 +1200,13 @@ export default function TitleDetailScreen() {
                 )}
 
                 {/* Status actions — the SINGLE status control on this
-                    screen (the legacy full-width bottom button row was
-                    removed; this is its replacement). A distinct chip row
-                    on the plum bg, BELOW the header block + genre tags and
-                    ABOVE Cast (not overlaid on the image). Borderless +
-                    text-only, compact/left-aligned: unselected = soft
-                    accentWash fill + plum text; selected = solid accent
-                    fill + white text. Wired to setStatus — tap to set, tap
-                    the active chip to clear, watched opens the rating
-                    sheet. */}
+                    screen (the legacy full-width bottom buttons were
+                    removed). Borderless, text-only chips: unselected = soft
+                    accentWash fill + plum text, selected = solid accent +
+                    white. Wired to setStatus — tap to set, re-tap to clear,
+                    watched opens the rating sheet. Privacy + the "your
+                    relationship" line live under the title metadata, not
+                    here. */}
                 <View style={styles.statusChipRow}>
                     {STATUSES.map((status) => {
                         const isActive = currentStatus === status;
@@ -1129,7 +1223,7 @@ export default function TitleDetailScreen() {
                                     {
                                         // Borderless: soft plum wash fill
                                         // when unselected, solid accent when
-                                        // selected. No outline on either.
+                                        // selected.
                                         backgroundColor: isActive
                                             ? palette.accent
                                             : palette.accentWash,
@@ -1141,9 +1235,8 @@ export default function TitleDetailScreen() {
                                     style={[
                                         styles.statusChipText,
                                         {
-                                            // Plum text on the wash;
-                                            // white on the solid-accent
-                                            // selected fill.
+                                            // Plum text on the wash; white
+                                            // on the selected fill.
                                             color: isActive
                                                 ? palette.textInverse
                                                 : palette.accent,
@@ -1156,80 +1249,6 @@ export default function TitleDetailScreen() {
                         );
                     })}
                 </View>
-
-                {/* Per-item privacy control — reachable here (not just the
-                    watched-only review flow). Only rendered once the title
-                    is in the user's library (currentStatus !== null), since
-                    visibility only exists on an items row; hidden otherwise.
-                    Same wording as the review flow ("Who can see this" /
-                    Friends / Private). 'private' hides this item's activity
-                    from friends; it does NOT remove the title. */}
-                {currentStatus !== null && (
-                    <View style={styles.visibilityBlock}>
-                        <Text
-                            style={[
-                                typography.caption,
-                                { color: palette.textMuted },
-                            ]}
-                        >
-                            Who can see this
-                        </Text>
-                        <View style={styles.visibilityRow}>
-                            {(['friends', 'private'] as const).map((v) => {
-                                const isActive = currentVisibility === v;
-                                const Icon = v === 'private' ? Lock : Users;
-                                return (
-                                    <Pressable
-                                        key={v}
-                                        onPress={() => handleSetVisibility(v)}
-                                        disabled={visibilityBusy}
-                                        hitSlop={spacing.xs}
-                                        accessibilityRole="button"
-                                        accessibilityState={{ selected: isActive }}
-                                        accessibilityLabel={
-                                            v === 'friends'
-                                                ? 'Friends can see this'
-                                                : 'Private'
-                                        }
-                                        style={({ pressed }) => [
-                                            styles.visibilityChip,
-                                            {
-                                                backgroundColor: isActive
-                                                    ? palette.accent
-                                                    : palette.accentWash,
-                                                opacity: pressed ? 0.6 : 1,
-                                            },
-                                        ]}
-                                    >
-                                        <Icon
-                                            color={
-                                                isActive
-                                                    ? palette.textInverse
-                                                    : palette.accent
-                                            }
-                                            size={14}
-                                            strokeWidth={ICON_STROKE_WIDTH}
-                                        />
-                                        <Text
-                                            style={[
-                                                styles.visibilityChipText,
-                                                {
-                                                    color: isActive
-                                                        ? palette.textInverse
-                                                        : palette.accent,
-                                                },
-                                            ]}
-                                        >
-                                            {v === 'friends'
-                                                ? 'Friends'
-                                                : 'Private'}
-                                        </Text>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
-                    </View>
-                )}
 
                 {/* Cast — top ~10 by billing order. Tapping any card
                     routes to the existing /person/[personId] screen so
@@ -2128,29 +2147,17 @@ const styles = StyleSheet.create({
         fontFamily: fontFamily.medium,
         fontWeight: '500',
     },
-    // Privacy control sitting just below the status chips. Label + a
-    // two-chip Friends/Private choice, same horizontal inset as the
-    // status row (tighter top margin since it belongs to that cluster).
-    visibilityBlock: {
-        paddingHorizontal: spacing.base,
-        marginBottom: spacing.md,
-        gap: spacing.sm,
-    },
-    visibilityRow: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-    },
-    visibilityChip: {
-        // Icon + label pill, borderless, matching the status-chip
-        // treatment (soft plum wash unselected / solid accent selected).
+    // Quiet lock toggle on the "your relationship" line, after the
+    // status/rating text. Icon + short label, no background/border — a
+    // minor inline control. flexShrink 0 so it keeps its size; the status
+    // text shrinks first if the line is tight.
+    privacyToggle: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.xs,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        borderRadius: radius.full,
+        flexShrink: 0,
     },
-    visibilityChipText: {
+    privacyToggleText: {
         ...typography.caption,
         fontFamily: fontFamily.medium,
         fontWeight: '500',
@@ -2311,11 +2318,24 @@ const styles = StyleSheet.create({
     friendActivityCaption: {
         flex: 1,
     },
-    // Status confirmation line, nested in the title column directly under
-    // the meta line. minHeight reserves one caption line (lineHeight 18)
-    // so setting or clearing a status never shifts the surrounding layout.
+    // "Your relationship" line, nested in the title column directly under
+    // the meta line: status/rating (left) + privacy lock (right) as two
+    // separate tap targets on one row. gap separates the two; flexWrap lets
+    // the lock drop below on a very tight title column. minHeight reserves
+    // one caption line so toggling state never shifts the surrounding layout.
     statusLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: spacing.md,
         minHeight: 18,
+    },
+    // Tappable status/rating (watched only): text + pencil edit affordance.
+    statusEdit: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        flexShrink: 1,
     },
     // Reviews section — sits between FriendActivity and WhereToWatch
     // so the "social text content" sits with the "social numbers"
