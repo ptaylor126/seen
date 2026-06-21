@@ -33,6 +33,32 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-22 — account deletion (Apple 5.1.1(v))
+
+Built end-to-end account deletion in three reviewed phases. Commits: `f7e92a3` (RPC + docs), `2f01d8e` (Edge Function), `f087a54` (client UI). Migration `20260622120000` applied via dashboard; function deployed; UI shipped.
+
+**Deletion policy (decided + built, immediate hard-delete — no soft-delete / grace period):**
+- All of the user's own data is hard-deleted.
+- **Sent recs are DELETED, not anonymised** — and deleting a sent rec cascades the recipient's side of that thread too (their comments/reactions on it). No "former user" ghost recs or ghost threads (our no-ghost-users policy). This replaced the OLD PRD §5 "anonymise / former user" model — PRD §5 and TECHNICAL §1/§3 were updated to match.
+- **Accepted items survive** as plain library items: the recipient's `items` row is a different user's row and is untouched; its "recommended by" attribution is join-derived, so deleting the rec strips it automatically (nothing to null).
+- The user's comments + reactions deleted; **feedback rows AND their screenshots deleted** (overriding the table's SET NULL retain).
+- **Notification payload sweep:** rows in OTHER users' inboxes naming the user via `payload->>'from_user_id'` are deleted (no FK reaches them) so the identity isn't left behind.
+- **Handle released into `handle_history` with the 90-day cooldown** so deletion can't bypass the handle-change lock.
+- Friendships, friend_requests, received recs, own items/reviews/favorites/etc. ride the existing CASCADE from auth-user deletion.
+
+**Three-piece architecture:**
+1. **`delete_account_data(p_uid)` RPC** — SECURITY DEFINER, single transaction (all-or-nothing), idempotent (WHERE-filtered deletes + `ON CONFLICT`), EXECUTE locked to `service_role` only (revoked from public/anon/authenticated — it takes a uid arg, so a client-callable version would be delete-anyone). Does only what the cascade can't: sent-rec delete, comment/reaction delete, feedback delete, notification sweep, handle release. Same migration also removed the now-dead `from_user_id → NULL` privileged carve-out in `enforce_recommendation_immutability` (hard-delete never nulls it). rls-auditor: PASS after the doc reconciliation.
+2. **`delete-account` Edge Function** — verifies the caller's JWT, derives uid from the **verified token only** (never the body → can only delete your own account; same pattern as submit-feedback). Order: **(1) Storage** (`avatars/{uid}/`, `feedback/{uid}/`, idempotent) → **(2) `delete_account_data(uid)`** (service role) → **(3) `auth.admin.deleteUser(uid)` LAST**. Any failure returns an error and does NOT proceed. **Auth delete is last on purpose:** if storage or the RPC fails, the auth user still exists, so the account is intact and the call is retryable (RPC idempotency makes the retry clean).
+3. **Client UI** (`profile/account.tsx`) — prominent destructive "Delete account" entry (not buried, per Apple), confirm modal listing exactly what's removed + **type DELETE to enable** the button, `functions.invoke('delete-account')` with a loading state, KeyboardAvoidingView so the buttons clear the keyboard. On success: inform (incl. the Apple step), then sign out → root redirect to sign-in. On failure: stay signed in, "nothing was deleted, try again" (true, given the transaction + abort-on-failure ordering).
+
+**Apple revocation — path A (decided):** we don't capture/store an Apple refresh token (sign-in uses only the identity token via `signInWithIdToken`; the authorizationCode is never kept, and Supabase's native id-token flow retains no Apple refresh token). So no real `/auth/revoke` call — after deletion the client directs the user to **Settings → Apple ID → Sign in with Apple → Seen → Stop Using**, making clear the deletion already happened regardless. **Path B exists** if App Review ever pushes back: capture `authorizationCode` at sign-in, exchange it server-side (needs an Apple client secret JWT) for the refresh token, store it encrypted, and call `/auth/revoke` on deletion.
+
+**Infra note:** migration `20260622120000_create_delete_account_data_rpc.sql` was applied manually in the dashboard SQL editor — it is NOT in Supabase's `db push` migration history (db push is broken on this machine; if it's ever fixed, `supabase migration repair --status applied` it alongside the others — see prior entries' list). Edge deploy used the `env -u SUPABASE_ACCESS_TOKEN SUPABASE_AUTH_KEYRING=false` prefix.
+
+**⚠️ Remaining pre-submission verification:** end-to-end deletion has NOT yet been run against a live account. The function was only confirmed to return 401 to an unauthenticated call. Before submitting: create a throwaway account with real data across every surface (library, ratings, reviews, favorites, sent + received recs with threads, friends, avatar, feedback + screenshot, notifications in a friend's inbox) and run the full delete; verify every bucket is gone, the friend's inbox has no leftover identity, accepted items survive unattributed, the handle is quarantined, and the auth user is gone.
+
+---
+
 ## 2026-06-20 (cont. 4) — request-a-rec + collapsing friend header + UI fixes + pre-build notes
 
 **Shipped (committed + pushed)**
