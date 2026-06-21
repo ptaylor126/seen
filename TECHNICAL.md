@@ -80,7 +80,7 @@ A rec sent from one user to one user. Multi-friend recommend creates N rows.
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid | PK |
-| from_user_id | uuid | FK profiles.id, ON DELETE SET NULL (for anonymised) |
+| from_user_id | uuid | FK profiles.id, ON DELETE SET NULL (defensive default only — account deletion HARD-DELETES the sender's sent recs before the profile is removed, so this never fires; recs are not anonymised) |
 | to_user_id | uuid | FK profiles.id, ON DELETE CASCADE |
 | tmdb_id | int | |
 | media_type | text | 'movie' or 'tv' |
@@ -191,8 +191,10 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 - `decline_friend_request(request_id)` — deletes request silently.
 - `unfriend(other_user_id)` — deletes friendship row. Recs remain.
 - `claim_invite_link(token)` — creates immediate mutual friendship between token owner and auth.uid().
-- `delete_account()` — initiates 30-day soft delete. Sets profiles.deleted_at, deletes items, anonymises sent recommendations (sets from_user_id NULL), removes friendships, schedules hard delete via cron.
-- `restore_account()` — clears deleted_at if within 30 days.
+- Account deletion (immediate, permanent — no soft delete):
+  - `delete-account` Edge Function — verifies the caller's JWT, derives the uid from the token only, removes the caller's Storage objects (`avatars/{uid}/`, `feedback/{uid}/`), calls `delete_account_data(uid)`, then `auth.admin.deleteUser(uid)` LAST. Auth-user deletion last so an earlier failure leaves the account intact and retryable.
+  - `delete_account_data(p_uid)` — SECURITY DEFINER, single transaction, idempotent; EXECUTE granted to service_role only. Hard-deletes the user's sent recs (overriding the SET NULL anonymise), comments, reactions, and feedback rows; sweeps notifications that name the user (`payload->>'from_user_id'`) from other inboxes; releases the handle into the 90-day quarantine. Everything else (profile, items, reviews, favorites, invite_links, push_tokens, friendships, friend_requests, received recs) is removed by the auth-user CASCADE. Sent recs are DELETED, not anonymised — no "former user" ghosts.
+  - Apple token revocation: not performed server-side (no Apple refresh token retained); the client directs the user to revoke in Settings → Apple ID → Sign in with Apple → Seen.
 - `send_recommendation_notifications(rec_id)` — triggered on recommendation INSERT, batches per sender within 5-minute window for push.
 - `tmdb-proxy(path, params)` — forwards authenticated requests to TMDB API v4. The Read Access Token is held as a Supabase secret and never exposed to the client. Image URLs are returned unmodified; the client fetches posters and backdrops directly from the TMDB CDN.
 

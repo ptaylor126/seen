@@ -90,11 +90,12 @@ System DND respected; no in-app quiet hours in MVP.
 ### Account lifecycle
 - Sign in via Sign in with Apple (iOS) / Google (Android)
 - Handle changeable once per 30 days; old handle quarantined 90 days before reuse
-- Account deletion: hybrid model
-  - Personal data (library, ratings, dismissed recs) hard-deleted
-  - Outbound recs anonymised in recipients' inboxes (shown as "former user")
-  - Friendships removed
-  - 30-day soft-delete grace period; login within window restores
+- Account deletion: immediate and permanent (no soft-delete / grace period)
+  - All personal data hard-deleted: profile, library, ratings, reviews, favorites, received and sent recommendations, comments, reactions, friendships, profile photo, and submitted feedback (incl. screenshots)
+  - Sent recs are deleted outright, NOT anonymised — no "former user" ghost recs or ghost threads. The recipient's library item remains as a normal item; its join-derived "recommended by" attribution simply disappears
+  - The user's identity is swept from other users' notification inboxes
+  - The handle is released into the standard 90-day quarantine
+  - Sign in with Apple: we don't hold an Apple refresh token, so after deletion the user is directed to finish revoking access in Settings → Apple ID → Sign in with Apple → Seen
 - Data export: deferred to post-MVP
 - Email: transactional only (welcome, account events). No marketing.
 
