@@ -33,6 +33,32 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-20 (cont. 2) — rec lifecycle, decline notification, badge, bell, send heads-up
+
+**Shipped**
+
+- **Per-item privacy toggle** — shared `setItemVisibility` helper; title-page lock on the status/rating line + a library-row toggle. (One write path for `items.visibility`.)
+- **Friends-watched card on the title page** — privacy-filtered watched friends + average; light-plum `surfaceElevated` card token; a watchers bottom sheet linking to profiles; fade/slide sheet animation.
+- **Title-page upper-block hierarchy** + synopsis-above-cast reorder; where-to-watch horizontal scroll, stream-first ordering, scrim for backdrop-text legibility.
+- **Rec view as a card** (not a modal) so View-details opens the full title page; full-screen title route; Save + "Not for me" action buttons; rec-note hero.
+- **Un-watch reopens rec to pending** — trigger `20260619120000` (applied via dashboard).
+- **Rec lifecycle** — watched recs stay in the Received inbox with a watched marker.
+- **"Not for me" decline** (`9a9fd87`) — silent by default, optional note, undo. Deferred-note trigger `20260620120000`: the sender is notified ONLY on a noted, un-undone decline — a silent decline stays fully silent. Push + inbox surface for the sender.
+- **Notification badge** (`8267a4a`) — actionable items (pending recs, friend requests) persist until actioned, not cleared on view; informational notifications still clear on view; pending recs already in the recipient's library are excluded from the count. Realtime drop via `20260620130000`.
+- **Header bell icon for inbox** (`c6d2091`) — custom notifications SVG replacing lucide `Mail`, across `ScreenHeader` and the Home tab's hand-rolled header.
+- **Send-time heads-up** (`f9b8df5`) — when recommending a title the recipient already has (friends-visible only — a private item is indistinguishable from no item to the sender), the sender sees a non-blocking "they've already watched / are watching / have it watchlisted" prompt with Send-anyway / Cancel. Privacy gate enforced by existing items RLS (`is_item_visible_to_auth`).
+
+**Migrations applied via dashboard** (NOT in Supabase migration history — if `db push` ever works again, run `supabase migration repair --status applied` for all): `20260618120000`, `20260618130000`, `20260619120000`, `20260620120000`, `20260620130000`.
+
+**Parked (next sessions)**
+
+- Home-screen friend-activity section (unblocked by the privacy toggle).
+- Account deletion (Apple requirement).
+- Production EAS build — carries: photo-permission string, splash/icon/notification colours, AND everything needing a fresh build + second account to fully verify (decline push, badge behaviour, send-time heads-up, friends-watched card with real friend data).
+- Tech debt: unify the Home tab's hand-rolled header onto `ScreenHeader` (caused the two-place bell-icon edit); point the review flow's visibility write at `setItemVisibility`; rec_watched notification retraction.
+
+---
+
 ## 2026-06-20 (cont.) — per-item privacy + friends-watched card + watchers sheet
 
 **Shipped**
