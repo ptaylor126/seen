@@ -774,9 +774,10 @@ export default function HomeScreen() {
         return (
             <Pressable
                 key={rec.id}
-                onPress={() =>
-                    navigateToTitle(rec.mediaType, rec.tmdbId, rec.id)
-                }
+                // Open the rec's own page (sender, note, accept/decline),
+                // not the bare title — rec.id is the recommendation row id.
+                // Matches the inbox rows' navigation.
+                onPress={() => router.push(`/rec/${rec.id}`)}
                 style={({ pressed }) => [
                     styles.recHeroCard,
                     { width: cardWidth },
