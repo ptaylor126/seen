@@ -3,6 +3,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
     ChevronLeft,
     MessageSquarePlus,
+    MoreVertical,
     Search as SearchIcon,
     Send,
     UserPlus,
@@ -11,6 +12,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Dimensions,
     FlatList,
     Pressable,
@@ -322,6 +324,8 @@ export default function FriendDetailScreen() {
     const [recentReviews, setRecentReviews] = useState<RecentReview[] | null>(
         null,
     );
+    // In-flight guard for the "Remove friend" action (overflow menu).
+    const [removing, setRemoving] = useState(false);
 
     // Shared filter / sort / search state — same hook the own library
     // (src/app/(tabs)/library.tsx) uses, so the two screens stay in
@@ -920,6 +924,60 @@ export default function FriendDetailScreen() {
     // ---- state.kind === 'friends'
     const { profile, friendshipCreatedAt } = state;
 
+    // Remove friend — overflow menu → confirm → unfriend RPC (symmetric,
+    // silent; the existing RPC sends no notification). On success (or a
+    // benign "already gone" race) route to the Friends tab so we don't sit
+    // on a profile mid-transition. Recs/threads/items are intentionally
+    // kept by the RPC.
+    async function performRemoveFriend() {
+        if (removing) return;
+        setRemoving(true);
+        try {
+            const { error } = await supabase.rpc('unfriend', {
+                other_user_id: profile.id,
+            });
+            // 'friendship not found' = already removed (double-tap / removed
+            // elsewhere) → treat as success and proceed to the post-removal
+            // nav rather than erroring.
+            if (error && !/friendship not found/i.test(error.message)) {
+                throw error;
+            }
+            router.replace({ pathname: '/friends' });
+        } catch (err) {
+            console.error('remove friend failed:', err);
+            setRemoving(false);
+            Alert.alert('Could not remove friend', 'Please try again.');
+        }
+    }
+
+    function confirmRemoveFriend() {
+        const name = profile.displayName;
+        Alert.alert(
+            `Remove ${name} as a friend?`,
+            "You'll no longer see each other's libraries or activity.",
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Remove',
+                    style: 'destructive',
+                    onPress: () => void performRemoveFriend(),
+                },
+            ],
+        );
+    }
+
+    function openFriendMenu() {
+        if (removing) return;
+        Alert.alert(`@${profile.handle}`, undefined, [
+            {
+                text: 'Remove friend',
+                style: 'destructive',
+                onPress: confirmRemoveFriend,
+            },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
+    }
+
     // Body rows for the single scrolling FlatList. Grid mode is chunked
     // into rows of `gridCols` cells (numColumns can't coexist with the
     // sticky filter row); list mode is one item per row. The 'filters'
@@ -1416,6 +1474,23 @@ export default function FriendDetailScreen() {
                             onGridColsChange={setGridCols}
                             palette={palette}
                         />
+                        <Pressable
+                            onPress={openFriendMenu}
+                            disabled={removing}
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel="More options"
+                            style={({ pressed }) => [
+                                styles.overflowButton,
+                                (pressed || removing) && { opacity: 0.5 },
+                            ]}
+                        >
+                            <MoreVertical
+                                size={22}
+                                color={palette.text}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                        </Pressable>
                     </View>
                 </View>
             </SafeAreaView>
@@ -1488,10 +1563,16 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm,
     },
     headerBarRight: {
-        // Push the view-controls cluster to the right edge of the
-        // header bar. The back button sits at the left; this slot is
-        // its mirror.
+        // Push the view-controls cluster (+ overflow menu) to the right
+        // edge of the header bar. The back button sits at the left; this
+        // slot is its mirror.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
         marginLeft: 'auto',
+    },
+    overflowButton: {
+        padding: spacing.xs,
     },
     profileBlock: {
         alignItems: 'center',
