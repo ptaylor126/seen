@@ -1152,46 +1152,43 @@ export default function RecScreen() {
                         </Text>
                     ) : null}
 
-                    {/* Reactions — curated emoji row (no label). */}
-                    <View style={styles.reactionRow}>
-                        {REACTION_EMOJIS.map((emoji) => {
-                            const isActive = myReaction === emoji;
-                            return (
-                                <Pressable
-                                    key={emoji}
-                                    onPress={() => handleReactionTap(emoji)}
-                                    disabled={reactionBusy || !isRecipient}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={`React with ${emoji}`}
-                                    accessibilityState={{
-                                        selected: isActive,
-                                        disabled: !isRecipient,
-                                    }}
-                                    style={({ pressed }) => [
-                                        styles.reactionCell,
-                                        {
-                                            backgroundColor: isActive
-                                                ? palette.accent
-                                                : palette.surface,
-                                            // Read-only for the sender: dim the
-                                            // whole picker so the inertness is
-                                            // visible, distinct from the active
-                                            // accent on the recipient's pick.
-                                            opacity: !isRecipient
-                                                ? 0.4
-                                                : pressed || reactionBusy
-                                                    ? 0.6
-                                                    : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Text style={styles.reactionEmoji}>
-                                        {emoji}
-                                    </Text>
-                                </Pressable>
-                            );
-                        })}
-                    </View>
+                    {/* Reactions — curated emoji picker (no label). Recipient
+                        only: reacting is a recipient action, so the sender
+                        doesn't see the picker (they still see the recipient's
+                        reaction read-only below). */}
+                    {isRecipient ? (
+                        <View style={styles.reactionRow}>
+                            {REACTION_EMOJIS.map((emoji) => {
+                                const isActive = myReaction === emoji;
+                                return (
+                                    <Pressable
+                                        key={emoji}
+                                        onPress={() => handleReactionTap(emoji)}
+                                        disabled={reactionBusy}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`React with ${emoji}`}
+                                        accessibilityState={{ selected: isActive }}
+                                        style={({ pressed }) => [
+                                            styles.reactionCell,
+                                            {
+                                                backgroundColor: isActive
+                                                    ? palette.accent
+                                                    : palette.surface,
+                                                opacity:
+                                                    pressed || reactionBusy
+                                                        ? 0.6
+                                                        : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Text style={styles.reactionEmoji}>
+                                            {emoji}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                    ) : null}
                     {otherReaction ? (
                         <View style={styles.otherReactionRow}>
                             <Avatar
@@ -1223,14 +1220,14 @@ export default function RecScreen() {
                         </View>
                     ) : null}
 
-                    {/* Action area. Recipient who has passed → a "you
-                        passed on this" marker + "Changed my mind"
-                        (un-decline), which returns the rec to pending so the
-                        normal actions render again. Otherwise: Save = primary
-                        (filled accent) → status sheet; "Not for me" =
-                        secondary (muted) → decline, shown only for the
-                        recipient on a still-pending rec. */}
-                    {isRecipient && rec.status === 'dismissed' ? (
+                    {/* Action area — RECIPIENT ONLY (Save / decline are
+                        recipient actions; the sender saves to their own
+                        library via "View details" → title page). Recipient
+                        who has passed → a "you passed on this" marker +
+                        "Changed my mind" (un-decline). Otherwise: Save =
+                        primary (filled accent) → status sheet; "Not for me"
+                        = secondary (muted) → decline, on a pending rec. */}
+                    {!isRecipient ? null : rec.status === 'dismissed' ? (
                         <View style={styles.actionArea}>
                             <View style={styles.passedMarker}>
                                 <XCircle
