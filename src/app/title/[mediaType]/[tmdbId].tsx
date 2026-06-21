@@ -95,17 +95,13 @@ interface Sender {
     avatarUrl: string | null;
 }
 
-// Rec attribution shown above the backdrop whenever this title has been
-// recommended to the current user. `senders` is the deduped list of
-// recommenders (ordered by most recent rec first); `totalCount` matches
-// senders.length but is kept distinct in case we later cap the displayed
-// list. The pinned note (from ?fromRec=<id>) is deliberately NOT part of
-// this — it lives in its own `pinnedNote` state loaded by its own effect,
-// so the `fromRec` param can't touch the main data load (detail / cast /
-// friends-watched / reviews / where-to-watch). fromRec is banner-only.
-interface RecContext {
-    senders: Sender[];
-    totalCount: number;
+// One recommender of this title to the current user, with their note —
+// rendered as a card in the "Recommended by" section. One entry per
+// distinct sender (deduped, most-recent-rec first); `note` is that
+// sender's most-recent rec note (null when they sent without one).
+interface RecAttribution {
+    sender: Sender;
+    note: string | null;
 }
 
 // One review row + its author profile, rendered in the Reviews
@@ -176,26 +172,10 @@ function firstName(displayName: string): string {
     return first || trimmed || 'A friend';
 }
 
-function formatSenderLine(senders: Sender[]): string {
-    if (senders.length === 0) return '';
-    const names = senders.map((s) => firstName(s.displayName));
-    if (names.length === 1) {
-        return `${names[0]} recommended this to you`;
-    }
-    if (names.length === 2) {
-        return `${names[0]} & ${names[1]} recommended this to you`;
-    }
-    const others = names.length - 2;
-    return `${names[0]}, ${names[1]} & ${others} other${
-        others === 1 ? '' : 's'
-    } recommended this to you`;
-}
-
 export default function TitleDetailScreen() {
     const params = useLocalSearchParams<{
         mediaType: string;
         tmdbId: string;
-        fromRec?: string;
     }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
@@ -208,7 +188,6 @@ export default function TitleDetailScreen() {
             : null;
     const tmdbIdRaw = typeof params.tmdbId === 'string' ? params.tmdbId : '';
     const tmdbId = Number.parseInt(tmdbIdRaw, 10);
-    const fromRec = typeof params.fromRec === 'string' ? params.fromRec : null;
 
     const [detail, setDetail] = useState<Detail | null>(null);
     const [loading, setLoading] = useState(true);
@@ -241,11 +220,10 @@ export default function TitleDetailScreen() {
         () => new Set(),
     );
     const [ratingBusy, setRatingBusy] = useState(false);
-    const [recContext, setRecContext] = useState<RecContext | null>(null);
-    // The note from the specific rec we arrived via (?fromRec=). Loaded by
-    // its own effect (see below), kept OUT of the main load so fromRec
-    // never affects which sections render or which data loads.
-    const [pinnedNote, setPinnedNote] = useState<string | null>(null);
+    // Recommenders of this title to the current user (avatar + name + note),
+    // shown as cards in the "Recommended by" section. null = not yet loaded
+    // / none. Loaded in the main effect regardless of how the user arrived.
+    const [recCards, setRecCards] = useState<RecAttribution[] | null>(null);
     // Aggregated friend activity for the social block. `null` = not yet
     // loaded; an object with empty watchers + 0 ratings = loaded but no
     // friends have any non-private engagement (the renderer hides the
@@ -339,15 +317,14 @@ export default function TitleDetailScreen() {
 
                 // Always-on rec attribution: load every recommendation this
                 // user has received for this title (any non-dismissed
-                // status — pending / accepted / watched) and surface the
-                // sender list. This runs regardless of fromRec; the pinned
-                // note (from ?fromRec=) is fetched separately and shown
-                // below the senders. Failures here are silent — the rest of
-                // the screen renders fine.
+                // status — pending / accepted / watched) and build one card
+                // per recommender (avatar + name + note). Runs regardless of
+                // how the user arrived. Failures here are silent — the rest
+                // of the screen renders fine.
                 if (userId) {
                     const { data: recRows, error: recsError } = await supabase
                         .from('recommendations')
-                        .select('from_user_id, sent_at')
+                        .select('from_user_id, sent_at, note')
                         .eq('to_user_id', userId)
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
@@ -356,19 +333,25 @@ export default function TitleDetailScreen() {
                     if (recsError) {
                         console.warn('rec context fetch failed:', recsError);
                     } else if (active && recRows && recRows.length > 0) {
-                        // Dedup senders (a single sender might appear twice
-                        // if they re-sent after a dismiss — rare but cheap
-                        // to guard) preserving the most-recent-first order.
+                        // Dedup by sender, most-recent-first (rows are already
+                        // sent_at DESC), keeping the note from each sender's
+                        // most-recent rec. A sender can appear twice if they
+                        // re-sent after a dismiss — rare, but cheap to guard.
                         const senderIds: string[] = [];
-                        const seenIds = new Set<string>();
+                        const noteBySender = new Map<string, string | null>();
                         for (const row of recRows) {
                             const sid = row.from_user_id;
-                            if (!sid || seenIds.has(sid)) continue;
-                            seenIds.add(sid);
+                            if (!sid || noteBySender.has(sid)) continue;
                             senderIds.push(sid);
+                            const note =
+                                typeof row.note === 'string' &&
+                                row.note.trim().length > 0
+                                    ? row.note
+                                    : null;
+                            noteBySender.set(sid, note);
                         }
 
-                        let senders: Sender[] = [];
+                        let cards: RecAttribution[] = [];
                         if (senderIds.length > 0) {
                             const { data: profileRows } = await supabase
                                 .from('profiles')
@@ -377,31 +360,25 @@ export default function TitleDetailScreen() {
                             const profileById = new Map(
                                 (profileRows ?? []).map((p) => [p.id, p]),
                             );
-                            senders = senderIds
-                                .map((id) => profileById.get(id))
-                                .filter(
-                                    (
-                                        p,
-                                    ): p is {
-                                        id: string;
-                                        handle: string;
-                                        display_name: string;
-                                        avatar_url: string | null;
-                                    } => !!p,
-                                )
-                                .map((p) => ({
-                                    userId: p.id,
-                                    handle: p.handle,
-                                    displayName: p.display_name,
-                                    avatarUrl: p.avatar_url,
-                                }));
+                            cards = senderIds
+                                .map((id) => {
+                                    const p = profileById.get(id);
+                                    if (!p) return null;
+                                    return {
+                                        sender: {
+                                            userId: p.id,
+                                            handle: p.handle,
+                                            displayName: p.display_name,
+                                            avatarUrl: p.avatar_url,
+                                        },
+                                        note: noteBySender.get(id) ?? null,
+                                    };
+                                })
+                                .filter((c): c is RecAttribution => c !== null);
                         }
 
-                        if (active && senders.length > 0) {
-                            setRecContext({
-                                senders,
-                                totalCount: senders.length,
-                            });
+                        if (active && cards.length > 0) {
+                            setRecCards(cards);
                         }
                     }
                 }
@@ -508,34 +485,7 @@ export default function TitleDetailScreen() {
         return () => {
             active = false;
         };
-        // NOTE: fromRec is intentionally NOT a dependency. The pinned-note
-        // fetch lives in its own effect below; the main load must behave
-        // identically whether or not the screen was opened via ?fromRec=.
     }, [mediaType, tmdbId]);
-
-    // Pinned note from the rec we arrived via (?fromRec=). Standalone so
-    // fromRec only ever drives the rec-attribution banner's quoted note —
-    // never the main load (detail / cast / friends-watched / reviews /
-    // where-to-watch). Failure is silent (no note, banner still shows
-    // senders).
-    useEffect(() => {
-        if (!fromRec) {
-            setPinnedNote(null);
-            return;
-        }
-        let active = true;
-        (async () => {
-            const { data } = await supabase
-                .from('recommendations')
-                .select('note')
-                .eq('id', fromRec)
-                .maybeSingle();
-            if (active) setPinnedNote(data?.note ?? null);
-        })();
-        return () => {
-            active = false;
-        };
-    }, [fromRec]);
 
     // Refresh ALL reviews for this title on every screen focus.
     // Returning from the /review modal lands here and gets the
@@ -957,53 +907,7 @@ export default function TitleDetailScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScrollView
-                contentContainerStyle={[
-                    styles.scrollContent,
-                    // When the rec-attribution banner leads the page, pad
-                    // it below the status bar / notch. When there's no
-                    // banner the backdrop hero leads and stays immersive
-                    // (bleeds under the status bar) — the close button
-                    // still clears it via closeButtonTop.
-                    recContext ? { paddingTop: insets.top } : null,
-                ]}
-            >
-                {recContext && (
-                    <View
-                        style={[
-                            styles.recContextCard,
-                            { backgroundColor: palette.surfaceAlt },
-                        ]}
-                    >
-                        <Avatar
-                            avatarUrl={recContext.senders[0].avatarUrl}
-                            displayName={recContext.senders[0].displayName}
-                            seedId={recContext.senders[0].userId}
-                            size={36}
-                        />
-                        <View style={styles.recContextText}>
-                            <Text
-                                style={[typography.caption, { color: palette.text }]}
-                                numberOfLines={2}
-                            >
-                                {formatSenderLine(recContext.senders)}
-                            </Text>
-                            {pinnedNote && (
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        styles.recContextNote,
-                                        { color: palette.textMuted },
-                                    ]}
-                                    numberOfLines={3}
-                                >
-                                    “{pinnedNote}”
-                                </Text>
-                            )}
-                        </View>
-                    </View>
-                )}
-
+            <ScrollView contentContainerStyle={styles.scrollContent}>
                 {/* Backdrop band — shorter than the rec hero. The lower
                     portion fades into the page via a pure ALPHA ramp of
                     the bg colour (bgTransparent → bg, same lesson as the
@@ -1346,6 +1250,10 @@ export default function TitleDetailScreen() {
                             }
                         />
                     )}
+
+                {/* Two social cards as a pair: who recommended it to you,
+                    then which friends have watched it. */}
+                <RecommendedBySection recs={recCards} palette={palette} />
 
                 <FriendActivitySection
                     activity={friendActivity}
@@ -1814,6 +1722,91 @@ function ReviewsSection({
     );
 }
 
+// "Recommended by" — one card per friend who recommended this title to the
+// current user (avatar + name + their note). The note is the point, so it
+// gets room (no aggressive truncation). One rec → a single full-width card
+// in the friends-watched card family (surfaceElevated / radius.md); several
+// → a bleeding horizontal scroll, one card per recommender, matching the
+// where-to-watch row. Renders nothing when no one has recommended it.
+function RecommendedBySection({
+    recs,
+    palette,
+}: {
+    recs: RecAttribution[] | null;
+    palette: Palette;
+}) {
+    if (!recs || recs.length === 0) return null;
+
+    const renderCard = (rec: RecAttribution, fixedWidth: boolean) => (
+        <View
+            key={rec.sender.userId}
+            style={[
+                fixedWidth ? styles.recByCardFixed : styles.recByCardFull,
+                { backgroundColor: palette.surfaceElevated },
+            ]}
+        >
+            <View style={styles.recByHeader}>
+                <Avatar
+                    avatarUrl={rec.sender.avatarUrl}
+                    displayName={rec.sender.displayName}
+                    seedId={rec.sender.userId}
+                    size={36}
+                />
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        styles.recByName,
+                        { color: palette.text },
+                    ]}
+                    numberOfLines={1}
+                >
+                    {rec.sender.displayName}
+                </Text>
+            </View>
+            {rec.note ? (
+                <Text
+                    style={[
+                        typography.body,
+                        styles.recByNote,
+                        { color: palette.text },
+                    ]}
+                >
+                    “{rec.note}”
+                </Text>
+            ) : (
+                <Text style={[typography.caption, { color: palette.textMuted }]}>
+                    Recommended this to you
+                </Text>
+            )}
+        </View>
+    );
+
+    return (
+        <View style={styles.recBySection}>
+            <Text
+                style={[
+                    typography.bodyEmphasis,
+                    { color: palette.text },
+                ]}
+            >
+                Recommended by
+            </Text>
+            {recs.length === 1 ? (
+                renderCard(recs[0], false)
+            ) : (
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.recByScroll}
+                    contentContainerStyle={styles.recByScrollContent}
+                >
+                    {recs.map((r) => renderCard(r, true))}
+                </ScrollView>
+            )}
+        </View>
+    );
+}
+
 // "Friends watched this" card — overlapping avatars of friends who've
 // watched the title (privacy-filtered to visibility='friends' upstream),
 // a "[Name] and N others watched this" caption, and a small average of
@@ -2164,22 +2157,49 @@ const styles = StyleSheet.create({
     root: { flex: 1 },
     fillCenter: { alignItems: 'center', justifyContent: 'center' },
     scrollContent: { paddingBottom: spacing.xxl },
-    recContextCard: {
+    recBySection: {
+        // Mirrors the where-to-watch section frame: base inset, lg top gap
+        // (matches the friends-watched card's marginTop so the two social
+        // cards sit a consistent distance apart), and an inner gap between
+        // the heading and the card(s).
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        gap: spacing.md,
+    },
+    recByScroll: {
+        // Full-bleed horizontal row (multi-recommender), next card peeking
+        // — same pattern as the where-to-watch / cast rows.
+        marginHorizontal: -spacing.base,
+    },
+    recByScrollContent: {
+        paddingHorizontal: spacing.base,
+        gap: spacing.md,
+    },
+    recByCardFull: {
+        // Single-recommender card, full content width. Friends-watched card
+        // family: surfaceElevated fill (inline) + radius.md, fill-only (no
+        // shadow). Note-forward: avatar+name header, then the note beneath.
+        borderRadius: radius.md,
+        padding: spacing.md,
+        gap: spacing.sm,
+    },
+    recByCardFixed: {
+        // Multi-recommender card — fixed width so the note wraps to as many
+        // lines as it needs without changing card width; the row scrolls.
+        width: 260,
+        borderRadius: radius.md,
+        padding: spacing.md,
+        gap: spacing.sm,
+    },
+    recByHeader: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.md,
-        marginHorizontal: spacing.base,
-        marginTop: spacing.md,
-        marginBottom: spacing.sm,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md,
-        borderRadius: radius.md,
+        gap: spacing.sm,
     },
-    recContextText: {
+    recByName: {
         flex: 1,
-        gap: spacing.xs,
     },
-    recContextNote: {
+    recByNote: {
         fontStyle: 'italic',
     },
     backdropContainer: {
