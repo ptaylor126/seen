@@ -14,6 +14,7 @@ import {
     Dimensions,
     FlatList,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -34,8 +35,8 @@ import {
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { fetchTitlesByItems } from '@/lib/titles';
-import { imageUrl } from '@/lib/tmdb';
+import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
+import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import { useLibraryFilters } from '@/lib/use-library-filters';
 import { LibraryFilterControls } from '@/components/library-filter-controls';
 import { RequestRecSheet } from '@/components/request-rec-sheet';
@@ -71,6 +72,19 @@ interface ItemRow {
     genreIds: number[] | null;
 }
 
+// One rec in the "Recs between you" strip — either direction. `direction`
+// is from the current user's POV: 'sent' = I recommended it to this friend,
+// 'received' = they recommended it to me (drives the "From you" / "From
+// {name}" caption). posterPath comes from the titles catalogue (TMDB
+// fallback for uncatalogued titles).
+interface RecBetween {
+    recId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    posterPath: string | null;
+    direction: 'sent' | 'received';
+}
+
 // Three-state resolution machine. Renders the whole screen off this:
 //   - loading → spinner
 //   - not-found → handle resolves to no profile (or fetch failed)
@@ -104,6 +118,20 @@ const AVATAR_SIZE = 80;
 // the numbers would only diverge if the Library tweaks them, and
 // noticing that drift on review is fine.
 const POSTER_ASPECT = 1.5; // 2:3 poster
+
+// "Recs between you" strip. Poster width is derived from screen width so
+// ~3.5 cards show and the next is HALF-CUT at the right edge — a clear
+// "scrolls horizontally" cue on any device (same trick as the home
+// "Friends are watching" row). A fixed width tiled flush to the edge and
+// read as a static row. REC_STRIP_INSET/GAP must match the strip styles
+// below (leading inset + inter-card gap) for the peek math to hold.
+const RECS_BETWEEN_LIMIT = 20;
+const REC_STRIP_INSET = spacing.base;
+const REC_STRIP_GAP = spacing.md;
+const REC_BETWEEN_POSTER_W = Math.floor(
+    (Dimensions.get('window').width - REC_STRIP_INSET - 3 * REC_STRIP_GAP) / 3.5,
+);
+const REC_BETWEEN_POSTER_H = Math.round(REC_BETWEEN_POSTER_W * POSTER_ASPECT);
 const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
     2: spacing.base,
     3: spacing.sm,
@@ -183,6 +211,10 @@ export default function FriendDetailScreen() {
         movies: [],
         tv: [],
     });
+    // Recommendation history between the current user and this friend, both
+    // directions, most-recent first. null = not yet loaded / none → the
+    // "Recs between you" strip is hidden.
+    const [recsBetween, setRecsBetween] = useState<RecBetween[] | null>(null);
 
     // Shared filter / sort / search state — same hook the own library
     // (src/app/(tabs)/library.tsx) uses, so the two screens stay in
@@ -370,6 +402,146 @@ export default function FriendDetailScreen() {
                 if (active) setFavorites(result);
             } catch (err) {
                 console.warn('friend favorites fetch failed:', err);
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [state]);
+
+    // ---- Phase 2c: recommendation history between the two users (both
+    // directions). Best-effort: a failure degrades to "no strip," not a
+    // broken profile. RLS (recommendations_select_party: from = auth.uid()
+    // OR to = auth.uid()) already returns both directions — every row here
+    // has me as one party.
+    useEffect(() => {
+        if (state.kind !== 'friends') {
+            setRecsBetween(null);
+            return;
+        }
+        const friendId = state.profile.id;
+        let active = true;
+        (async () => {
+            try {
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+                const me = session?.user.id;
+                if (!me || !active) return;
+
+                const { data: recRows, error: recErr } = await supabase
+                    .from('recommendations')
+                    .select('id, from_user_id, to_user_id, tmdb_id, media_type, sent_at')
+                    .or(
+                        `and(from_user_id.eq.${me},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${me})`,
+                    )
+                    .order('sent_at', { ascending: false })
+                    .limit(RECS_BETWEEN_LIMIT);
+                if (recErr) throw recErr;
+                if (!active) return;
+                const rows = recRows ?? [];
+                if (rows.length === 0) {
+                    setRecsBetween([]);
+                    return;
+                }
+
+                // Poster metadata via the shared catalogue, with the same
+                // TMDB fallback the home screen uses so a rec for an
+                // uncatalogued title still shows a poster.
+                const titleByKey = await fetchTitlesByItems(
+                    rows.map((r) => ({
+                        tmdb_id: r.tmdb_id,
+                        media_type: r.media_type,
+                    })),
+                );
+                const missing = new Map<
+                    string,
+                    { tmdbId: number; mediaType: MediaType }
+                >();
+                for (const r of rows) {
+                    const key = `${r.media_type}:${r.tmdb_id}`;
+                    if (titleByKey.has(key)) continue;
+                    missing.set(key, {
+                        tmdbId: r.tmdb_id,
+                        mediaType: r.media_type as MediaType,
+                    });
+                }
+                if (missing.size > 0) {
+                    const fetched = await Promise.all(
+                        Array.from(missing.values()).map(
+                            async (m): Promise<EnsureTitleArgs | null> => {
+                                try {
+                                    if (m.mediaType === 'movie') {
+                                        const mv = await getMovie(m.tmdbId);
+                                        return {
+                                            tmdbId: m.tmdbId,
+                                            mediaType: 'movie',
+                                            title: mv.title,
+                                            posterPath: mv.poster_path,
+                                            backdropPath: mv.backdrop_path,
+                                            releaseDate:
+                                                mv.release_date &&
+                                                mv.release_date.length > 0
+                                                    ? mv.release_date
+                                                    : null,
+                                            originalLanguage:
+                                                mv.original_language,
+                                            genreIds: mv.genres.map((g) => g.id),
+                                        };
+                                    }
+                                    const tv = await getTV(m.tmdbId);
+                                    return {
+                                        tmdbId: m.tmdbId,
+                                        mediaType: 'tv',
+                                        title: tv.name,
+                                        posterPath: tv.poster_path,
+                                        backdropPath: tv.backdrop_path,
+                                        releaseDate:
+                                            tv.first_air_date &&
+                                            tv.first_air_date.length > 0
+                                                ? tv.first_air_date
+                                                : null,
+                                        originalLanguage: tv.original_language,
+                                        genreIds: tv.genres.map((g) => g.id),
+                                    };
+                                } catch (err) {
+                                    console.warn(
+                                        'recs-between title fallback failed:',
+                                        err,
+                                    );
+                                    return null;
+                                }
+                            },
+                        ),
+                    );
+                    for (const s of fetched) {
+                        if (!s) continue;
+                        titleByKey.set(`${s.mediaType}:${s.tmdbId}`, {
+                            tmdb_id: s.tmdbId,
+                            media_type: s.mediaType,
+                            title: s.title,
+                            poster_path: s.posterPath,
+                            backdrop_path: s.backdropPath,
+                            release_date: s.releaseDate,
+                            original_language: s.originalLanguage,
+                            genre_ids: s.genreIds,
+                        });
+                        void ensureTitle(s);
+                    }
+                }
+
+                const built: RecBetween[] = rows.map((r) => ({
+                    recId: r.id,
+                    tmdbId: r.tmdb_id,
+                    mediaType: r.media_type as MediaType,
+                    posterPath:
+                        titleByKey.get(`${r.media_type}:${r.tmdb_id}`)
+                            ?.poster_path ?? null,
+                    direction: r.from_user_id === me ? 'sent' : 'received',
+                }));
+                if (active) setRecsBetween(built);
+            } catch (err) {
+                console.warn('recs-between fetch failed:', err);
             }
         })();
         return () => {
@@ -766,6 +938,78 @@ export default function FriendDetailScreen() {
                 </View>
             )}
 
+            {/* Recs between you — the recommendation history both
+                directions, most-recent first. Hidden entirely when there
+                are none. Each card: poster + "From you" / "From {name}"
+                (sender). Tapping opens the rec view (the conversation);
+                for a rec you sent, that view shows the sender perspective.
+                Full-bleed horizontal strip, matching Top 5 / where-to-watch. */}
+            {recsBetween && recsBetween.length > 0 && (
+                <View style={styles.recsBetweenSection}>
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            styles.recsBetweenHeading,
+                            { color: palette.text },
+                        ]}
+                    >
+                        Recs between you
+                    </Text>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.recsBetweenScroll}
+                        contentContainerStyle={styles.recsBetweenScrollContent}
+                    >
+                        {recsBetween.map((r) => (
+                            <Pressable
+                                key={r.recId}
+                                onPress={() => router.push(`/rec/${r.recId}`)}
+                                style={({ pressed }) => [
+                                    styles.recBetweenCard,
+                                    pressed && { opacity: 0.6 },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                    r.direction === 'sent'
+                                        ? 'Recommendation you sent'
+                                        : `Recommendation from ${profile.displayName}`
+                                }
+                            >
+                                {r.posterPath ? (
+                                    <Image
+                                        source={{
+                                            uri: imageUrl(r.posterPath, 'w185'),
+                                        }}
+                                        style={styles.recBetweenPoster}
+                                        contentFit="cover"
+                                        transition={150}
+                                    />
+                                ) : (
+                                    <View
+                                        style={[
+                                            styles.recBetweenPoster,
+                                            { backgroundColor: palette.surfaceAlt },
+                                        ]}
+                                    />
+                                )}
+                                <Text
+                                    style={[
+                                        typography.micro,
+                                        { color: palette.textMuted },
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {r.direction === 'sent'
+                                        ? 'From you'
+                                        : `From ${profile.displayName.split(/\s+/)[0]}`}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {/* Local title search — mirrors the library tab's local-filter
                 bar (X = clear-but-stay, Cancel = exit + dismiss). Wired to
                 the shared hook's localQuery state. */}
@@ -1029,6 +1273,35 @@ const styles = StyleSheet.create({
         // height when both arrays are empty (the component returns
         // null), so no stray padding appears in the no-favorites case.
         marginBottom: spacing.md,
+    },
+    recsBetweenSection: {
+        // Heading + strip block, base inset, spaced below Top 5 and above
+        // the search row. Inner gap separates heading from the strip.
+        paddingHorizontal: spacing.base,
+        marginBottom: spacing.md,
+        gap: spacing.sm,
+    },
+    recsBetweenHeading: {
+        // No horizontal inset of its own — the section provides it.
+    },
+    recsBetweenScroll: {
+        // Full-bleed so cards scroll edge-to-edge with the next peeking,
+        // matching the where-to-watch / cast rows.
+        marginHorizontal: -REC_STRIP_INSET,
+    },
+    recsBetweenScrollContent: {
+        // Inset + gap must match REC_BETWEEN_POSTER_W's peek math above.
+        paddingHorizontal: REC_STRIP_INSET,
+        gap: REC_STRIP_GAP,
+    },
+    recBetweenCard: {
+        width: REC_BETWEEN_POSTER_W,
+        gap: spacing.xs,
+    },
+    recBetweenPoster: {
+        width: REC_BETWEEN_POSTER_W,
+        height: REC_BETWEEN_POSTER_H,
+        borderRadius: radius.sm,
     },
     searchRow: {
         // Outer row hosting the search pill + the conditional Cancel
