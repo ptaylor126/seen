@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
     ChevronLeft,
+    MessageSquarePlus,
     Search as SearchIcon,
     Send,
     UserPlus,
@@ -37,6 +38,8 @@ import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
 import { useLibraryFilters } from '@/lib/use-library-filters';
 import { LibraryFilterControls } from '@/components/library-filter-controls';
+import { RequestRecSheet } from '@/components/request-rec-sheet';
+import { useRequestRec } from '@/hooks/use-request-rec';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -113,6 +116,17 @@ function getGridCellWidth(cols: LibraryGridCols, screenWidth: number): number {
     return Math.floor((usable - (cols - 1) * gap) / cols);
 }
 
+// The whole screen is one FlatList so the profile header can scroll away
+// while the filter zone (tabs + filters) sticks. Its data is a tagged
+// union: a single 'filters' row (sticky), then the library body as either
+// one 'listRow' per item (list mode) or one 'gridRow' per row-of-cells
+// (grid mode — FlatList's numColumns is incompatible with
+// stickyHeaderIndices, so we chunk into rows ourselves).
+type LibraryListItem =
+    | { type: 'filters' }
+    | { type: 'listRow'; row: ItemRow }
+    | { type: 'gridRow'; rows: ItemRow[] };
+
 // Leading-star variant — "★4.5" reads tighter at small chip sizes than
 // the trailing-star "4.5★" used in list rows. Mirrors the Library tab.
 function compactRatingStars(rating: number): string {
@@ -142,6 +156,7 @@ export default function FriendDetailScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const requestRec = useRequestRec();
     const { handle: rawHandle } = useLocalSearchParams<{ handle: string }>();
     // Handles are stored lowercase in the DB (per the handle column's
     // CHECK constraint). Defensively coerce the URL param so that a
@@ -623,83 +638,110 @@ export default function FriendDetailScreen() {
     // ---- state.kind === 'friends'
     const { profile, friendshipCreatedAt } = state;
 
-    return (
-        <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
-                <View style={styles.headerBar}>
-                    {backButton}
-                    <View style={styles.headerBarRight}>
-                        <ViewControls
-                            mode={mode}
-                            gridCols={gridCols}
-                            onModeChange={setMode}
-                            onGridColsChange={setGridCols}
-                            palette={palette}
-                        />
-                    </View>
-                </View>
-                <View style={styles.profileBlock}>
-                    <Avatar
-                        avatarUrl={profile.avatarUrl}
-                        displayName={profile.displayName}
-                        seedId={profile.id}
-                        size={AVATAR_SIZE}
+    // Body rows for the single scrolling FlatList. Grid mode is chunked
+    // into rows of `gridCols` cells (numColumns can't coexist with the
+    // sticky filter row); list mode is one item per row. The 'filters'
+    // item is data[0] and sticks (stickyHeaderIndices below). Loading /
+    // error / empty render in the footer so the sticky tabs stay visible.
+    const showBody =
+        !itemsLoading && !itemsError && filters.visibleRows.length > 0;
+    const bodyItems: LibraryListItem[] = [];
+    if (showBody) {
+        if (mode === 'list') {
+            for (const row of filters.visibleRows) {
+                bodyItems.push({ type: 'listRow', row });
+            }
+        } else {
+            for (let i = 0; i < filters.visibleRows.length; i += gridCols) {
+                bodyItems.push({
+                    type: 'gridRow',
+                    rows: filters.visibleRows.slice(i, i + gridCols),
+                });
+            }
+        }
+    }
+    const listData: LibraryListItem[] = [{ type: 'filters' }, ...bodyItems];
+
+    // Profile info — scrolls away with the list (ListHeaderComponent).
+    const listHeader = (
+        <>
+            <View style={styles.profileBlock}>
+                <Avatar
+                    avatarUrl={profile.avatarUrl}
+                    displayName={profile.displayName}
+                    seedId={profile.id}
+                    size={AVATAR_SIZE}
+                />
+                <Text
+                    style={[typography.heading, { color: palette.text }]}
+                    numberOfLines={1}
+                >
+                    {profile.displayName}
+                </Text>
+                <Text style={[typography.caption, { color: palette.textMuted }]}>
+                    @{profile.handle}
+                </Text>
+                <Text style={[typography.micro, { color: palette.textMuted }]}>
+                    {formatFriendsSince(friendshipCreatedAt)}
+                </Text>
+                <Pressable
+                    onPress={() =>
+                        // Launches the title-picker with this friend marked
+                        // as the recommendation target. After the user picks
+                        // a title, library/add forwards to the recommend
+                        // modal with preselect=<id> so it's pre-checked.
+                        router.push({
+                            pathname: '/library/add',
+                            params: { recommendTo: profile.id },
+                        })
+                    }
+                    style={({ pressed }) => [
+                        styles.recommendButton,
+                        { borderColor: palette.accent, opacity: pressed ? 0.6 : 1 },
+                    ]}
+                >
+                    <Send
+                        color={palette.accent}
+                        size={16}
+                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
-                        style={[typography.heading, { color: palette.text }]}
-                        numberOfLines={1}
+                        style={[typography.bodyEmphasis, { color: palette.accent }]}
                     >
-                        {profile.displayName}
+                        Recommend something
                     </Text>
+                </Pressable>
+                {/* Untied request: nudges this friend to send a rec.
+                    Quieter than "Recommend something" (text-tinted, no
+                    accent fill) since it's the lighter-weight ask. */}
+                <Pressable
+                    onPress={() =>
+                        requestRec.open(profile.id, profile.displayName)
+                    }
+                    style={({ pressed }) => [
+                        styles.requestButton,
+                        { opacity: pressed ? 0.6 : 1 },
+                    ]}
+                >
+                    <MessageSquarePlus
+                        color={palette.textMuted}
+                        size={16}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
                     <Text
-                        style={[typography.caption, { color: palette.textMuted }]}
-                    >
-                        @{profile.handle}
-                    </Text>
-                    <Text
-                        style={[typography.micro, { color: palette.textMuted }]}
-                    >
-                        {formatFriendsSince(friendshipCreatedAt)}
-                    </Text>
-                    <Pressable
-                        onPress={() =>
-                            // Launches the title-picker with this friend
-                            // marked as the recommendation target. After
-                            // the user picks a title, library/add forwards
-                            // to the recommend modal with preselect=<id>
-                            // so the recipient is pre-checked.
-                            router.push({
-                                pathname: '/library/add',
-                                params: { recommendTo: profile.id },
-                            })
-                        }
-                        style={({ pressed }) => [
-                            styles.recommendButton,
-                            {
-                                borderColor: palette.accent,
-                                opacity: pressed ? 0.6 : 1,
-                            },
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.textMuted },
                         ]}
                     >
-                        <Send
-                            color={palette.accent}
-                            size={16}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
-                        <Text
-                            style={[typography.bodyEmphasis, { color: palette.accent }]}
-                        >
-                            Recommend something
-                        </Text>
-                    </Pressable>
-                </View>
-            </SafeAreaView>
+                        Request a recommendation
+                    </Text>
+                </Pressable>
+            </View>
 
-            {/* Friend's top 5 sections — between the profile block and
-                the library search/tabs. Conditional wrapper so the
-                marginBottom doesn't fire when the friend has no
-                favorites curated (the inner component would return
-                null and leave a stray gap above the searchBar). */}
+            {/* Friend's top 5 sections — between the profile block and the
+                library search/tabs. Conditional wrapper so the marginBottom
+                doesn't fire when the friend has no favorites curated. */}
             {(favorites.movies.length > 0 || favorites.tv.length > 0) && (
                 <View style={styles.topFiveBlock}>
                     <TopFiveSections
@@ -709,30 +751,19 @@ export default function FriendDetailScreen() {
                         onSelect={(mediaType, tmdbId) =>
                             router.push({
                                 pathname: '/title/[mediaType]/[tmdbId]',
-                                params: {
-                                    mediaType,
-                                    tmdbId: String(tmdbId),
-                                },
+                                params: { mediaType, tmdbId: String(tmdbId) },
                             })
                         }
                     />
                 </View>
             )}
 
-            {/* Local title search — mirrors the library tab's local-
-                filter bar, minus the `+` button + add-overlay (you
-                can't add to someone else's library). Outer row hosts
-                the search pill + a Cancel sibling that appears when
-                the input is focused (mirrors Home's SearchBarInput
-                pattern: Cancel-on-focus dismisses the keyboard +
-                clears the query). Wired to the shared hook's
-                localQuery state. */}
+            {/* Local title search — mirrors the library tab's local-filter
+                bar (X = clear-but-stay, Cancel = exit + dismiss). Wired to
+                the shared hook's localQuery state. */}
             <View style={styles.searchRow}>
                 <View
-                    style={[
-                        styles.searchBar,
-                        { backgroundColor: palette.surface },
-                    ]}
+                    style={[styles.searchBar, { backgroundColor: palette.surface }]}
                 >
                     <SearchIcon
                         color={palette.textMuted}
@@ -756,22 +787,13 @@ export default function FriendDetailScreen() {
                             { color: palette.text },
                         ]}
                     />
-                    {/* Inline clear-X: visible when the field has text.
-                        Clear-only — keeps focus + keyboard up so the
-                        user can re-type. The sibling Cancel button
-                        (rendered when localFocused) is what fully
-                        exits and dismisses the keyboard. Two-
-                        affordance pattern matching Home: X = clear-
-                        but-stay, Cancel = exit. */}
                     {filters.localQuery.length > 0 ? (
                         <Pressable
                             onPress={() => filters.setLocalQuery('')}
                             hitSlop={spacing.sm}
                             accessibilityRole="button"
                             accessibilityLabel="Clear search"
-                            style={({ pressed }) => [
-                                pressed && { opacity: 0.6 },
-                            ]}
+                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                         >
                             <X
                                 color={palette.textMuted}
@@ -795,133 +817,176 @@ export default function FriendDetailScreen() {
                             pressed && { opacity: 0.6 },
                         ]}
                     >
-                        <Text
-                            style={[typography.body, { color: palette.accent }]}
-                        >
+                        <Text style={[typography.body, { color: palette.accent }]}>
                             Cancel
                         </Text>
                     </Pressable>
                 ) : null}
             </View>
+        </>
+    );
 
-            {/* Filter zone — segmented status picker + media/sort/genre
-                controls share one surfaceAlt-toned surface so they
-                read as a distinct grouped region, visually separated
-                from the search bar above. Mirrors the own-library
-                screen's filter zone (src/app/(tabs)/library.tsx) so
-                the two surfaces stay visually consistent. */}
-            <View
-                style={[
-                    styles.filterZone,
-                    { backgroundColor: palette.surfaceAlt },
-                ]}
-            >
-                <View style={styles.segmentedRow}>
-                    <SegmentedControl
-                        options={TAB_OPTIONS}
-                        value={activeTab}
-                        onChange={setActiveTab}
-                        palette={palette}
-                    />
-                </View>
-                {/* Shared filter / sort / genre controls — same
-                    component the own library uses
-                    (src/components/library-filter-controls.tsx).
-                    State + filtering logic in useLibraryFilters
-                    above; this is pure presentation. */}
-                <LibraryFilterControls
+    // Sticky row (data[0]): segmented status picker + media/sort/genre
+    // controls. Pins under the fixed headerBar once the profile info above
+    // scrolls past. surfaceAlt fill hides rows scrolling beneath it.
+    const filterZoneNode = (
+        <View style={[styles.filterZone, { backgroundColor: palette.surfaceAlt }]}>
+            <View style={styles.segmentedRow}>
+                <SegmentedControl
+                    options={TAB_OPTIONS}
+                    value={activeTab}
+                    onChange={setActiveTab}
                     palette={palette}
-                    mediaFilter={filters.mediaFilter}
-                    setMediaFilter={filters.setMediaFilter}
-                    sortBy={filters.sortBy}
-                    setSortBy={filters.setSortBy}
-                    availableSortOptions={filters.availableSortOptions}
-                    genreFilter={filters.genreFilter}
-                    setGenreFilter={filters.setGenreFilter}
-                    genreStripOpen={filters.genreStripOpen}
-                    setGenreStripOpen={filters.setGenreStripOpen}
-                    availableGenres={filters.availableGenres}
                 />
             </View>
+            <LibraryFilterControls
+                palette={palette}
+                mediaFilter={filters.mediaFilter}
+                setMediaFilter={filters.setMediaFilter}
+                sortBy={filters.sortBy}
+                setSortBy={filters.setSortBy}
+                availableSortOptions={filters.availableSortOptions}
+                genreFilter={filters.genreFilter}
+                setGenreFilter={filters.setGenreFilter}
+                genreStripOpen={filters.genreStripOpen}
+                setGenreStripOpen={filters.setGenreStripOpen}
+                availableGenres={filters.availableGenres}
+            />
+        </View>
+    );
 
-            {itemsLoading ? (
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
+    function renderListItem({ item }: { item: LibraryListItem }) {
+        if (item.type === 'filters') return filterZoneNode;
+        if (item.type === 'gridRow') {
+            return (
+                <View
+                    style={[
+                        styles.bodyInset,
+                        styles.gridRow,
+                        { columnGap: GRID_GAP_BY_COLS[gridCols] },
+                    ]}
+                >
+                    {item.rows.map((row) => (
+                        <View key={row.id}>{renderGridCell({ item: row })}</View>
+                    ))}
                 </View>
-            ) : itemsError ? (
-                <View style={styles.fillCenter}>
-                    <Text
-                        style={[typography.body, { color: palette.error }]}
-                        numberOfLines={3}
-                    >
-                        {itemsError}
-                    </Text>
-                </View>
-            ) : filters.visibleRows.length === 0 ? (
-                // Three sub-cases share this branch, in priority order:
-                //   1. Local query present → "no matches in @handle's
-                //      library" (covers the typed-search empty case).
-                //   2. Genre filter active → "No {genre} titles."
-                //   3. Otherwise → the existing per-tab default copy
-                //      (also covers an empty media-filter combination,
-                //      same as the own library does — the active media
-                //      filter is visible in the controls row, so the
-                //      copy doesn't need to spell out which filter is
-                //      narrowing the view).
-                <View style={styles.fillCenter}>
-                    <Text
-                        style={[
-                            typography.body,
-                            styles.centerText,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        {filters.localQuery.trim().length > 0
-                            ? `No matches in @${profile.handle}'s library.`
-                            : filters.genreFilter !== null
-                              ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
-                              : emptyMessage(activeTab, profile.displayName)}
-                    </Text>
-                </View>
-            ) : mode === 'list' ? (
-                <FlatList
-                    key="list"
-                    data={filters.visibleRows}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderRow}
-                    contentContainerStyle={styles.listContent}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    ItemSeparatorComponent={() => (
-                        <View
-                            style={[
-                                styles.separator,
-                                { backgroundColor: palette.border },
-                            ]}
+            );
+        }
+        return (
+            <View style={styles.bodyInset}>{renderRow({ item: item.row })}</View>
+        );
+    }
+
+    // Loading / error / empty live below the sticky filter row so the tabs
+    // stay reachable in every state. Empty copy has three sub-cases, in
+    // priority order: typed-search → genre filter → per-tab default.
+    const listFooter = itemsLoading ? (
+        <View style={styles.footerStatus}>
+            <ActivityIndicator color={palette.accent} />
+        </View>
+    ) : itemsError ? (
+        <View style={styles.footerStatus}>
+            <Text
+                style={[
+                    typography.body,
+                    styles.centerText,
+                    { color: palette.error },
+                ]}
+                numberOfLines={3}
+            >
+                {itemsError}
+            </Text>
+        </View>
+    ) : filters.visibleRows.length === 0 ? (
+        <View style={styles.footerStatus}>
+            <Text
+                style={[
+                    typography.body,
+                    styles.centerText,
+                    { color: palette.textMuted },
+                ]}
+            >
+                {filters.localQuery.trim().length > 0
+                    ? `No matches in @${profile.handle}'s library.`
+                    : filters.genreFilter !== null
+                      ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
+                      : emptyMessage(activeTab, profile.displayName)}
+            </Text>
+        </View>
+    ) : null;
+
+    return (
+        <View style={[styles.root, { backgroundColor: palette.bg }]}>
+            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
+                <View style={styles.headerBar}>
+                    {backButton}
+                    <View style={styles.headerBarRight}>
+                        <ViewControls
+                            mode={mode}
+                            gridCols={gridCols}
+                            onModeChange={setMode}
+                            onGridColsChange={setGridCols}
+                            palette={palette}
                         />
-                    )}
-                />
-            ) : (
-                // FlatList can't change numColumns in place — key
-                // includes the column count so density changes trigger
-                // a clean unmount + remount.
-                <FlatList
-                    key={`grid-${gridCols}`}
-                    data={filters.visibleRows}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderGridCell}
-                    numColumns={gridCols}
-                    contentContainerStyle={styles.gridContent}
-                    columnWrapperStyle={{
-                        columnGap: GRID_GAP_BY_COLS[gridCols],
-                    }}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    ItemSeparatorComponent={() => (
-                        <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
-                    )}
-                />
-            )}
+                    </View>
+                </View>
+            </SafeAreaView>
+
+            <FlatList
+                data={listData}
+                keyExtractor={(item) =>
+                    item.type === 'filters'
+                        ? 'filters'
+                        : item.type === 'listRow'
+                          ? item.row.id
+                          : `gridrow-${item.rows.map((r) => r.id).join('-')}`
+                }
+                renderItem={renderListItem}
+                ListHeaderComponent={listHeader}
+                // ListHeaderComponent is child 0; the sticky 'filters' item
+                // (data[0]) is child 1.
+                stickyHeaderIndices={[1]}
+                ListFooterComponent={listFooter}
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                ItemSeparatorComponent={({
+                    leadingItem,
+                }: {
+                    leadingItem: LibraryListItem;
+                }) => {
+                    if (leadingItem.type === 'listRow') {
+                        return (
+                            <View style={styles.bodyInset}>
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            </View>
+                        );
+                    }
+                    if (leadingItem.type === 'gridRow') {
+                        return (
+                            <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
+                        );
+                    }
+                    // After the sticky filters row: grid gets a small top gap
+                    // (matched old gridContent paddingTop); list sat flush.
+                    return mode === 'grid' ? (
+                        <View style={{ height: spacing.sm }} />
+                    ) : null;
+                }}
+            />
+
+            <RequestRecSheet
+                visible={requestRec.target !== null}
+                friendName={requestRec.target?.name ?? ''}
+                busy={requestRec.busy}
+                onCancel={requestRec.close}
+                onSend={requestRec.send}
+            />
         </View>
     );
 }
@@ -1028,6 +1093,17 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         marginTop: spacing.md,
     },
+    requestButton: {
+        // Borderless sibling under the recommend button — the lighter
+        // "ask" action sits quieter than the bordered "send" action.
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.xs,
+    },
     filterZone: {
         // surfaceAlt wash so the segmented status picker + the
         // shared filter controls below it read as one distinct zone,
@@ -1042,9 +1118,31 @@ const styles = StyleSheet.create({
         // rest of the screen's content gutters.
         paddingHorizontal: spacing.base,
     },
-    listContent: {
-        paddingHorizontal: spacing.base,
+    scrollContent: {
+        // Whole-screen FlatList: only a bottom cushion is needed here.
+        // Horizontal insets live on the header/filter/body items, which
+        // each manage their own gutters.
         paddingBottom: spacing.lg,
+    },
+    bodyInset: {
+        // Horizontal gutter for library rows / grid rows + their
+        // separators — replaces the old listContent/gridContent
+        // paddingHorizontal now that they're items in one FlatList.
+        paddingHorizontal: spacing.base,
+    },
+    gridRow: {
+        // One chunked row of grid cells. flex-start so a short last row
+        // stays left-aligned (matches the old columnWrapper behaviour).
+        flexDirection: 'row',
+    },
+    footerStatus: {
+        // Loading / error / empty message, shown under the sticky filter
+        // row. Top padding gives it air instead of jamming under the tabs.
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: spacing.xxl,
+        paddingHorizontal: spacing.xl,
+        gap: spacing.sm,
     },
     row: {
         flexDirection: 'row',
@@ -1065,15 +1163,10 @@ const styles = StyleSheet.create({
         height: StyleSheet.hairlineWidth,
         marginLeft: POSTER_W + spacing.md,
     },
-    // Grid styles mirror the Library tab so a friend's grid looks
+    // Grid cell styles mirror the Library tab so a friend's grid looks
     // identical at the same density. Values pulled across verbatim;
     // diverging here would create a subtle inconsistency between
     // "my library" and "their library" at a glance.
-    gridContent: {
-        paddingHorizontal: spacing.base,
-        paddingBottom: spacing.lg,
-        paddingTop: spacing.sm,
-    },
     gridCell: {
         position: 'relative',
     },
