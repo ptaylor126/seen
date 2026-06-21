@@ -959,13 +959,29 @@ export default function RecScreen() {
                         {/* Image→page fade, bottom-anchored: a pure alpha
                             ramp of the bg colour (transparent bg → bg),
                             so it melts straight into the page with no grey
-                            or pale band and ends exactly on palette.bg.
-                            (Title legibility comes from the text shadow on
-                            the overlay, not a dark scrim.) */}
+                            or pale band and ends exactly on palette.bg. */}
                         <LinearGradient
                             colors={[palette.bgTransparent, palette.bg]}
                             locations={[0.55, 1]}
                             style={StyleSheet.absoluteFill}
+                        />
+                        {/* Very subtle darkening behind the text band — just
+                            enough to take the edge off a bright backdrop. The
+                            real legibility work is done by the per-glyph text
+                            shadow (overlayShadow), which hugs the letters and
+                            never reads as an overlay band. Kept light (0.28)
+                            and peaked behind the text (~0.72), easing clear
+                            well before the seam (0.92 → 1.0) so there's no
+                            visible patch or grey band at the image→page edge. */}
+                        <LinearGradient
+                            colors={[
+                                'transparent',
+                                'rgba(0, 0, 0, 0.28)',
+                                'transparent',
+                            ]}
+                            locations={[0.35, 0.72, 0.92]}
+                            style={StyleSheet.absoluteFill}
+                            pointerEvents="none"
                         />
                         {/* Title block, bottom-left — the whole block is
                             the tappable bridge to the title page. Poster +
@@ -1025,7 +1041,7 @@ export default function RecScreen() {
                                     style={[
                                         typography.caption,
                                         styles.overlayShadow,
-                                        { color: 'rgba(255,255,255,0.7)' },
+                                        { color: 'rgba(255,255,255,0.85)' },
                                     ]}
                                 >
                                     {[
@@ -1749,12 +1765,14 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     overlayShadow: {
-        // Soft dark halo so white overlay text stays legible over any
-        // backdrop now that the gradient is a clean transparent→bg fade
-        // (no dark scrim).
-        textShadowColor: 'rgba(0, 0, 0, 0.55)',
+        // Strong, tight dark halo hugging each glyph — this (not a heavy
+        // scrim) is what keeps the white title + muted year legible over
+        // ANY backdrop, including bright/busy ones, without any visible
+        // overlay band. High opacity + a smaller radius reads as a crisp
+        // outline rather than a soft cloud.
+        textShadowColor: 'rgba(0, 0, 0, 0.9)',
         textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 8,
+        textShadowRadius: 5,
     },
     overlayCta: {
         // "View details ›" as a solid chip (not bare text on the photo) so
