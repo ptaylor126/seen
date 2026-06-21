@@ -4,6 +4,7 @@ import { X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
+    Dimensions,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -14,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { type LibraryGridCols } from '@/lib/library-view';
 import {
     getPerson,
     getPersonCombinedCredits,
@@ -29,12 +31,35 @@ import {
     typography,
 } from '@/theme/theme';
 
-// Layout constants — kept local because they're only used here. The
-// poster grid is two columns to give every title a decent tap target
-// without paging through endless rows. Aspect ratio matches TMDB
-// poster shape (2:3).
+// Layout constants — kept local because they're only used here.
 const PROFILE_SIZE = 120;
-const POSTER_ASPECT = 2 / 3;
+// 2:3 poster as a height multiplier (height = 1.5 × width), matching the
+// library grid's POSTER_ASPECT.
+const POSTER_ASPECT = 1.5;
+
+// Poster grid sized to match the library grid's default density (3 cols)
+// and tokens. getGridCellWidth / GRID_GAP_BY_COLS are copied verbatim from
+// (tabs)/library.tsx so the two read identically. NOTE: this math now
+// lives in three places (library, friend profile, here) — a future
+// cleanup is a shared sizing util; deliberately not extracted in this
+// change.
+const GRID_COLS: LibraryGridCols = 3;
+const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
+    2: spacing.base,
+    3: spacing.sm,
+    4: spacing.sm,
+};
+function getGridCellWidth(cols: LibraryGridCols, screenWidth: number): number {
+    const gap = GRID_GAP_BY_COLS[cols];
+    const usable = screenWidth - 2 * spacing.base;
+    return Math.floor((usable - (cols - 1) * gap) / cols);
+}
+const GRID_GAP = GRID_GAP_BY_COLS[GRID_COLS];
+const CELL_WIDTH = getGridCellWidth(
+    GRID_COLS,
+    Dimensions.get('window').width,
+);
+const CELL_HEIGHT = Math.floor(CELL_WIDTH * POSTER_ASPECT);
 
 // Sections rendered (in this order). Acting is sourced from `cast`;
 // Director / Writer are sourced from `crew` filtered by `job`. Producer
@@ -318,8 +343,6 @@ function CreditCard({
     );
 }
 
-const CARD_GAP = spacing.base;
-
 const styles = StyleSheet.create({
     screen: { flex: 1 },
     centered: {
@@ -363,22 +386,22 @@ const styles = StyleSheet.create({
         letterSpacing: 1.2,
     },
     grid: {
+        // Wrap grid at the library's default density (GRID_COLS). gap
+        // applies to both columns and rows — matches GRID_GAP_BY_COLS so
+        // 3 fixed-width cells + 2 gaps fill the usable width per row.
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: CARD_GAP,
+        gap: GRID_GAP,
     },
     card: {
-        // Two columns: the parent provides spacing.base horizontal
-        // padding on each edge; CARD_GAP separates the two columns.
-        // width = (100% - gap) / 2 — encoded via flexBasis so the
-        // gap accounting stays correct at any container width.
-        flexBasis: `48%` as const,
-        flexGrow: 0,
+        // Fixed cell width from the library sizing math (getGridCellWidth)
+        // so density matches the library grid. Title/year wrap within it.
+        width: CELL_WIDTH,
         gap: spacing.xs,
     },
     poster: {
-        width: '100%',
-        aspectRatio: POSTER_ASPECT,
+        width: CELL_WIDTH,
+        height: CELL_HEIGHT,
         borderRadius: radius.sm,
     },
 });
