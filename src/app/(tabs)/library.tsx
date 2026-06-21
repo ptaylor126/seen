@@ -864,17 +864,17 @@ export default function LibraryScreen() {
             </View>
 
             {/* Filter zone — the segmented status picker + the
-                media/sort/genre controls share one surfaceAlt-toned
-                surface so they read as a distinct grouped region,
-                visually separated from the search row above (which
-                sits on the page bg). Vertical padding only — children
-                handle their own paddingHorizontal so the genre chip
-                strip inside LibraryFilterControls can still scroll
+                media/sort/genre controls. No fill: the controls sit on
+                the page bg like everything else; a hairline bottom
+                border (see styles.filterZone) quietly separates them
+                from the poster grid below. Vertical padding only —
+                children handle their own paddingHorizontal so the genre
+                chip strip inside LibraryFilterControls can still scroll
                 edge-to-edge. */}
             <View
                 style={[
                     styles.filterZone,
-                    { backgroundColor: palette.surfaceAlt },
+                    { borderBottomColor: palette.border },
                 ]}
             >
                 <View style={styles.segmentedRow}>
@@ -1018,13 +1018,15 @@ export default function LibraryScreen() {
 const styles = StyleSheet.create({
     root: { flex: 1 },
     filterZone: {
-        // surfaceAlt wash so the whole filter region reads as a
-        // distinct zone separate from the search bar above (which
-        // sits on the page bg). Vertical padding only — see the
-        // children's own paddingHorizontal for inset behaviour.
+        // No fill — the controls sit on the page bg. A hairline bottom
+        // border (colour applied inline via palette.border) is the only
+        // separation between the controls and the poster grid below;
+        // quiet divider, not a shaded band. Vertical padding only — see
+        // the children's own paddingHorizontal for inset behaviour.
         paddingTop: spacing.md,
         paddingBottom: spacing.sm,
         gap: spacing.md,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     segmentedRow: {
         // Horizontal inset for the segmented control inside the
