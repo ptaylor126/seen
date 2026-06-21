@@ -7,6 +7,7 @@ import {
     ActivityIndicator,
     Alert,
     Dimensions,
+    Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -21,10 +22,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
-import { type MediaType } from '@/lib/rating';
+import { DeclineSheet } from '@/components/decline-sheet';
+import { RatingSheet } from '@/components/rating-sheet';
+import { RecActionSheet } from '@/components/rec-action-sheet';
+import {
+    formatLibraryBadge,
+    type ItemStatus,
+} from '@/lib/item-status';
+import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
+import { ensureTitle } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    elevation,
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
@@ -70,6 +80,9 @@ interface RecSummary {
     mediaType: MediaType;
     note: string | null;
     sentAt: string;
+    // Rec lifecycle state. Drives the Decline action's gate (recipient +
+    // 'pending' only) and is flipped optimistically on decline / undo.
+    status: string;
 }
 
 interface TitleMeta {
@@ -79,6 +92,12 @@ interface TitleMeta {
     // Wide TMDB backdrop for the immersive header — the same image the
     // home hero card uses, resolved through the shared imageUrl() util.
     backdropPath: string | null;
+    // Extra TMDB fields needed to stamp the shared `titles` catalogue via
+    // ensureTitle when the recipient adds this title to their library
+    // (send_recommendation doesn't stamp titles, so the row may not exist).
+    releaseDate: string | null;
+    originalLanguage: string;
+    genreIds: number[];
 }
 
 interface ReactionRow {
@@ -147,6 +166,27 @@ export default function RecScreen() {
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
     const scrollRef = useRef<ScrollView | null>(null);
+    // Whether the keyboard is up — drops the composer's bottom safe-area
+    // inset while typing (the keyboard already covers the home-indicator
+    // area, so keeping the inset leaves a white gap above the keyboard).
+    const [keyboardOpen, setKeyboardOpen] = useState(false);
+    // The recipient's library relationship to this title (drives the
+    // action button label + the action sheet's selected state). null = not
+    // in their library yet.
+    const [currentStatus, setCurrentStatus] = useState<ItemStatus | null>(
+        null,
+    );
+    const [currentRating, setCurrentRating] = useState<number | null>(null);
+    const [showActionSheet, setShowActionSheet] = useState(false);
+    const [showRatingSheet, setShowRatingSheet] = useState(false);
+    const [statusBusy, setStatusBusy] = useState(false);
+    // Decline flow: the sheet, its in-flight write, and the post-decline
+    // "Declined · Undo" bar (with the timer that auto-returns to the inbox
+    // once the undo window closes).
+    const [showDeclineSheet, setShowDeclineSheet] = useState(false);
+    const [declineBusy, setDeclineBusy] = useState(false);
+    const [undoVisible, setUndoVisible] = useState(false);
+    const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Single loader for the whole screen — splits into three queries
     // after the rec lookup so the dependent fetches (profiles by id,
@@ -169,7 +209,7 @@ export default function RecScreen() {
             const { data: recRow, error: recErr } = await supabase
                 .from('recommendations')
                 .select(
-                    'id, from_user_id, to_user_id, tmdb_id, media_type, note, sent_at',
+                    'id, from_user_id, to_user_id, tmdb_id, media_type, note, sent_at, status',
                 )
                 .eq('id', recId)
                 .maybeSingle();
@@ -207,6 +247,7 @@ export default function RecScreen() {
                 mediaType,
                 note: recRow.note,
                 sentAt: recRow.sent_at,
+                status: recRow.status,
             };
             setRec(summary);
 
@@ -223,6 +264,7 @@ export default function RecScreen() {
                 reactionsResult,
                 commentsResult,
                 titleResult,
+                itemResult,
             ] = await Promise.all([
                 supabase
                     .from('profiles')
@@ -240,15 +282,37 @@ export default function RecScreen() {
                 (mediaType === 'movie'
                     ? getMovie(summary.tmdbId)
                     : getTV(summary.tmdbId)
-                ).then<TitleMeta>((data) => ({
-                    title: 'title' in data ? data.title : data.name,
-                    year:
+                ).then<TitleMeta>((data) => {
+                    const rawDate =
                         'release_date' in data
-                            ? data.release_date?.slice(0, 4) ?? ''
-                            : data.first_air_date?.slice(0, 4) ?? '',
-                    posterPath: data.poster_path,
-                    backdropPath: data.backdrop_path,
-                })),
+                            ? data.release_date
+                            : data.first_air_date;
+                    return {
+                        title: 'title' in data ? data.title : data.name,
+                        year:
+                            typeof rawDate === 'string'
+                                ? rawDate.slice(0, 4)
+                                : '',
+                        posterPath: data.poster_path,
+                        backdropPath: data.backdrop_path,
+                        releaseDate:
+                            typeof rawDate === 'string' && rawDate.length > 0
+                                ? rawDate
+                                : null,
+                        originalLanguage: data.original_language,
+                        genreIds: data.genres.map((g) => g.id),
+                    };
+                }),
+                // The recipient's existing library row for this title, if
+                // any — drives the action button label + the action sheet's
+                // selected status.
+                supabase
+                    .from('items')
+                    .select('status, rating')
+                    .eq('user_id', userId)
+                    .eq('tmdb_id', summary.tmdbId)
+                    .eq('media_type', mediaType)
+                    .maybeSingle(),
             ]);
 
             // Mark related notifications read. Best-effort — if it
@@ -348,6 +412,20 @@ export default function RecScreen() {
             setCommentReactions(commentReactionsMap);
 
             setTitleMeta(titleResult);
+
+            // Seed the library status from the recipient's items row.
+            const itemRow = itemResult.data;
+            if (
+                itemRow &&
+                (itemRow.status === 'watchlist' ||
+                    itemRow.status === 'watching' ||
+                    itemRow.status === 'watched')
+            ) {
+                setCurrentStatus(itemRow.status);
+                setCurrentRating(
+                    typeof itemRow.rating === 'number' ? itemRow.rating : null,
+                );
+            }
         } catch (err) {
             console.error('rec detail load failed:', err);
             setError(err instanceof Error ? err.message : 'Failed to load');
@@ -378,6 +456,195 @@ export default function RecScreen() {
     // the same rule server-side). The sender still sees the full row +
     // the recipient's caption underneath, but the picker cells are inert.
     const isRecipient = !!myUserId && !!rec && myUserId === rec.toUserId;
+
+    // Clear the undo timer if the screen unmounts mid-window.
+    useEffect(() => {
+        return () => {
+            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        };
+    }, []);
+
+    // Track keyboard visibility so the composer can drop its bottom
+    // safe-area inset while typing (the keyboard covers the home-indicator
+    // area; keeping the inset leaves a white gap above the keyboard).
+    // willShow/Hide on iOS for in-step animation; did* on Android.
+    useEffect(() => {
+        const showEvt =
+            Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvt =
+            Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const showSub = Keyboard.addListener(showEvt, () =>
+            setKeyboardOpen(true),
+        );
+        const hideSub = Keyboard.addListener(hideEvt, () =>
+            setKeyboardOpen(false),
+        );
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
+
+    // Decline: set the rec to 'dismissed' (+ optional note) so it drops
+    // from the recipient's pending inbox. Optimistic — flip local status
+    // and show the undo bar immediately; revert on failure. After a short
+    // window (no undo), auto-return to the inbox.
+    async function handleConfirmDecline(note: string) {
+        if (!rec || declineBusy) return;
+        setDeclineBusy(true);
+        setShowDeclineSheet(false);
+        const previousStatus = rec.status;
+        // Optimistic local flip so the Decline action hides at once.
+        setRec((prev) => (prev ? { ...prev, status: 'dismissed' } : prev));
+        try {
+            const { error: declineErr } = await supabase
+                .from('recommendations')
+                .update({
+                    status: 'dismissed',
+                    // '' → null: silent decline stores no reason.
+                    dismiss_reason: note.length > 0 ? note : null,
+                })
+                .eq('id', rec.id);
+            if (declineErr) throw declineErr;
+
+            // Brief "Declined · Undo" window, then return to the inbox
+            // (the rec is already out of the pending list).
+            setUndoVisible(true);
+            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+            undoTimerRef.current = setTimeout(() => {
+                setUndoVisible(false);
+                router.back();
+            }, 4000);
+        } catch (err) {
+            // Revert the optimistic flip and surface the error.
+            setRec((prev) =>
+                prev ? { ...prev, status: previousStatus } : prev,
+            );
+            console.error('decline failed:', err);
+            Alert.alert('Could not decline', 'Please try again.');
+        } finally {
+            setDeclineBusy(false);
+        }
+    }
+
+    // Undo a just-declined rec: back to 'pending', clearing dismiss_reason
+    // (the CHECK rejects a reason on a non-dismissed row). Cancels the
+    // auto-return timer and keeps the user on the rec.
+    async function handleUndoDecline() {
+        if (!rec) return;
+        if (undoTimerRef.current) {
+            clearTimeout(undoTimerRef.current);
+            undoTimerRef.current = null;
+        }
+        setUndoVisible(false);
+        setRec((prev) => (prev ? { ...prev, status: 'pending' } : prev));
+        try {
+            const { error: undoErr } = await supabase
+                .from('recommendations')
+                .update({ status: 'pending', dismiss_reason: null })
+                .eq('id', rec.id);
+            if (undoErr) throw undoErr;
+        } catch (err) {
+            // Re-flip to dismissed if the undo write failed.
+            setRec((prev) =>
+                prev ? { ...prev, status: 'dismissed' } : prev,
+            );
+            console.error('undo decline failed:', err);
+            Alert.alert('Could not undo', 'Please try again.');
+        }
+    }
+
+    // Set the recipient's library status from the action sheet. Mirrors
+    // the title page: upsert the items row (nulling rating/watched_at off
+    // 'watched', stamping watched_at on it), stamp the shared titles
+    // catalogue via ensureTitle (the rec-send path doesn't), and for
+    // 'watched' open the rating sheet (applyWatchedRating then transitions
+    // this rec → watched in handleRate). Watchlist/watching leave the rec
+    // untouched (stays pending in the inbox). Optimistic; reverts on error.
+    async function handlePickStatus(status: ItemStatus) {
+        setShowActionSheet(false);
+        if (!rec || statusBusy || status === currentStatus) return;
+        setStatusBusy(true);
+        const prevStatus = currentStatus;
+        const prevRating = currentRating;
+        const isWatched = status === 'watched';
+        setCurrentStatus(status);
+        if (!isWatched) setCurrentRating(null);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+
+            const { error: upsertError } = await supabase.from('items').upsert(
+                {
+                    user_id: userId,
+                    tmdb_id: rec.tmdbId,
+                    media_type: rec.mediaType,
+                    status,
+                    // rating MUST be null off 'watched' (CHECK); undefined
+                    // on watched preserves any existing DB rating.
+                    rating: isWatched ? undefined : null,
+                    watched_at: isWatched ? new Date().toISOString() : null,
+                },
+                { onConflict: 'user_id,tmdb_id,media_type' },
+            );
+            if (upsertError) throw upsertError;
+
+            // Stamp the catalogue so the title renders in their library
+            // (send_recommendation doesn't create the titles row).
+            if (titleMeta) {
+                void ensureTitle({
+                    tmdbId: rec.tmdbId,
+                    mediaType: rec.mediaType,
+                    title: titleMeta.title,
+                    posterPath: titleMeta.posterPath,
+                    backdropPath: titleMeta.backdropPath,
+                    releaseDate: titleMeta.releaseDate,
+                    originalLanguage: titleMeta.originalLanguage,
+                    genreIds: titleMeta.genreIds,
+                });
+            }
+
+            if (isWatched) setShowRatingSheet(true);
+        } catch (err) {
+            setCurrentStatus(prevStatus);
+            setCurrentRating(prevRating);
+            console.error('set status failed:', err);
+            Alert.alert('Could not update', 'Please try again.');
+        } finally {
+            setStatusBusy(false);
+        }
+    }
+
+    // Rating sheet submit after a 'watched' pick. applyWatchedRating writes
+    // items.rating AND transitions this (pending) rec → watched, so it
+    // stays in the inbox with the watched marker. Reflect both locally.
+    async function handleRate(rating: number | null) {
+        setShowRatingSheet(false);
+        if (!rec) return;
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+            await applyWatchedRating({
+                userId,
+                tmdbId: rec.tmdbId,
+                mediaType: rec.mediaType,
+                rating,
+            });
+            if (rating !== null) setCurrentRating(rating);
+            // The rec is now watched (applyWatchedRating transitioned it) —
+            // reflect locally so the Decline option drops out.
+            setRec((prev) => (prev ? { ...prev, status: 'watched' } : prev));
+        } catch (err) {
+            console.error('rating failed:', err);
+            Alert.alert('Could not save rating', 'Please try again.');
+        }
+    }
 
     async function handleReactionTap(emoji: ReactionEmoji) {
         if (!myUserId || !rec || reactionBusy || !isRecipient) return;
@@ -643,11 +910,14 @@ export default function RecScreen() {
             <KeyboardAvoidingView
                 style={styles.flex}
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                // Account for the modal sheet not pinning to the top
-                // of the device — iOS modal slides down ~30pt from
-                // the status bar. Without this offset the composer
-                // sits flush against the keyboard top.
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+                // The rec view is a full-screen card (was a modal sheet),
+                // so this KeyboardAvoidingView starts at the very top of the
+                // screen — offset 0. The old 40pt offset (tuned for the
+                // modal's ~30pt top inset) over-padded once we switched to
+                // 'card': it pushed the composer ~40pt above the keyboard
+                // (the gap) and over-shrank the scroll area, collapsing the
+                // visible content.
+                keyboardVerticalOffset={0}
             >
                 <ScrollView
                     ref={scrollRef}
@@ -768,18 +1038,23 @@ export default function RecScreen() {
                                         .join(' · ')}
                                 </Text>
                                 {/* Labelled, obvious tap affordance. */}
-                                <View style={styles.overlayCta}>
+                                <View
+                                    style={[
+                                        styles.overlayCta,
+                                        { backgroundColor: palette.surface },
+                                    ]}
+                                >
                                     <Text
                                         style={[
                                             typography.caption,
-                                            styles.overlayShadow,
-                                            { color: 'rgba(255,255,255,0.9)' },
+                                            styles.overlayCtaText,
+                                            { color: palette.text },
                                         ]}
                                     >
                                         View details
                                     </Text>
                                     <ChevronRight
-                                        color="rgba(255,255,255,0.9)"
+                                        color={palette.text}
                                         size={16}
                                         strokeWidth={ICON_STROKE_WIDTH}
                                     />
@@ -901,6 +1176,72 @@ export default function RecScreen() {
                         </View>
                     ) : null}
 
+                    {/* Two actions between the reactions and the composer.
+                        Save = primary (filled accent) → opens the status
+                        sheet (Watchlist / Watching / Watched). "Not for me"
+                        = secondary (muted text) → the decline flow; shown
+                        only when this user is the recipient and the rec is
+                        still pending. Both stay lighter than the note hero
+                        above. */}
+                    <View style={styles.actionArea}>
+                        <Pressable
+                            onPress={() => setShowActionSheet(true)}
+                            disabled={statusBusy}
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                                currentStatus
+                                    ? `Saved: ${formatLibraryBadge(currentStatus, currentRating)}. Tap to change.`
+                                    : 'Save to your library'
+                            }
+                            style={({ pressed }) => [
+                                styles.saveButton,
+                                {
+                                    backgroundColor: palette.accent,
+                                    opacity: pressed || statusBusy ? 0.6 : 1,
+                                },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.textInverse },
+                                ]}
+                            >
+                                {currentStatus
+                                    ? formatLibraryBadge(
+                                          currentStatus,
+                                          currentRating,
+                                      )
+                                    : 'Save'}
+                            </Text>
+                        </Pressable>
+
+                        {isRecipient && rec.status === 'pending' ? (
+                            <Pressable
+                                onPress={() => setShowDeclineSheet(true)}
+                                disabled={declineBusy}
+                                accessibilityRole="button"
+                                accessibilityLabel="Not for me"
+                                style={({ pressed }) => [
+                                    styles.notForMeButton,
+                                    {
+                                        opacity:
+                                            pressed || declineBusy ? 0.6 : 1,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    Not for me
+                                </Text>
+                            </Pressable>
+                        ) : null}
+                    </View>
+
                     {/* Comments — no label; the composer placeholder
                         carries the empty state. An empty list renders
                         nothing. */}
@@ -1019,22 +1360,27 @@ export default function RecScreen() {
                 </ScrollView>
 
                 {/* Composer pinned to the bottom of the keyboard
-                    avoidance container. Reads as its own zone via a
-                    palette.surface fill + 1pt borderStrong top edge +
-                    a soft upward shadow (iOS) / elevation (Android),
-                    since surface and bg are too close in tone for the
-                    fill alone to register. paddingBottom adds breathing
-                    room ABOVE the safe-area inset so the controls
-                    aren't glued to the screen edge when the keyboard
-                    is dismissed. Disabled state mirrors the button's
-                    enable rule so the affordance stays obvious. */}
+                    avoidance container. Reads as its own zone via the
+                    palette.surface fill alone (no top border/shadow — those
+                    read as a hard stroke against the plum page). Bottom
+                    padding is keyboard-aware (see inline): snug to the
+                    safe-area edge when closed, flush above the keyboard when
+                    open. Disabled state mirrors the button's enable rule so
+                    the affordance stays obvious. */}
                 <View
                     style={[
                         styles.composer,
                         {
                             backgroundColor: palette.surface,
-                            borderTopColor: palette.borderStrong,
-                            paddingBottom: insets.bottom + spacing.sm,
+                            // Keyboard up → the home-indicator inset is
+                            // covered by the keyboard, so drop it (just the
+                            // small gap) to sit flush above the keyboard.
+                            // Keyboard down → just the safe-area inset, so
+                            // the bar sits snug at the very bottom (no extra
+                            // gap above the home indicator).
+                            paddingBottom: keyboardOpen
+                                ? spacing.sm
+                                : insets.bottom,
                         },
                     ]}
                 >
@@ -1237,6 +1583,73 @@ export default function RecScreen() {
                     </View>
                 ) : null}
             </Modal>
+
+            {/* Save sheet — Watchlist / Watching / Watched (status only;
+                "Not for me" is its own button). */}
+            <RecActionSheet
+                visible={showActionSheet}
+                currentStatus={currentStatus}
+                busy={statusBusy}
+                onClose={() => setShowActionSheet(false)}
+                onPickStatus={handlePickStatus}
+            />
+
+            {/* Rating sheet — opens after a 'watched' pick. */}
+            <RatingSheet
+                visible={showRatingSheet}
+                busy={false}
+                initialRating={currentRating}
+                onSubmit={handleRate}
+            />
+
+            {/* Decline sheet — optional note + Confirm. */}
+            <DeclineSheet
+                visible={showDeclineSheet}
+                senderName={pillName === 'You' ? '' : pillName}
+                busy={declineBusy}
+                onCancel={() => setShowDeclineSheet(false)}
+                onConfirm={handleConfirmDecline}
+            />
+
+            {/* Brief "Declined · Undo" bar after a decline — sits above the
+                bottom safe area; auto-returns to the inbox when the window
+                closes (see handleConfirmDecline). */}
+            {undoVisible ? (
+                <View
+                    style={[
+                        styles.undoBar,
+                        {
+                            backgroundColor: palette.text,
+                            bottom: insets.bottom + spacing.base,
+                        },
+                    ]}
+                >
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.textInverse },
+                        ]}
+                    >
+                        Declined
+                    </Text>
+                    <Pressable
+                        onPress={handleUndoDecline}
+                        accessibilityRole="button"
+                        accessibilityLabel="Undo decline"
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.accent },
+                            ]}
+                        >
+                            Undo
+                        </Text>
+                    </Pressable>
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -1244,6 +1657,38 @@ export default function RecScreen() {
 const styles = StyleSheet.create({
     root: { flex: 1 },
     flex: { flex: 1 },
+    // Save (filled) + "Not for me" (muted) actions between the reactions
+    // and the composer. The note hero stays the largest element above.
+    actionArea: {
+        marginTop: spacing.lg,
+        gap: spacing.xs,
+    },
+    saveButton: {
+        // Primary, filled accent — the prominent action.
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+    },
+    notForMeButton: {
+        // Secondary, understated — muted text, no fill/border, so it's
+        // clearly lighter than Save but still visible.
+        alignSelf: 'center',
+        paddingVertical: spacing.sm,
+    },
+    // Transient "Declined · Undo" bar, floated above the bottom inset.
+    undoBar: {
+        position: 'absolute',
+        left: spacing.base,
+        right: spacing.base,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.md,
+        borderRadius: radius.md,
+        ...elevation.md,
+    },
     fillCenter: {
         flex: 1,
         alignItems: 'center',
@@ -1312,11 +1757,21 @@ const styles = StyleSheet.create({
         textShadowRadius: 8,
     },
     overlayCta: {
-        // "View details ›" labelled tap affordance under the metadata.
+        // "View details ›" as a solid chip (not bare text on the photo) so
+        // it's clearly legible + reads as a real tappable control.
+        // Content-sized, left-aligned. backgroundColor applied inline.
         flexDirection: 'row',
         alignItems: 'center',
+        alignSelf: 'flex-start',
         gap: spacing.xs,
-        marginTop: spacing.xs,
+        marginTop: spacing.sm,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
+    },
+    overlayCtaText: {
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
     },
     overlayTitle: {
         // Larger than typography.heading — the title is the headline of
@@ -1399,22 +1854,9 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
         paddingTop: spacing.sm,
-        // paddingBottom is set inline (safe-area inset + spacing).
-        borderTopWidth: 1,
-        // Soft upward shadow so the bar floats above the scrolling
-        // content. iOS supports negative shadowOffset directly; Android
-        // ignores negative offsets but still draws elevation, which
-        // gives us a thin separation line — good enough as a fallback.
-        // shadowColor stays hardcoded '#000' deliberately: it's
-        // theme-independent (palette.shadow is '#000000' in both
-        // light and dark) and this is a static StyleSheet.create where
-        // palette isn't in scope. Visibility is controlled by
-        // shadowOpacity below, not the base color.
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 8,
-        elevation: 8,
+        // paddingBottom is set inline (safe-area inset, keyboard-aware).
+        // No top border or shadow — the surface fill alone separates the
+        // bar from the plum page; a stroke/shadow read as a hard line.
     },
     composerFieldWrap: {
         // Fully-rounded pill holding the input + the inline filled send
