@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowUp, ChevronRight, X } from 'lucide-react-native';
+import { ArrowUp, ChevronRight, X, XCircle } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -34,7 +34,6 @@ import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
-    elevation,
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
@@ -180,13 +179,12 @@ export default function RecScreen() {
     const [showActionSheet, setShowActionSheet] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
     const [statusBusy, setStatusBusy] = useState(false);
-    // Decline flow: the sheet, its in-flight write, and the post-decline
-    // "Declined · Undo" bar (with the timer that auto-returns to the inbox
-    // once the undo window closes).
+    // Decline ("Not for me") flow: the sheet + its in-flight write. A
+    // declined rec now stays on screen in a persistent "you passed on this"
+    // state with an inline un-decline ("Changed my mind") — no transient
+    // undo bar / auto-return.
     const [showDeclineSheet, setShowDeclineSheet] = useState(false);
     const [declineBusy, setDeclineBusy] = useState(false);
-    const [undoVisible, setUndoVisible] = useState(false);
-    const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Single loader for the whole screen — splits into three queries
     // after the rec lookup so the dependent fetches (profiles by id,
@@ -457,13 +455,6 @@ export default function RecScreen() {
     // the recipient's caption underneath, but the picker cells are inert.
     const isRecipient = !!myUserId && !!rec && myUserId === rec.toUserId;
 
-    // Clear the undo timer if the screen unmounts mid-window.
-    useEffect(() => {
-        return () => {
-            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-        };
-    }, []);
-
     // Track keyboard visibility so the composer can drop its bottom
     // safe-area inset while typing (the keyboard covers the home-indicator
     // area; keeping the inset leaves a white gap above the keyboard).
@@ -485,61 +476,76 @@ export default function RecScreen() {
         };
     }, []);
 
-    // Decline ("Not for me"). DEFERRED two-step so the sender's
-    // declined-with-note notification is undo-safe (it's fired by the
-    // notify_recommendation_declined trigger only when dismiss_reason
-    // transitions to non-null):
-    //   Step 1 (now): status='dismissed', dismiss_reason=NULL — drops the
-    //     rec from the inbox, and writes NO note → trigger doesn't fire,
-    //     so nothing is sent during the undo window.
-    //   Step 2 (after the 4s window, only if there's a note AND no undo):
-    //     a second update sets dismiss_reason=<note> → THAT transition
-    //     fires the trigger → the sender is notified.
-    // Undo within the window writes pending + null, so the note is never
-    // persisted and the sender is never notified. A silent decline (no
-    // note) only ever does step 1 — fully silent, forever.
+    // Decline ("Not for me"). Single immediate write — the user stays on
+    // the rec, which re-renders to the "you passed on this" state with an
+    // inline un-decline. A noted decline:
+    //   - sets status='dismissed' + dismiss_reason=<note>: the null→non-null
+    //     transition fires notify_recommendation_declined → the sender's one
+    //     "passed on" notification; AND
+    //   - posts the note as a real comment (is_decline_note=true) so it
+    //     shows in the thread for both parties. The flag stops the
+    //     comment-INSERT trigger from also firing rec_commented (no
+    //     double-notify), and the comment persists through un-decline.
+    // A silent decline (no note) sets dismiss_reason=null — no notification,
+    // no comment.
     async function handleConfirmDecline(note: string) {
-        if (!rec || declineBusy) return;
+        if (!rec || declineBusy || !myUserId) return;
         setDeclineBusy(true);
         setShowDeclineSheet(false);
         const previousStatus = rec.status;
         const recId = rec.id;
-        // Optimistic local flip so the Decline action hides at once.
+        const hasNote = note.length > 0;
+        // Optimistic flip so the action area switches to the passed state.
         setRec((prev) => (prev ? { ...prev, status: 'dismissed' } : prev));
         try {
-            // Step 1 — dismiss WITHOUT the note (silent; no notification).
             const { error: declineErr } = await supabase
                 .from('recommendations')
-                .update({ status: 'dismissed', dismiss_reason: null })
+                .update({
+                    status: 'dismissed',
+                    dismiss_reason: hasNote ? note : null,
+                })
                 .eq('id', recId);
             if (declineErr) throw declineErr;
 
-            // Brief "Declined · Undo" window, then return to the inbox.
-            setUndoVisible(true);
-            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-            undoTimerRef.current = setTimeout(() => {
-                undoTimerRef.current = null;
-                setUndoVisible(false);
-                // Step 2 — window elapsed with no undo. Persist the note
-                // now (if any): this null→non-null transition fires the
-                // trigger that notifies the sender. Fire-and-forget so it
-                // still completes as the screen unmounts on router.back().
-                if (note.length > 0) {
-                    void supabase
-                        .from('recommendations')
-                        .update({ dismiss_reason: note })
-                        .eq('id', recId)
-                        .then(({ error }) => {
-                            if (error) {
-                                console.error(
-                                    'decline note write failed:',
-                                    error,
-                                );
-                            }
-                        });
+            if (hasNote) {
+                // Post the note as a comment in the thread. is_decline_note
+                // suppresses the duplicate rec_commented notification (the
+                // rec_declined "passed on" notification above is the single
+                // notification). Optimistic append on success.
+                const { data: inserted, error: commentErr } = await supabase
+                    .from('recommendation_comments')
+                    .insert({
+                        recommendation_id: recId,
+                        user_id: myUserId,
+                        body: note,
+                        is_decline_note: true,
+                    })
+                    .select('id, created_at')
+                    .single();
+                if (commentErr) {
+                    // Non-fatal: the decline itself stuck. Log; the note
+                    // still lives in dismiss_reason + the sender's
+                    // notification.
+                    console.error('decline note comment failed:', commentErr);
+                } else {
+                    const myProfile: PartyProfile | null =
+                        rec.toUserId === myUserId
+                            ? recipient
+                            : rec.fromUserId === myUserId
+                              ? sender
+                              : null;
+                    setComments((prev) => [
+                        ...prev,
+                        {
+                            id: inserted.id,
+                            userId: myUserId,
+                            author: myProfile,
+                            body: note,
+                            createdAt: inserted.created_at,
+                        },
+                    ]);
                 }
-                router.back();
-            }, 4000);
+            }
         } catch (err) {
             // Revert the optimistic flip and surface the error.
             setRec((prev) =>
@@ -552,16 +558,14 @@ export default function RecScreen() {
         }
     }
 
-    // Undo a just-declined rec: back to 'pending', clearing dismiss_reason
-    // (the CHECK rejects a reason on a non-dismissed row). Cancels the
-    // auto-return timer and keeps the user on the rec.
+    // Un-decline ("Changed my mind"): back to 'pending', clearing
+    // dismiss_reason (the CHECK rejects a reason on a non-dismissed row).
+    // The decline-note comment is intentionally left in the thread — it was
+    // a real message. The action area re-renders to Save / "Not for me".
     async function handleUndoDecline() {
-        if (!rec) return;
-        if (undoTimerRef.current) {
-            clearTimeout(undoTimerRef.current);
-            undoTimerRef.current = null;
-        }
-        setUndoVisible(false);
+        if (!rec || declineBusy) return;
+        setDeclineBusy(true);
+        const previousStatus = rec.status;
         setRec((prev) => (prev ? { ...prev, status: 'pending' } : prev));
         try {
             const { error: undoErr } = await supabase
@@ -572,10 +576,12 @@ export default function RecScreen() {
         } catch (err) {
             // Re-flip to dismissed if the undo write failed.
             setRec((prev) =>
-                prev ? { ...prev, status: 'dismissed' } : prev,
+                prev ? { ...prev, status: previousStatus } : prev,
             );
             console.error('undo decline failed:', err);
             Alert.alert('Could not undo', 'Please try again.');
+        } finally {
+            setDeclineBusy(false);
         }
     }
 
@@ -1217,55 +1223,39 @@ export default function RecScreen() {
                         </View>
                     ) : null}
 
-                    {/* Two actions between the reactions and the composer.
-                        Save = primary (filled accent) → opens the status
-                        sheet (Watchlist / Watching / Watched). "Not for me"
-                        = secondary (muted text) → the decline flow; shown
-                        only when this user is the recipient and the rec is
-                        still pending. Both stay lighter than the note hero
-                        above. */}
-                    <View style={styles.actionArea}>
-                        <Pressable
-                            onPress={() => setShowActionSheet(true)}
-                            disabled={statusBusy}
-                            accessibilityRole="button"
-                            accessibilityLabel={
-                                currentStatus
-                                    ? `Saved: ${formatLibraryBadge(currentStatus, currentRating)}. Tap to change.`
-                                    : 'Save to your library'
-                            }
-                            style={({ pressed }) => [
-                                styles.saveButton,
-                                {
-                                    backgroundColor: palette.accent,
-                                    opacity: pressed || statusBusy ? 0.6 : 1,
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.textInverse },
-                                ]}
-                            >
-                                {currentStatus
-                                    ? formatLibraryBadge(
-                                          currentStatus,
-                                          currentRating,
-                                      )
-                                    : 'Save'}
-                            </Text>
-                        </Pressable>
-
-                        {isRecipient && rec.status === 'pending' ? (
+                    {/* Action area. Recipient who has passed → a "you
+                        passed on this" marker + "Changed my mind"
+                        (un-decline), which returns the rec to pending so the
+                        normal actions render again. Otherwise: Save = primary
+                        (filled accent) → status sheet; "Not for me" =
+                        secondary (muted) → decline, shown only for the
+                        recipient on a still-pending rec. */}
+                    {isRecipient && rec.status === 'dismissed' ? (
+                        <View style={styles.actionArea}>
+                            <View style={styles.passedMarker}>
+                                <XCircle
+                                    color={palette.textMuted}
+                                    size={16}
+                                    strokeWidth={ICON_STROKE_WIDTH}
+                                />
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    You passed on this
+                                </Text>
+                            </View>
                             <Pressable
-                                onPress={() => setShowDeclineSheet(true)}
+                                onPress={handleUndoDecline}
                                 disabled={declineBusy}
                                 accessibilityRole="button"
-                                accessibilityLabel="Not for me"
+                                accessibilityLabel="Changed my mind"
                                 style={({ pressed }) => [
-                                    styles.notForMeButton,
+                                    styles.saveButton,
                                     {
+                                        backgroundColor: palette.accent,
                                         opacity:
                                             pressed || declineBusy ? 0.6 : 1,
                                     },
@@ -1274,14 +1264,76 @@ export default function RecScreen() {
                                 <Text
                                     style={[
                                         typography.bodyEmphasis,
-                                        { color: palette.textMuted },
+                                        { color: palette.textInverse },
                                     ]}
                                 >
-                                    Not for me
+                                    Changed my mind
                                 </Text>
                             </Pressable>
-                        ) : null}
-                    </View>
+                        </View>
+                    ) : (
+                        <View style={styles.actionArea}>
+                            <Pressable
+                                onPress={() => setShowActionSheet(true)}
+                                disabled={statusBusy}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                    currentStatus
+                                        ? `Saved: ${formatLibraryBadge(currentStatus, currentRating)}. Tap to change.`
+                                        : 'Save to your library'
+                                }
+                                style={({ pressed }) => [
+                                    styles.saveButton,
+                                    {
+                                        backgroundColor: palette.accent,
+                                        opacity:
+                                            pressed || statusBusy ? 0.6 : 1,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textInverse },
+                                    ]}
+                                >
+                                    {currentStatus
+                                        ? formatLibraryBadge(
+                                              currentStatus,
+                                              currentRating,
+                                          )
+                                        : 'Save'}
+                                </Text>
+                            </Pressable>
+
+                            {isRecipient && rec.status === 'pending' ? (
+                                <Pressable
+                                    onPress={() => setShowDeclineSheet(true)}
+                                    disabled={declineBusy}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Not for me"
+                                    style={({ pressed }) => [
+                                        styles.notForMeButton,
+                                        {
+                                            opacity:
+                                                pressed || declineBusy
+                                                    ? 0.6
+                                                    : 1,
+                                        },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            typography.bodyEmphasis,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        Not for me
+                                    </Text>
+                                </Pressable>
+                            ) : null}
+                        </View>
+                    )}
 
                     {/* Comments — no label; the composer placeholder
                         carries the empty state. An empty list renders
@@ -1651,46 +1703,6 @@ export default function RecScreen() {
                 onCancel={() => setShowDeclineSheet(false)}
                 onConfirm={handleConfirmDecline}
             />
-
-            {/* Brief "Declined · Undo" bar after a decline — sits above the
-                bottom safe area; auto-returns to the inbox when the window
-                closes (see handleConfirmDecline). */}
-            {undoVisible ? (
-                <View
-                    style={[
-                        styles.undoBar,
-                        {
-                            backgroundColor: palette.text,
-                            bottom: insets.bottom + spacing.base,
-                        },
-                    ]}
-                >
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            { color: palette.textInverse },
-                        ]}
-                    >
-                        Declined
-                    </Text>
-                    <Pressable
-                        onPress={handleUndoDecline}
-                        accessibilityRole="button"
-                        accessibilityLabel="Undo decline"
-                        hitSlop={spacing.sm}
-                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.accent },
-                            ]}
-                        >
-                            Undo
-                        </Text>
-                    </Pressable>
-                </View>
-            ) : null}
         </View>
     );
 }
@@ -1717,18 +1729,14 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
         paddingVertical: spacing.sm,
     },
-    // Transient "Declined · Undo" bar, floated above the bottom inset.
-    undoBar: {
-        position: 'absolute',
-        left: spacing.base,
-        right: spacing.base,
+    // "You passed on this" marker above the "Changed my mind" un-decline,
+    // shown in the dismissed action area. Centred muted row (X + label).
+    passedMarker: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.md,
-        borderRadius: radius.md,
-        ...elevation.md,
+        justifyContent: 'center',
+        gap: spacing.xs,
+        paddingVertical: spacing.sm,
     },
     fillCenter: {
         flex: 1,

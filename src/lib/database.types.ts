@@ -387,6 +387,7 @@ export type Database = {
           body: string
           created_at: string
           id: string
+          is_decline_note: boolean
           recommendation_id: string
           user_id: string | null
         }
@@ -394,6 +395,7 @@ export type Database = {
           body: string
           created_at?: string
           id?: string
+          is_decline_note?: boolean
           recommendation_id: string
           user_id?: string | null
         }
@@ -401,6 +403,7 @@ export type Database = {
           body?: string
           created_at?: string
           id?: string
+          is_decline_note?: boolean
           recommendation_id?: string
           user_id?: string | null
         }
