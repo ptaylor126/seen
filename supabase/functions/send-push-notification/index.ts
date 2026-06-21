@@ -44,7 +44,8 @@ type NotificationKind =
     | 'friend_accepted'
     | 'rec_reacted'
     | 'rec_commented'
-    | 'rec_declined';
+    | 'rec_declined'
+    | 'rec_requested';
 
 interface NotificationRow {
     id: string;
@@ -404,6 +405,26 @@ async function buildMessage(
                 title: title
                     ? `${declinerName} passed on ${title}`
                     : `${declinerName} passed on your recommendation`,
+                body: notePreview,
+                data,
+            };
+        }
+        case 'rec_requested': {
+            // payload.from_user_id is the requester; the optional note
+            // ("what they're in the mood for") rides in the payload.
+            const requesterId = stringField(notif.payload, 'from_user_id');
+            const note = stringField(notif.payload, 'note');
+            if (!requesterId) return null;
+
+            const requesterName = await fetchDisplayName(supabase, requesterId);
+            if (!requesterName) return null;
+            const notePreview = note
+                ? note.length > 80
+                    ? `${note.slice(0, 80)}…`
+                    : note
+                : undefined;
+            return {
+                title: `${requesterName} asked you for a recommendation`,
                 body: notePreview,
                 data,
             };

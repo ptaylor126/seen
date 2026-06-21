@@ -641,6 +641,10 @@ export type Database = {
         Args: { p_media_type: string; p_ordered_ids: string[] }
         Returns: undefined
       }
+      request_recommendation: {
+        Args: { note?: string | null; to_user_id: string }
+        Returns: undefined
+      }
       send_recommendation: {
         Args: {
           media_type: string

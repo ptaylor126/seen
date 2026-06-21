@@ -128,6 +128,18 @@ interface RecDeclinedItem {
     note: string | null;
 }
 
+// A friend asked the current user for a recommendation (v1 untied — no
+// rec/title attached). Tapping it opens the title picker pre-targeted to the
+// requester so the user can send a normal rec back.
+interface RecRequestedItem {
+    kind: 'notification_rec_requested';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    requester: ProfileSummary;
+    note: string | null;
+}
+
 type InboxItem =
     | IncomingRecItem
     | FriendRequestItem
@@ -135,7 +147,8 @@ type InboxItem =
     | FriendAcceptedItem
     | RecReactedItem
     | RecCommentedItem
-    | RecDeclinedItem;
+    | RecDeclinedItem
+    | RecRequestedItem;
 
 // Sent recs are NOT unioned into InboxItem — different render path, no
 // notification semantics, no badge effects. Multi-recipient sends create
@@ -281,6 +294,7 @@ export default function InboxScreen() {
                         'rec_reacted',
                         'rec_commented',
                         'rec_declined',
+                        'rec_requested',
                     ])
                     .order('created_at', { ascending: false })
                     .limit(MAX_ITEMS),
@@ -336,10 +350,11 @@ export default function InboxScreen() {
                 } else if (
                     n.kind === 'rec_reacted' ||
                     n.kind === 'rec_commented' ||
-                    n.kind === 'rec_declined'
+                    n.kind === 'rec_declined' ||
+                    n.kind === 'rec_requested'
                 ) {
-                    // Reactor / commenter / decliner is the other party on
-                    // the rec — payload.from_user_id per the trigger.
+                    // Reactor / commenter / decliner / requester is the
+                    // other party — payload.from_user_id per the trigger/RPC.
                     const id = pickString(payload, 'from_user_id');
                     if (id) otherUserIds.add(id);
                 }
@@ -619,6 +634,19 @@ export default function InboxScreen() {
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
+                        note: pickString(payload, 'note'),
+                    });
+                } else if (n.kind === 'rec_requested') {
+                    const requesterId = pickString(payload, 'from_user_id');
+                    if (!requesterId) continue;
+                    const requester =
+                        profilesById.get(requesterId) ?? placeholderProfile;
+                    inboxItems.push({
+                        kind: 'notification_rec_requested',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        requester,
                         note: pickString(payload, 'note'),
                     });
                 }
@@ -1082,6 +1110,56 @@ export default function InboxScreen() {
         );
     }
 
+    function renderRecRequested(item: RecRequestedItem) {
+        return (
+            <Pressable
+                // Untied v1: open the title picker pre-targeted to the
+                // requester (library/add forwards preselect → recommend), so
+                // the user sends a normal rec back. No request/response link.
+                onPress={() =>
+                    router.push({
+                        pathname: '/library/add',
+                        params: { recommendTo: item.requester.userId },
+                    })
+                }
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <Avatar
+                    avatarUrl={item.requester.avatarUrl}
+                    displayName={item.requester.displayName}
+                    seedId={item.requester.userId}
+                    size={AVATAR_SIZE}
+                />
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text style={typography.bodyEmphasis}>
+                            {item.requester.displayName}
+                        </Text>{' '}
+                        asked you for a recommendation
+                    </Text>
+                    {item.note ? (
+                        <Text
+                            style={[
+                                typography.caption,
+                                styles.note,
+                                { color: palette.textMuted },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            “{item.note}”
+                        </Text>
+                    ) : null}
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRow({ item }: { item: InboxItem }) {
         switch (item.kind) {
             case 'incoming_rec':
@@ -1098,6 +1176,8 @@ export default function InboxScreen() {
                 return renderRecCommented(item);
             case 'notification_rec_declined':
                 return renderRecDeclined(item);
+            case 'notification_rec_requested':
+                return renderRecRequested(item);
         }
     }
 
