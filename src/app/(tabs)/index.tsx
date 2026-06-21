@@ -15,12 +15,12 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import NotificationsIcon from '../../../assets/images/icon-notifications.svg';
 import { Avatar } from '@/components/avatar';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RatingSheet } from '@/components/rating-sheet';
+import { ScreenHeader } from '@/components/screen-header';
 import {
     SEARCH_OVERLAY_TOP_OFFSET,
     SearchBarInput,
@@ -818,57 +818,6 @@ export default function HomeScreen() {
 
     // ---- Renderers
 
-    function renderHeader() {
-        return (
-            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
-                <View style={styles.header}>
-                    <Image
-                        // Shared bright-plum wordmark (logo.png, letters
-                        // #7A3960 = the brand accent) — same asset used
-                        // by onboarding / sign-in / splash, so every
-                        // surface shows one consistent plum logo. The
-                        // earlier logo-plum.png was #241A20 (the dark
-                        // nav-bar tint) and read as near-black here.
-                        source={require('../../../assets/logo.png')}
-                        style={styles.headerLogo}
-                        contentFit="contain"
-                        accessibilityLabel="Seen"
-                    />
-                    <Pressable
-                        onPress={() => router.push({ pathname: '/inbox' })}
-                        hitSlop={spacing.sm}
-                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                    >
-                        <View>
-                            <NotificationsIcon
-                                color={palette.text}
-                                width={26}
-                                height={26}
-                            />
-                            {unreadCount > 0 && (
-                                <View
-                                    style={[
-                                        styles.badge,
-                                        { backgroundColor: palette.accent },
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            styles.badgeText,
-                                            { color: palette.textInverse },
-                                        ]}
-                                    >
-                                        {unreadCount > 9 ? '9+' : String(unreadCount)}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
-                    </Pressable>
-                </View>
-            </SafeAreaView>
-        );
-    }
-
     // Cinematic hero card — full-bleed TMDB backdrop with a
     // bottom-anchored gradient so the title + note read on any image.
     // Top-left has a recommender pill (avatar + "{firstName} recommends");
@@ -1562,7 +1511,22 @@ export default function HomeScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            {renderHeader()}
+            {/* Shared header (same code path as Profile/Friends/Library) so
+                the inbox bell aligns by construction. Home's left slot is the
+                logo wordmark instead of a title string — passed via `leading`.
+                logo.png is the bright-plum wordmark (#7A3960, the brand
+                accent), the same asset used by onboarding / sign-in / splash. */}
+            <ScreenHeader
+                leading={
+                    <Image
+                        source={require('../../../assets/logo.png')}
+                        style={styles.headerLogo}
+                        contentFit="contain"
+                        accessibilityLabel="Seen"
+                    />
+                }
+                unreadCount={unreadCount}
+            />
             {/* Persistent gap below the search bar so scroll content
                 doesn't tuck flush against it as the user scrolls.
                 SearchBarInput is a sibling of the ScrollView (not
@@ -1603,35 +1567,13 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.md,
-    },
     headerLogo: {
-        // Source asset is 500 × 147 (≈ 3.4:1). Sized to roughly match
-        // the previous typography.display ("Seen" wordmark) visual
-        // weight — height matches the display lineHeight (38), width
-        // follows aspect ratio.
-        width: 130,
-        height: 38,
-    },
-    badge: {
-        position: 'absolute',
-        top: -4,
-        right: -6,
-        minWidth: 16,
-        height: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 3,
-    },
-    badgeText: {
-        fontSize: 10,
-        fontWeight: '700',
+        // Source asset is 500 × 147 (≈ 3.4:1). Height capped at 36 to fit
+        // ScreenHeader's fixed 36px content region without clipping (the
+        // logo is the only header element taller than 36); width follows
+        // the aspect ratio (36 × 500/147 ≈ 122).
+        width: 122,
+        height: 36,
     },
     searchBarWrapper: {
         // Persistent gap between the pinned search bar and the

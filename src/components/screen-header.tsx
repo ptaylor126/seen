@@ -9,6 +9,11 @@ import { getPalette, ICON_STROKE_WIDTH, spacing, typography } from '@/theme/them
 
 interface ScreenHeaderProps {
     title?: string;
+    /** Custom content for the left/title slot, rendered in place of the
+     *  string `title` (e.g. Home's logo wordmark). When provided, `title`
+     *  is ignored. Lets a screen reuse this header's bell + safe-area +
+     *  padding while supplying its own left element. */
+    leading?: ReactNode;
     showBackButton?: boolean;
     /** Hide unread badge when 0; show "9+" for >9. */
     unreadCount?: number;
@@ -21,6 +26,7 @@ interface ScreenHeaderProps {
 
 export function ScreenHeader({
     title,
+    leading,
     showBackButton = false,
     unreadCount = 0,
     hideBell = false,
@@ -50,7 +56,9 @@ export function ScreenHeader({
                     </Pressable>
                 )}
 
-                {title ? (
+                {leading ? (
+                    <View style={styles.title}>{leading}</View>
+                ) : title ? (
                     <Text
                         style={[typography.display, styles.title, { color: palette.text }]}
                         numberOfLines={1}
@@ -110,6 +118,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         paddingVertical: spacing.md,
         gap: spacing.sm,
+        // Deterministic row height so the inbox bell sits at the same Y on
+        // EVERY tab, by construction rather than by coincidence of element
+        // metrics. Measured at runtime: a title Text (typography.display,
+        // lineHeight 38) renders only ~36px tall on iOS, while Home's 38px
+        // logo box filled 38 — so the rows were 60 vs 62 and the bell
+        // centred 2px lower on Home. Pinning the content region to 36 (RN
+        // border-box: height 60 − paddingVertical 12×2 = 36 content) makes
+        // all four tabs a fixed 60px. The logo is capped at 36 (see
+        // index.tsx headerLogo) so nothing exceeds the content region.
+        height: 36 + spacing.md * 2,
     },
     title: {
         flex: 1,
