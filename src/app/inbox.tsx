@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { CheckCircle } from 'lucide-react-native';
+import { CheckCircle, XCircle } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -50,8 +50,10 @@ interface IncomingRecItem {
     titleName: string | null;
     // The rec's own lifecycle state. 'pending' = active "wants you to
     // watch this"; 'watched' = the recipient has watched it (the rec
-    // stays in the list for the post-watch conversation, visually marked).
-    recStatus: 'pending' | 'watched';
+    // stays in the list for the post-watch conversation, visually marked);
+    // 'dismissed' = the recipient passed on it (stays in the list greyed,
+    // marked "Passed" — declining IS the action, so it's done not gone).
+    recStatus: 'pending' | 'watched' | 'dismissed';
     // The recipient's existing relationship to this title, if any.
     // Drives the compact "Watched · 4★" / "Watchlist" / "Watching"
     // badge on the rec card so the user sees their library status
@@ -264,18 +266,21 @@ export default function InboxScreen() {
                 sentRecsResult,
                 _markReadResult,
             ] = await Promise.all([
-                // Received = pending + watched recs (NOT pending-only).
-                // The post-watch conversation lives on the rec, so a
-                // watched rec stays in the list, shown in its watched
-                // state. 'dismissed' (and the unused 'accepted') are
-                // excluded so decline/dismiss don't resurface here.
+                // Received = pending + watched + dismissed recs (NOT
+                // pending-only). The post-watch conversation lives on the
+                // rec, so a watched rec stays in the list shown in its
+                // watched state; a dismissed ("passed") rec also stays,
+                // greyed — declining is an action taken, not a reason to
+                // vanish (mirrors watched). Only the unused 'accepted' is
+                // absent. Badge still counts pending-only, so dismissed
+                // here doesn't re-create an actionable nag.
                 supabase
                     .from('recommendations')
                     .select(
                         'id, from_user_id, tmdb_id, media_type, note, sent_at, status',
                     )
                     .eq('to_user_id', userId)
-                    .in('status', ['pending', 'watched'])
+                    .in('status', ['pending', 'watched', 'dismissed'])
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
                 supabase
@@ -511,7 +516,12 @@ export default function InboxScreen() {
                     titleName:
                         titleByKey.get(`${r.media_type}:${r.tmdb_id}`)?.title ??
                         null,
-                    recStatus: r.status === 'watched' ? 'watched' : 'pending',
+                    recStatus:
+                        r.status === 'watched'
+                            ? 'watched'
+                            : r.status === 'dismissed'
+                              ? 'dismissed'
+                              : 'pending',
                     libraryStatus:
                         libraryStatusByKey.get(
                             `${r.media_type}:${r.tmdb_id}`,
@@ -759,10 +769,18 @@ export default function InboxScreen() {
             item.note && item.note.length > NOTE_PREVIEW_CHARS
                 ? `${item.note.slice(0, NOTE_PREVIEW_CHARS)}…`
                 : item.note;
+        const dimmed = item.recStatus === 'dismissed';
         return (
             <Pressable
                 onPress={() => router.push(`/rec/${item.recId}`)}
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+                // Dismissed ("passed") recs read greyed — still tappable
+                // (the conversation/undo lives on the rec page), just
+                // visually settled, not an active ask.
+                style={({ pressed }) => [
+                    styles.row,
+                    dimmed && styles.rowDimmed,
+                    pressed && { opacity: 0.6 },
+                ]}
             >
                 <Avatar
                     avatarUrl={item.sender.avatarUrl}
@@ -808,6 +826,31 @@ export default function InboxScreen() {
                                           item.libraryStatus.rating,
                                       )}`
                                     : 'Watched'}
+                            </Text>
+                        </View>
+                    ) : item.recStatus === 'dismissed' ? (
+                        // Passed rec — neutral grey marker (X + "Passed"),
+                        // distinct from the accent "Watched" pill and from
+                        // the pending library badge. Reads as settled/done.
+                        <View
+                            style={[
+                                styles.passedMarker,
+                                { backgroundColor: palette.surfaceAlt },
+                            ]}
+                            accessibilityLabel="You passed on this"
+                        >
+                            <XCircle
+                                color={palette.textMuted}
+                                size={12}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                            <Text
+                                style={[
+                                    typography.micro,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                Passed
                             </Text>
                         </View>
                     ) : (
@@ -1365,6 +1408,23 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.sm,
         paddingVertical: 2,
         borderRadius: radius.full,
+    },
+    passedMarker: {
+        // Neutral grey "Passed" marker for dismissed recs — same pill
+        // shape as watchedMarker but muted (X icon + label) so it reads as
+        // settled/declined, not an active ask and not a "done & liked".
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        alignSelf: 'flex-start',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+    },
+    rowDimmed: {
+        // Greys the whole passed-rec row so it recedes from the active
+        // pending/watched items while staying legible and tappable.
+        opacity: 0.55,
     },
     requestActions: {
         flexDirection: 'row',
