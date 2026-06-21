@@ -35,7 +35,12 @@ import {
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
+import {
+    ensureTitle,
+    type EnsureTitleArgs,
+    fetchTitlesByItems,
+    type TitleRow,
+} from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import { useLibraryFilters } from '@/lib/use-library-filters';
 import { LibraryFilterControls } from '@/components/library-filter-controls';
@@ -85,6 +90,97 @@ interface RecBetween {
     direction: 'sent' | 'received';
 }
 
+// One written review by this friend, for the "Recent reviews" strip.
+// Ordered by when the REVIEW was written/updated (reviews.updated_at), not
+// the watch date. spoiler-flagged reviews show a "contains spoilers"
+// placeholder instead of the body (the reveal flow lives on the title
+// page). rating is the friend's items.rating for the title, if any.
+interface RecentReview {
+    tmdbId: number;
+    mediaType: MediaType;
+    title: string;
+    posterPath: string | null;
+    body: string;
+    containsSpoilers: boolean;
+    rating: number | null;
+}
+
+// Fetch poster/title metadata for a set of (tmdb_id, media_type) from the
+// shared catalogue, filling any missing rows via a direct TMDB fetch (and
+// stamping them forward with ensureTitle) — the same fallback the home
+// screen uses, so a rec'd/reviewed title that was never added to anyone's
+// library still renders. Used by both the recs-between and recent-reviews
+// strips. Returns the populated key→row map.
+async function fetchTitlesWithFallback(
+    items: { tmdb_id: number; media_type: string }[],
+): Promise<Map<string, TitleRow>> {
+    const titleByKey = await fetchTitlesByItems(items);
+    const missing = new Map<string, { tmdbId: number; mediaType: MediaType }>();
+    for (const it of items) {
+        const key = `${it.media_type}:${it.tmdb_id}`;
+        if (titleByKey.has(key)) continue;
+        if (it.media_type !== 'movie' && it.media_type !== 'tv') continue;
+        missing.set(key, { tmdbId: it.tmdb_id, mediaType: it.media_type });
+    }
+    if (missing.size === 0) return titleByKey;
+    const fetched = await Promise.all(
+        Array.from(missing.values()).map(
+            async (m): Promise<EnsureTitleArgs | null> => {
+                try {
+                    if (m.mediaType === 'movie') {
+                        const mv = await getMovie(m.tmdbId);
+                        return {
+                            tmdbId: m.tmdbId,
+                            mediaType: 'movie',
+                            title: mv.title,
+                            posterPath: mv.poster_path,
+                            backdropPath: mv.backdrop_path,
+                            releaseDate:
+                                mv.release_date && mv.release_date.length > 0
+                                    ? mv.release_date
+                                    : null,
+                            originalLanguage: mv.original_language,
+                            genreIds: mv.genres.map((g) => g.id),
+                        };
+                    }
+                    const tv = await getTV(m.tmdbId);
+                    return {
+                        tmdbId: m.tmdbId,
+                        mediaType: 'tv',
+                        title: tv.name,
+                        posterPath: tv.poster_path,
+                        backdropPath: tv.backdrop_path,
+                        releaseDate:
+                            tv.first_air_date && tv.first_air_date.length > 0
+                                ? tv.first_air_date
+                                : null,
+                        originalLanguage: tv.original_language,
+                        genreIds: tv.genres.map((g) => g.id),
+                    };
+                } catch (err) {
+                    console.warn('title TMDB fallback failed:', err);
+                    return null;
+                }
+            },
+        ),
+    );
+    for (const s of fetched) {
+        if (!s) continue;
+        titleByKey.set(`${s.mediaType}:${s.tmdbId}`, {
+            tmdb_id: s.tmdbId,
+            media_type: s.mediaType,
+            title: s.title,
+            poster_path: s.posterPath,
+            backdrop_path: s.backdropPath,
+            release_date: s.releaseDate,
+            original_language: s.originalLanguage,
+            genre_ids: s.genreIds,
+        });
+        void ensureTitle(s);
+    }
+    return titleByKey;
+}
+
 // Three-state resolution machine. Renders the whole screen off this:
 //   - loading → spinner
 //   - not-found → handle resolves to no profile (or fetch failed)
@@ -126,6 +222,12 @@ const POSTER_ASPECT = 1.5; // 2:3 poster
 // read as a static row. REC_STRIP_INSET/GAP must match the strip styles
 // below (leading inset + inter-card gap) for the peek math to hold.
 const RECS_BETWEEN_LIMIT = 20;
+// Recent reviews is a header overview, not a full archive — cap it so the
+// (already busy) profile header stays bounded.
+const RECENT_REVIEWS_LIMIT = 3;
+const REVIEW_POSTER_W = 48;
+const REVIEW_POSTER_H = Math.round(REVIEW_POSTER_W * 1.5);
+const REVIEW_SNIPPET_CHARS = 180;
 const REC_STRIP_INSET = spacing.base;
 const REC_STRIP_GAP = spacing.md;
 const REC_BETWEEN_POSTER_W = Math.floor(
@@ -215,6 +317,11 @@ export default function FriendDetailScreen() {
     // directions, most-recent first. null = not yet loaded / none → the
     // "Recs between you" strip is hidden.
     const [recsBetween, setRecsBetween] = useState<RecBetween[] | null>(null);
+    // This friend's recently-written reviews (text reviews, newest review
+    // first). null = not yet loaded / none → the section is hidden.
+    const [recentReviews, setRecentReviews] = useState<RecentReview[] | null>(
+        null,
+    );
 
     // Shared filter / sort / search state — same hook the own library
     // (src/app/(tabs)/library.tsx) uses, so the two screens stay in
@@ -445,90 +552,15 @@ export default function FriendDetailScreen() {
                     return;
                 }
 
-                // Poster metadata via the shared catalogue, with the same
-                // TMDB fallback the home screen uses so a rec for an
-                // uncatalogued title still shows a poster.
-                const titleByKey = await fetchTitlesByItems(
+                // Poster metadata via the shared catalogue (+ TMDB fallback
+                // for uncatalogued rec'd titles).
+                const titleByKey = await fetchTitlesWithFallback(
                     rows.map((r) => ({
                         tmdb_id: r.tmdb_id,
                         media_type: r.media_type,
                     })),
                 );
-                const missing = new Map<
-                    string,
-                    { tmdbId: number; mediaType: MediaType }
-                >();
-                for (const r of rows) {
-                    const key = `${r.media_type}:${r.tmdb_id}`;
-                    if (titleByKey.has(key)) continue;
-                    missing.set(key, {
-                        tmdbId: r.tmdb_id,
-                        mediaType: r.media_type as MediaType,
-                    });
-                }
-                if (missing.size > 0) {
-                    const fetched = await Promise.all(
-                        Array.from(missing.values()).map(
-                            async (m): Promise<EnsureTitleArgs | null> => {
-                                try {
-                                    if (m.mediaType === 'movie') {
-                                        const mv = await getMovie(m.tmdbId);
-                                        return {
-                                            tmdbId: m.tmdbId,
-                                            mediaType: 'movie',
-                                            title: mv.title,
-                                            posterPath: mv.poster_path,
-                                            backdropPath: mv.backdrop_path,
-                                            releaseDate:
-                                                mv.release_date &&
-                                                mv.release_date.length > 0
-                                                    ? mv.release_date
-                                                    : null,
-                                            originalLanguage:
-                                                mv.original_language,
-                                            genreIds: mv.genres.map((g) => g.id),
-                                        };
-                                    }
-                                    const tv = await getTV(m.tmdbId);
-                                    return {
-                                        tmdbId: m.tmdbId,
-                                        mediaType: 'tv',
-                                        title: tv.name,
-                                        posterPath: tv.poster_path,
-                                        backdropPath: tv.backdrop_path,
-                                        releaseDate:
-                                            tv.first_air_date &&
-                                            tv.first_air_date.length > 0
-                                                ? tv.first_air_date
-                                                : null,
-                                        originalLanguage: tv.original_language,
-                                        genreIds: tv.genres.map((g) => g.id),
-                                    };
-                                } catch (err) {
-                                    console.warn(
-                                        'recs-between title fallback failed:',
-                                        err,
-                                    );
-                                    return null;
-                                }
-                            },
-                        ),
-                    );
-                    for (const s of fetched) {
-                        if (!s) continue;
-                        titleByKey.set(`${s.mediaType}:${s.tmdbId}`, {
-                            tmdb_id: s.tmdbId,
-                            media_type: s.mediaType,
-                            title: s.title,
-                            poster_path: s.posterPath,
-                            backdrop_path: s.backdropPath,
-                            release_date: s.releaseDate,
-                            original_language: s.originalLanguage,
-                            genre_ids: s.genreIds,
-                        });
-                        void ensureTitle(s);
-                    }
-                }
+                if (!active) return;
 
                 const built: RecBetween[] = rows.map((r) => ({
                     recId: r.id,
@@ -542,6 +574,84 @@ export default function FriendDetailScreen() {
                 if (active) setRecsBetween(built);
             } catch (err) {
                 console.warn('recs-between fetch failed:', err);
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [state]);
+
+    // ---- Phase 2d: this friend's recently-WRITTEN reviews. Ordered by
+    // reviews.updated_at (when the review was written/edited), NOT watch
+    // date. RLS (reviews_select_own_or_visible_via_item) only returns
+    // reviews whose parent items row is friends-visible — same privacy
+    // model as the rest of the screen. Best-effort.
+    useEffect(() => {
+        if (state.kind !== 'friends') {
+            setRecentReviews(null);
+            return;
+        }
+        const friendId = state.profile.id;
+        let active = true;
+        (async () => {
+            try {
+                const { data: reviewRows, error: revErr } = await supabase
+                    .from('reviews')
+                    .select('tmdb_id, media_type, body, contains_spoilers, updated_at')
+                    .eq('user_id', friendId)
+                    .order('updated_at', { ascending: false })
+                    .limit(RECENT_REVIEWS_LIMIT);
+                if (revErr) throw revErr;
+                if (!active) return;
+                const rows = reviewRows ?? [];
+                if (rows.length === 0) {
+                    setRecentReviews([]);
+                    return;
+                }
+
+                // Friend's rating per reviewed title (items.rating), keyed
+                // by (media_type, tmdb_id). Same RLS as reviews — only
+                // friends-visible items come back, which is exactly the set
+                // whose reviews we can see.
+                const tmdbIds = Array.from(new Set(rows.map((r) => r.tmdb_id)));
+                const ratingByKey = new Map<string, number>();
+                const { data: itemRows } = await supabase
+                    .from('items')
+                    .select('tmdb_id, media_type, rating')
+                    .eq('user_id', friendId)
+                    .in('tmdb_id', tmdbIds);
+                for (const it of itemRows ?? []) {
+                    if (typeof it.rating === 'number') {
+                        ratingByKey.set(
+                            `${it.media_type}:${it.tmdb_id}`,
+                            it.rating,
+                        );
+                    }
+                }
+
+                const titleByKey = await fetchTitlesWithFallback(
+                    rows.map((r) => ({
+                        tmdb_id: r.tmdb_id,
+                        media_type: r.media_type,
+                    })),
+                );
+                if (!active) return;
+
+                const built: RecentReview[] = rows.map((r) => {
+                    const key = `${r.media_type}:${r.tmdb_id}`;
+                    return {
+                        tmdbId: r.tmdb_id,
+                        mediaType: r.media_type as MediaType,
+                        title: titleByKey.get(key)?.title ?? 'Untitled',
+                        posterPath: titleByKey.get(key)?.poster_path ?? null,
+                        body: r.body,
+                        containsSpoilers: r.contains_spoilers,
+                        rating: ratingByKey.get(key) ?? null,
+                    };
+                });
+                if (active) setRecentReviews(built);
+            } catch (err) {
+                console.warn('recent reviews fetch failed:', err);
             }
         })();
         return () => {
@@ -1010,6 +1120,126 @@ export default function FriendDetailScreen() {
                 </View>
             )}
 
+            {/* Recent reviews — this friend's recently-WRITTEN reviews
+                (newest review first, by reviews.updated_at). Each row:
+                small poster + title + rating + the review text (snippet),
+                or a "contains spoilers" placeholder for spoiler-flagged
+                ones (the reveal flow lives on the title page). Tap → title.
+                Hidden when they've written none. Capped to keep the header
+                bounded. */}
+            {recentReviews && recentReviews.length > 0 && (
+                <View style={styles.recentReviewsSection}>
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.text },
+                        ]}
+                    >
+                        Recent reviews
+                    </Text>
+                    {recentReviews.map((r) => {
+                        const ratingText =
+                            r.rating !== null ? formatRatingStars(r.rating) : '';
+                        const snippet =
+                            r.body.length > REVIEW_SNIPPET_CHARS
+                                ? `${r.body.slice(0, REVIEW_SNIPPET_CHARS)}…`
+                                : r.body;
+                        return (
+                            <Pressable
+                                key={`${r.mediaType}:${r.tmdbId}`}
+                                onPress={() =>
+                                    router.push({
+                                        pathname: '/title/[mediaType]/[tmdbId]',
+                                        params: {
+                                            mediaType: r.mediaType,
+                                            tmdbId: String(r.tmdbId),
+                                        },
+                                    })
+                                }
+                                style={({ pressed }) => [
+                                    styles.reviewRow,
+                                    pressed && { opacity: 0.6 },
+                                ]}
+                            >
+                                {r.posterPath ? (
+                                    <Image
+                                        source={{
+                                            uri: imageUrl(r.posterPath, 'w185'),
+                                        }}
+                                        style={styles.reviewPoster}
+                                        contentFit="cover"
+                                        transition={150}
+                                    />
+                                ) : (
+                                    <View
+                                        style={[
+                                            styles.reviewPoster,
+                                            {
+                                                backgroundColor:
+                                                    palette.surfaceAlt,
+                                            },
+                                        ]}
+                                    />
+                                )}
+                                <View style={styles.reviewText}>
+                                    <View style={styles.reviewTitleRow}>
+                                        <Text
+                                            style={[
+                                                typography.bodyEmphasis,
+                                                styles.reviewTitle,
+                                                { color: palette.text },
+                                            ]}
+                                            numberOfLines={1}
+                                        >
+                                            {r.title}
+                                        </Text>
+                                        {ratingText !== '' && (
+                                            <Text
+                                                style={[
+                                                    typography.caption,
+                                                    { color: palette.textMuted },
+                                                ]}
+                                            >
+                                                {ratingText}
+                                            </Text>
+                                        )}
+                                    </View>
+                                    {r.containsSpoilers ? (
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                styles.reviewSpoiler,
+                                                { color: palette.textMuted },
+                                            ]}
+                                        >
+                                            Contains spoilers — tap to read
+                                        </Text>
+                                    ) : (
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                { color: palette.textMuted },
+                                            ]}
+                                            numberOfLines={3}
+                                        >
+                                            {snippet}
+                                        </Text>
+                                    )}
+                                </View>
+                            </Pressable>
+                        );
+                    })}
+                </View>
+            )}
+
+            {/* Hairline separating the overview/header sections (Top 5,
+                recs, reviews) from the search + library-browse zone below.
+                Full-bleed, low-contrast (palette.border) — same quiet
+                divider idiom as the Library filter zone. */}
+            <View
+                style={[styles.headerDivider, { backgroundColor: palette.border }]}
+            />
+
             {/* Local title search — mirrors the library tab's local-filter
                 bar (X = clear-but-stay, Cancel = exit + dismiss). Wired to
                 the shared hook's localQuery state. */}
@@ -1080,9 +1310,11 @@ export default function FriendDetailScreen() {
 
     // Sticky row (data[0]): segmented status picker + media/sort/genre
     // controls. Pins under the fixed headerBar once the profile info above
-    // scrolls past. surfaceAlt fill hides rows scrolling beneath it.
+    // scrolls past. Page-bg fill (not the old surfaceAlt band): the
+    // filters now sit on the page background like the Library screen, but
+    // the fill stays OPAQUE so rows don't show through when it's stuck.
     const filterZoneNode = (
-        <View style={[styles.filterZone, { backgroundColor: palette.surfaceAlt }]}>
+        <View style={[styles.filterZone, { backgroundColor: palette.bg }]}>
             <View style={styles.segmentedRow}>
                 <SegmentedControl
                     options={TAB_OPTIONS}
@@ -1303,16 +1535,63 @@ const styles = StyleSheet.create({
         height: REC_BETWEEN_POSTER_H,
         borderRadius: radius.sm,
     },
+    recentReviewsSection: {
+        // Heading + capped vertical list, base inset. marginTop adds
+        // separation from the recs strip above; marginBottom spaces it
+        // from the divider/search below. Inner gap separates the heading
+        // and the rows.
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.md,
+        marginBottom: spacing.md,
+        gap: spacing.sm,
+    },
+    reviewRow: {
+        flexDirection: 'row',
+        gap: spacing.md,
+        alignItems: 'flex-start',
+    },
+    reviewPoster: {
+        width: REVIEW_POSTER_W,
+        height: REVIEW_POSTER_H,
+        borderRadius: radius.sm,
+    },
+    reviewText: {
+        flex: 1,
+        gap: spacing.xs,
+    },
+    reviewTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: spacing.sm,
+    },
+    reviewTitle: {
+        // Flex so the title truncates instead of pushing the rating off.
+        flex: 1,
+    },
+    reviewSpoiler: {
+        fontStyle: 'italic',
+    },
+    headerDivider: {
+        // Full-bleed hairline between the overview sections and the search
+        // + browse zone. Colour applied inline (palette.border). The space
+        // above comes from the preceding section's marginBottom; the space
+        // below comes from searchRow's marginTop.
+        height: StyleSheet.hairlineWidth,
+    },
     searchRow: {
         // Outer row hosting the search pill + the conditional Cancel
         // sibling. Margins live here (not on the pill) so the pill
         // can flex to fill available width when Cancel appears /
-        // disappears. Mirrors Home's SearchBarInput row layout.
+        // disappears. Mirrors Home's SearchBarInput row layout. Generous
+        // top/bottom margin gives the bar breathing room between the
+        // hairline above and the filter zone below (it read as cramped).
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         marginHorizontal: spacing.base,
-        marginBottom: spacing.md,
+        marginTop: spacing.lg,
+        marginBottom: spacing.lg,
     },
     searchBar: {
         // Local title-filter input. Mirrors the own library's
@@ -1390,10 +1669,11 @@ const styles = StyleSheet.create({
         marginTop: spacing.xs,
     },
     filterZone: {
-        // surfaceAlt wash so the segmented status picker + the
-        // shared filter controls below it read as one distinct zone,
-        // visually separated from the search bar above (which sits
-        // on the page bg). Mirrors the own-library filter zone.
+        // No shaded band — the controls sit on the page background (fill
+        // applied inline as palette.bg, kept opaque so rows don't show
+        // through when this sticky zone is stuck). Matches the Library
+        // screen's filter zone. The overview/browse separation is the
+        // hairline above the search bar (headerDivider).
         paddingTop: spacing.md,
         paddingBottom: spacing.sm,
         gap: spacing.md,
