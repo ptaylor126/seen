@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Film, Mail } from 'lucide-react-native';
+import { Film } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import NotificationsIcon from '../../../assets/images/icon-notifications.svg';
 import { Avatar } from '@/components/avatar';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RatingSheet } from '@/components/rating-sheet';
@@ -34,7 +35,6 @@ import { imageUrl } from '@/lib/tmdb';
 import {
     fontFamily,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -717,10 +717,10 @@ export default function HomeScreen() {
                         style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                     >
                         <View>
-                            <Mail
+                            <NotificationsIcon
                                 color={palette.text}
-                                size={24}
-                                strokeWidth={ICON_STROKE_WIDTH}
+                                width={24}
+                                height={24}
                             />
                             {unreadCount > 0 && (
                                 <View
