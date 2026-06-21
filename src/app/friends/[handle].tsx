@@ -643,8 +643,16 @@ export default function FriendDetailScreen() {
     // sticky filter row); list mode is one item per row. The 'filters'
     // item is data[0] and sticks (stickyHeaderIndices below). Loading /
     // error / empty render in the footer so the sticky tabs stay visible.
-    const showBody =
-        !itemsLoading && !itemsError && filters.visibleRows.length > 0;
+    //
+    // Crucially `showBody` does NOT gate on itemsLoading: switching tabs
+    // refetches (the items query is per-status), and emptying the body
+    // mid-fetch would collapse the list to just the sticky header and snap
+    // scroll back to the top. Instead we keep the previous tab's rows
+    // mounted until the new ones arrive (keep-previous-data), so scroll
+    // position and the stuck tabs survive the swap. Only a genuine
+    // first-load with no rows yet shows the spinner (see listFooter).
+    const hasRows = filters.visibleRows.length > 0;
+    const showBody = !itemsError && hasRows;
     const bodyItems: LibraryListItem[] = [];
     if (showBody) {
         if (mode === 'list') {
@@ -878,13 +886,13 @@ export default function FriendDetailScreen() {
     }
 
     // Loading / error / empty live below the sticky filter row so the tabs
-    // stay reachable in every state. Empty copy has three sub-cases, in
-    // priority order: typed-search → genre filter → per-tab default.
-    const listFooter = itemsLoading ? (
-        <View style={styles.footerStatus}>
-            <ActivityIndicator color={palette.accent} />
-        </View>
-    ) : itemsError ? (
+    // stay reachable in every state. Order matters: error first, then the
+    // spinner ONLY on a first load with no rows yet (a tab-switch reload
+    // keeps the previous rows mounted and shows no spinner, so scroll is
+    // preserved — see showBody above), then the empty copy once a load has
+    // completed with nothing. Empty copy has three sub-cases, in priority
+    // order: typed-search → genre filter → per-tab default.
+    const listFooter = itemsError ? (
         <View style={styles.footerStatus}>
             <Text
                 style={[
@@ -897,7 +905,11 @@ export default function FriendDetailScreen() {
                 {itemsError}
             </Text>
         </View>
-    ) : filters.visibleRows.length === 0 ? (
+    ) : itemsLoading && !hasRows ? (
+        <View style={styles.footerStatus}>
+            <ActivityIndicator color={palette.accent} />
+        </View>
+    ) : !itemsLoading && !hasRows ? (
         <View style={styles.footerStatus}>
             <Text
                 style={[
