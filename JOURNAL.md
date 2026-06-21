@@ -33,6 +33,19 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-20 (cont. 3) — recipient-picker UX + small UI fixes
+
+**Shipped**
+
+- **Rec recipient picker — order by send recency** (`71be656`). The "Send to" friends list is now sorted by the most recent rec the current user has SENT to each friend (`max(sent_at)` per recipient, newest at top); friends never sent to fall below, alphabetical by name (previously the list had no explicit order at all). Extra parallel query on `recommendations` (from_user_id = me), ranked client-side; reorder only, full list preserved.
+- **Rec recipient picker — local search** (`71be656`). Search bar at the top of the friends list, reusing the Friends-tab local-search pattern (borderless surface pill, inline clear-X, Cancel-on-focus). Live client-side filter on display name + `@handle`. Recency order preserved within results. Multi-select survives filtering: selection lives in `selectedFriendIds` (a Set), independent of the rendered list, so filtering/clearing never drops a pick; a selected friend filtered out stays selected. Empty query = full list.
+- **Header bell enlarged** 24 → 26pt (`42bca66`), both header implementations (`ScreenHeader` + the Home tab's hand-rolled header).
+- **Uniform avatar-stack overlap on Friends-watching cards** (`0cbe822`). The Home "Friends are watching" poster overlay rendered its avatar stack inline (NOT via `AvatarStack`) using two overlap values — MAIN (4pt) for the front pair, PEEK (15pt) behind — so with 3+ avatars the back gaps were tighter than the front (visible on Summer House; 2-avatar cards looked fine). Collapsed to a single `FRIENDS_GRID_OVERLAP = 4` applied to every chip after the leftmost (avatars + the +N pill alike). Kept the 2-avatar look identical.
+
+**Note** — the Home tab still hand-rolls both its header bell AND its avatar stack instead of reusing `ScreenHeader` / `AvatarStack`; both caused two-place edits this session. Tech-debt unification still parked (see cont. 2).
+
+---
+
 ## 2026-06-20 (cont. 2) — rec lifecycle, decline notification, badge, bell, send heads-up
 
 **Shipped**
