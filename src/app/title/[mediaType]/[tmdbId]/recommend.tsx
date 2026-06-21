@@ -19,6 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
+import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
     getPalette,
@@ -77,6 +78,10 @@ export default function RecommendScreen() {
             : null;
 
     const [titleCtx, setTitleCtx] = useState<TitleContext | null>(null);
+    // Full catalogue metadata for the title, captured at load so the send
+    // can stamp public.titles via ensureTitle (send_recommendation doesn't
+    // stamp it server-side). null until the TMDB detail resolves.
+    const [titleStamp, setTitleStamp] = useState<EnsureTitleArgs | null>(null);
     const [friends, setFriends] = useState<FriendRow[]>([]);
     // Initial state seeds from the preselect param so the recipient is
     // pre-checked when arriving from the friend-profile recommend flow.
@@ -109,15 +114,37 @@ export default function RecommendScreen() {
         }
         let active = true;
 
-        const titlePromise: Promise<TitleContext> =
+        // Resolve the full catalogue metadata (not just title + poster) so
+        // the same fetch feeds both the header display and the send-time
+        // ensureTitle stamp. Mirrors the title screen's getMovie/getTV →
+        // ensureTitle mapping (empty TMDB date → null, genres → genre ids).
+        const titlePromise: Promise<EnsureTitleArgs> =
             mediaType === 'movie'
                 ? getMovie(tmdbId).then((m: TMDBMovie) => ({
+                      tmdbId,
+                      mediaType: 'movie' as const,
                       title: m.title,
                       posterPath: m.poster_path,
+                      backdropPath: m.backdrop_path,
+                      releaseDate:
+                          m.release_date && m.release_date.length > 0
+                              ? m.release_date
+                              : null,
+                      originalLanguage: m.original_language,
+                      genreIds: m.genres.map((g) => g.id),
                   }))
                 : getTV(tmdbId).then((t: TMDBTV) => ({
+                      tmdbId,
+                      mediaType: 'tv' as const,
                       title: t.name,
                       posterPath: t.poster_path,
+                      backdropPath: t.backdrop_path,
+                      releaseDate:
+                          t.first_air_date && t.first_air_date.length > 0
+                              ? t.first_air_date
+                              : null,
+                      originalLanguage: t.original_language,
+                      genreIds: t.genres.map((g) => g.id),
                   }));
 
         (async () => {
@@ -127,7 +154,11 @@ export default function RecommendScreen() {
                     supabase.auth.getSession(),
                 ]);
                 if (!active) return;
-                setTitleCtx(resolvedTitle);
+                setTitleCtx({
+                    title: resolvedTitle.title,
+                    posterPath: resolvedTitle.posterPath,
+                });
+                setTitleStamp(resolvedTitle);
 
                 const userId = sessionResult.data.session?.user.id;
                 if (!userId) throw new Error('Not authenticated');
@@ -329,6 +360,13 @@ export default function RecommendScreen() {
 
     async function performSend(recipientIds: string[], mt: MediaType) {
         try {
+            // Stamp the title into public.titles so it's catalogued for the
+            // recipient's home/inbox render (send_recommendation doesn't do
+            // this server-side). Fire-and-forget — ensureTitle swallows its
+            // own failures (titles.ts), and the home screen has its own
+            // TMDB fallback, so a missed stamp never blocks the send.
+            if (titleStamp) void ensureTitle(titleStamp);
+
             // Fan out to all recipients in parallel via the existing
             // single-recipient RPC. allSettled (not Promise.all) so one
             // bad recipient doesn't abort the rest — each rec is its own

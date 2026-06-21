@@ -30,8 +30,8 @@ import {
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { fetchTitlesByItems } from '@/lib/titles';
-import { imageUrl } from '@/lib/tmdb';
+import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
+import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
     fontFamily,
     getPalette,
@@ -426,6 +426,88 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     const senderProfileById = new Map(
         senderProfilesResult.data?.map((p) => [p.id, p]) ?? [],
     );
+
+    // ---- Title-catalogue fallback for recs (issue: home used to hard-drop
+    // recs whose title wasn't in public.titles). send_recommendation
+    // doesn't stamp titles, so a rec for a title nobody has added has no
+    // catalogue row → no metadata → the card would be skipped below. For
+    // each home-eligible rec (not already watching/watched, not already in
+    // the catalogue), fetch the TMDB detail directly (same getMovie/getTV
+    // path the rec view + library/add use), populate titleByKey, and stamp
+    // it forward via ensureTitle so the next load reads it from the table.
+    const missingTitleByKey = new Map<
+        string,
+        { tmdbId: number; mediaType: MediaType }
+    >();
+    for (const r of recs) {
+        const key = `${r.media_type}:${r.tmdb_id}`;
+        if (excludedRecKeys.has(key)) continue; // dropped below regardless
+        if (titleByKey.has(key)) continue; // already catalogued
+        missingTitleByKey.set(key, {
+            tmdbId: r.tmdb_id,
+            mediaType: r.media_type as MediaType,
+        });
+    }
+    if (missingTitleByKey.size > 0) {
+        const fetched = await Promise.all(
+            Array.from(missingTitleByKey.values()).map(
+                async (m): Promise<EnsureTitleArgs | null> => {
+                    try {
+                        if (m.mediaType === 'movie') {
+                            const mv = await getMovie(m.tmdbId);
+                            return {
+                                tmdbId: m.tmdbId,
+                                mediaType: 'movie',
+                                title: mv.title,
+                                posterPath: mv.poster_path,
+                                backdropPath: mv.backdrop_path,
+                                releaseDate:
+                                    mv.release_date && mv.release_date.length > 0
+                                        ? mv.release_date
+                                        : null,
+                                originalLanguage: mv.original_language,
+                                genreIds: mv.genres.map((g) => g.id),
+                            };
+                        }
+                        const tv = await getTV(m.tmdbId);
+                        return {
+                            tmdbId: m.tmdbId,
+                            mediaType: 'tv',
+                            title: tv.name,
+                            posterPath: tv.poster_path,
+                            backdropPath: tv.backdrop_path,
+                            releaseDate:
+                                tv.first_air_date && tv.first_air_date.length > 0
+                                    ? tv.first_air_date
+                                    : null,
+                            originalLanguage: tv.original_language,
+                            genreIds: tv.genres.map((g) => g.id),
+                        };
+                    } catch (err) {
+                        // Degraded path: this one rec's card is skipped (the
+                        // !titleRow guard below), not a broken home screen.
+                        console.warn('home rec title TMDB fallback failed:', err);
+                        return null;
+                    }
+                },
+            ),
+        );
+        for (const s of fetched) {
+            if (!s) continue;
+            titleByKey.set(`${s.mediaType}:${s.tmdbId}`, {
+                tmdb_id: s.tmdbId,
+                media_type: s.mediaType,
+                title: s.title,
+                poster_path: s.posterPath,
+                backdrop_path: s.backdropPath,
+                release_date: s.releaseDate,
+                original_language: s.originalLanguage,
+                genre_ids: s.genreIds,
+            });
+            // Stamp forward so subsequent loads read it from the catalogue.
+            void ensureTitle(s);
+        }
+    }
 
     // ---- Build sections
 
