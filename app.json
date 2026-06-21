@@ -60,7 +60,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Seen needs access to your photos to set your profile picture.",
+          "photosPermission": "Seen needs access to your photos to set your profile picture and attach screenshots to feedback.",
           "cameraPermission": false,
           "microphonePermission": false
         }
