@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Film } from 'lucide-react-native';
+import { Film, MoreHorizontal } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
     ActivityIndicator,
@@ -208,11 +208,17 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         watchingResult,
         itemsCountResult,
     ] = await Promise.all([
+        // Home shows actionable recs: status='pending' (a watchlist add
+        // leaves the rec pending, so this also captures on-watchlist recs)
+        // and not hidden_from_home. Dismissed/watched are excluded by the
+        // status filter; the watching/watched-title drop happens below via
+        // the items lookup.
         supabase
             .from('recommendations')
             .select('id, from_user_id, tmdb_id, media_type, sent_at, status, note')
             .eq('to_user_id', userId)
-            .in('status', ['pending', 'accepted'])
+            .eq('status', 'pending')
+            .eq('hidden_from_home', false)
             .order('sent_at', { ascending: false })
             .limit(10),
         supabase
@@ -258,7 +264,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     // because it's a sent-feed, not a discovery surface.
     const recTmdbIds = Array.from(new Set(recs.map((r) => r.tmdb_id)));
 
-    const [friendItemsResult, senderProfilesResult, watchedRecLookupResult] =
+    const [friendItemsResult, senderProfilesResult, excludedRecLookupResult] =
         await Promise.all([
             friendIds.length > 0
                 ? supabase
@@ -284,19 +290,19 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
                       .select('id, handle, display_name, avatar_url')
                       .in('id', Array.from(senderIds))
                 : Promise.resolve({ data: [], error: null }),
-            // Own watched rows on the rec'd titles. status='watched' is
-            // intentional — watchlist + watching pass through to the
-            // carousel because they're still useful nudges for unfinished
-            // titles; only finished-watching is filtered out. .in('tmdb_id',
-            // …) may pull a slight superset (e.g. an items row for the
-            // movie-550 when the rec was for tv-550) — the composite-key
-            // stitch below excludes those cleanly.
+            // Own watching/watched rows on the rec'd titles. A rec drops
+            // off home once the recipient is actively watching or has
+            // finished the title — only "to watch" states keep it (no items
+            // row = still pending; watchlist = kept). .in('tmdb_id', …) may
+            // pull a slight superset (e.g. an items row for movie-550 when
+            // the rec was for tv-550) — the composite-key stitch below
+            // excludes those cleanly.
             recTmdbIds.length > 0
                 ? supabase
                       .from('items')
                       .select('tmdb_id, media_type')
                       .eq('user_id', userId)
-                      .eq('status', 'watched')
+                      .in('status', ['watching', 'watched'])
                       .in('tmdb_id', recTmdbIds)
                 : Promise.resolve({ data: [], error: null }),
         ]);
@@ -308,15 +314,15 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     // set empty, falling through to "show all recs" — degraded behaviour
     // is a watched-rec slipping into the carousel, not a broken home
     // screen. Same shape as the inbox library-status enrichment.
-    const watchedRecKeys = new Set<string>();
-    if (watchedRecLookupResult.error) {
+    const excludedRecKeys = new Set<string>();
+    if (excludedRecLookupResult.error) {
         console.warn(
             'home watched-recs filter fetch failed:',
-            watchedRecLookupResult.error,
+            excludedRecLookupResult.error,
         );
     } else {
-        for (const row of watchedRecLookupResult.data ?? []) {
-            watchedRecKeys.add(`${row.media_type}:${row.tmdb_id}`);
+        for (const row of excludedRecLookupResult.data ?? []) {
+            excludedRecKeys.add(`${row.media_type}:${row.tmdb_id}`);
         }
     }
 
@@ -426,12 +432,11 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
     const recsForYou: RecForYou[] = [];
     recs.forEach((r) => {
         const key = `${r.media_type}:${r.tmdb_id}`;
-        // Drop recs the user has already finished watching — they're
-        // not actionable as "something to watch" in a discovery
-        // carousel. Watchlist + watching status pass through (still
-        // useful nudges for unfinished titles); only 'watched' is
-        // filtered out.
-        if (watchedRecKeys.has(key)) return;
+        // Drop recs whose title the user is already watching or has
+        // finished — those aren't "to watch" any more, so they fall off
+        // home. Titles with no items row (still pending) or on the
+        // watchlist pass through; those are the home set.
+        if (excludedRecKeys.has(key)) return;
         const titleRow = titleByKey.get(key);
         if (!titleRow) return;
         const senderProfile = r.from_user_id
@@ -602,6 +607,45 @@ export default function HomeScreen() {
                 ? { mediaType, tmdbId: String(tmdbId), fromRec }
                 : { mediaType, tmdbId: String(tmdbId) },
         });
+    }
+
+    // 3-dots "Hide from home" on a rec card. Removes the rec from HOME
+    // only via the hidden_from_home flag — it stays in the inbox and stays
+    // actionable; nothing else changes. Optimistic: drop it locally, then
+    // persist; on failure reload to restore the card. hidden_from_home is
+    // recipient-writable (RLS) and not locked by the immutability trigger.
+    async function handleHideRec(recId: string) {
+        setData((prev) =>
+            prev
+                ? {
+                      ...prev,
+                      recsForYou: prev.recsForYou.filter((r) => r.id !== recId),
+                  }
+                : prev,
+        );
+        const { error: hideError } = await supabase
+            .from('recommendations')
+            .update({ hidden_from_home: true })
+            .eq('id', recId);
+        if (hideError) {
+            console.error('hide rec failed:', hideError);
+            Alert.alert('Could not hide', 'Please try again.');
+            try {
+                setData(await load());
+            } catch {
+                // Leave the optimistic state; next focus/refresh reconciles.
+            }
+        }
+    }
+
+    function openRecMenu(recId: string) {
+        Alert.alert('Recommendation', undefined, [
+            {
+                text: 'Hide from home',
+                onPress: () => void handleHideRec(recId),
+            },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
     }
 
     // Transition a Currently Watching row to status='watched', then open
@@ -872,6 +916,26 @@ export default function HomeScreen() {
                         recommends
                     </Text>
                 </View>
+
+                {/* Overflow (3-dots), top-right. Its own Pressable captures
+                    the tap so the card's main onPress (open rec page)
+                    doesn't also fire. Opens a menu whose only action is
+                    "Hide from home". Same dark-tint chip as the
+                    recommender pill so it reads on both image + fallback
+                    cards. */}
+                <Pressable
+                    onPress={() => openRecMenu(rec.id)}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel="Recommendation options"
+                    style={({ pressed }) => [
+                        styles.recOverflowButton,
+                        { backgroundColor: 'rgba(36, 26, 32, 0.88)' },
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <MoreHorizontal color="#FFFFFF" size={18} strokeWidth={2} />
+                </Pressable>
 
                 {/* Title + note, bottom-left, sitting on the dark end
                     of the gradient. Title uses typography.heading;
@@ -1578,6 +1642,19 @@ const styles = StyleSheet.create({
         paddingRight: spacing.sm,
         paddingVertical: spacing.xs,
         borderRadius: radius.full,
+    },
+    recOverflowButton: {
+        // Circular 3-dots chip, top-right, mirroring the recommender
+        // pill's inset + dark-tint fill so it reads on both image and
+        // fallback cards. Fixed square so the icon sits centred.
+        position: 'absolute',
+        top: spacing.md,
+        right: spacing.md,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     recommenderName: {
         // Bold Geist face on the firstName chunk inside the pill —

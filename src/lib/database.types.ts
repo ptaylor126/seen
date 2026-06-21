@@ -464,6 +464,7 @@ export type Database = {
         Row: {
           dismiss_reason: string | null
           from_user_id: string | null
+          hidden_from_home: boolean
           id: string
           media_type: string
           note: string | null
@@ -478,6 +479,7 @@ export type Database = {
         Insert: {
           dismiss_reason?: string | null
           from_user_id?: string | null
+          hidden_from_home?: boolean
           id?: string
           media_type: string
           note?: string | null
@@ -492,6 +494,7 @@ export type Database = {
         Update: {
           dismiss_reason?: string | null
           from_user_id?: string | null
+          hidden_from_home?: boolean
           id?: string
           media_type?: string
           note?: string | null
