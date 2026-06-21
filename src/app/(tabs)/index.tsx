@@ -948,6 +948,24 @@ export default function HomeScreen() {
                             )}
                         </ScrollView>
                     )
+                ) : data.hasFriends ? (
+                    // Has friends but no pending recs → nudge them to ask.
+                    // Routes to the friends list, where each row has the
+                    // request-a-recommendation action (pick who to ask).
+                    <View style={styles.inlineEmpty}>
+                        <Text style={[typography.body, { color: palette.textMuted }]}>
+                            No recommendations yet.{' '}
+                            <Text
+                                style={[typography.body, { color: palette.accent }]}
+                                onPress={() =>
+                                    router.push({ pathname: '/friends' })
+                                }
+                                suppressHighlighting
+                            >
+                                Ask a friend for a recommendation
+                            </Text>
+                        </Text>
+                    </View>
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
