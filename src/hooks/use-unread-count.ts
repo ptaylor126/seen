@@ -5,32 +5,61 @@ import { AppState } from 'react-native';
 import supabase from '@/lib/supabase';
 
 /**
- * Inbox-badge count = (unread notifications) + (pending friend requests).
+ * Inbox-badge count = (informational unread notifications)
+ *                    + (pending friend requests)
+ *                    + (pending received recs).
  *
- * The two sources represent different kinds of "stuff that needs me":
- *   - notifications: events to *see* (rec_received, rec_watched,
- *     friend_accepted). Inbox focus marks them read; badge drops.
- *   - friend_requests: events to *act on*. The row exists iff the
- *     request is pending — accept/decline both delete it. Opening the
- *     inbox doesn't change anything; the badge only drops when the
- *     user accepts or declines.
+ * Two distinct kinds of contributor:
  *
- * No double-counting risk: the friend_request notification kind was
- * dropped in 20260603120000_drop_friend_request_notification_trigger,
- * so the friend_requests table is now the sole source of truth for
- * pending requests.
+ *   INFORMATIONAL — clears when SEEN. Notifications for events to *see*
+ *   (rec_watched, rec_reacted, rec_commented, friend_accepted,
+ *   rec_declined). Counted while read_at IS NULL; the inbox-focus sweep
+ *   marks them read and the badge drops.
+ *
+ *   ACTIONABLE — clears only when the action is COMPLETED, never on view:
+ *     - friend_requests: the row exists iff the request is pending;
+ *       accept/decline both delete it. Opening the inbox changes nothing.
+ *     - recommendations: a received rec with status='pending' AND no
+ *       items row yet for its (tmdb_id, media_type). The items row — not
+ *       rec.status — is the "has the user acted" signal: saving to
+ *       watchlist/watching upserts an items row but leaves rec.status
+ *       'pending', and a rec can arrive for a title the user already
+ *       tracks (nothing to action). So we count pending recs MINUS those
+ *       whose title is already in the library. "Not for me" (status ->
+ *       dismissed) and watched-with-rating also drop it. Viewing the
+ *       inbox changes neither status nor library, so the contribution
+ *       persists until the rec is actioned — mirroring friend_requests.
+ *
+ * No double-counting: the friend_request notification kind was dropped in
+ * 20260603120000, and we exclude the 'rec_received' kind from the
+ * notifications count here (`.neq('kind','rec_received')`). A received rec
+ * is counted ONCE, via the actionable pending-recs query — not also via
+ * its rec_received notification (that row still drives push + the inbox
+ * list, it just no longer feeds the badge, which is what stops it being
+ * view-cleared). Tables are the sole source of truth for the two
+ * actionable kinds.
  *
  * Two refresh paths feed `count`:
  *   1. `useFocusEffect` — refetches on tab/screen focus so a quick
  *      backgrounding round-trip can't leave a stale count.
- *   2. Realtime subscription — both tables are members of the
- *      supabase_realtime publication (added by the same migration).
- *      Any INSERT / UPDATE / DELETE matching the user filter triggers
- *      a re-fetch, so new arrivals and accept/decline-driven drops
- *      land without waiting for focus. We refetch the whole count
- *      rather than maintain a delta because two sources need summing
- *      and RLS-gated deliveries can drop events on auth edges; a full
- *      re-count is cheaper than chasing those bugs.
+ *   2. Realtime subscription — notifications + friend_requests (via
+ *      20260603120000) and recommendations (via 20260620130000) are
+ *      publication members. Any INSERT / UPDATE / DELETE matching the
+ *      user filter triggers a re-fetch, so new recs, reads, and
+ *      accept/decline/dismiss drops land live. We refetch the whole count
+ *      rather than maintain a delta because the sources need summing
+ *      (incl. the recs-minus-library set difference) and RLS-gated
+ *      deliveries can drop events on auth edges; a full re-count is
+ *      cheaper than chasing those bugs.
+ *
+ *      `items` is NOT a publication member, so a library add/remove does
+ *      not push a realtime event — its effect on the count lands on the
+ *      next focus / app-foreground refetch instead. That's consistent in
+ *      practice: a library change is made from a screen the user then
+ *      navigates away from (rec view, title screen), and useFocusEffect
+ *      re-runs on the way back. (Add items to the publication + a fourth
+ *      subscription here if instant library-driven updates are ever
+ *      needed.)
  */
 export function useUnreadCount(): { count: number; refresh: () => Promise<void> } {
     const [count, setCount] = useState(0);
@@ -46,22 +75,59 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
                 return;
             }
 
-            const [notificationsRes, friendRequestsRes] = await Promise.all([
-                supabase
-                    .from('notifications')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('user_id', userId)
-                    .is('read_at', null),
-                supabase
-                    .from('friend_requests')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('to_user_id', userId),
-            ]);
+            const [notificationsRes, friendRequestsRes, pendingRecsRes, libraryRes] =
+                await Promise.all([
+                    // Informational only: exclude rec_received — a received
+                    // rec is counted as an actionable pending rec below, not
+                    // here (where the inbox-view sweep would clear it).
+                    supabase
+                        .from('notifications')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('user_id', userId)
+                        .is('read_at', null)
+                        .neq('kind', 'rec_received'),
+                    supabase
+                        .from('friend_requests')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('to_user_id', userId),
+                    // Actionable: received recs still awaiting a decision.
+                    // We need the title keys (not a head count) so we can drop
+                    // the ones that are already in the library below — there's
+                    // no action to take on those. Saving a rec to
+                    // watchlist/watching leaves rec.status = 'pending' (only
+                    // the watched path and "Not for me" flip it), so the
+                    // items row — not rec.status — is the source of truth for
+                    // "has the user acted on this title".
+                    supabase
+                        .from('recommendations')
+                        .select('tmdb_id, media_type')
+                        .eq('to_user_id', userId)
+                        .eq('status', 'pending'),
+                    // The user's library, keyed (media_type, tmdb_id). A
+                    // pending rec for a title already here isn't actionable.
+                    supabase
+                        .from('items')
+                        .select('tmdb_id, media_type')
+                        .eq('user_id', userId),
+                ]);
             if (notificationsRes.error) throw notificationsRes.error;
             if (friendRequestsRes.error) throw friendRequestsRes.error;
+            if (pendingRecsRes.error) throw pendingRecsRes.error;
+            if (libraryRes.error) throw libraryRes.error;
+
+            const libraryKeys = new Set(
+                (libraryRes.data ?? []).map(
+                    (it) => `${it.media_type}:${it.tmdb_id}`,
+                ),
+            );
+            const actionablePendingRecs = (pendingRecsRes.data ?? []).filter(
+                (r) => !libraryKeys.has(`${r.media_type}:${r.tmdb_id}`),
+            ).length;
 
             setCount(
-                (notificationsRes.count ?? 0) + (friendRequestsRes.count ?? 0),
+                (notificationsRes.count ?? 0) +
+                    (friendRequestsRes.count ?? 0) +
+                    actionablePendingRecs,
             );
         } catch (err) {
             console.error('unread count fetch failed:', err);
@@ -138,6 +204,18 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
                         event: '*',
                         schema: 'public',
                         table: 'friend_requests',
+                        filter: `to_user_id=eq.${userId}`,
+                    },
+                    () => {
+                        void refresh();
+                    },
+                )
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'recommendations',
                         filter: `to_user_id=eq.${userId}`,
                     },
                     () => {
