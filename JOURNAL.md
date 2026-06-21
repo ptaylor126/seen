@@ -33,6 +33,44 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-06-20 (cont. 4) — request-a-rec + collapsing friend header + UI fixes + pre-build notes
+
+**Shipped (committed + pushed)**
+
+- **Request a recommendation (v1, untied)** (`01546a2`). Action on friend profiles + friends-list rows → `request_recommendation` SECURITY DEFINER RPC (`from_user_id` server-set, friendship-gated, note capped at 500) → `rec_requested` notification → friend taps → pre-targeted into the send flow for the requester → sends a normal rec. No request table, no linking (deliberate later phase). Migration `20260620140000` APPLIED via dashboard + verified. Edge function `send-push-notification` redeployed for the push case. `database.types.ts` RPC type re-added after an accidental empty-file scare (a `> file` redirect on a failed gen-types emptied it; `git checkout` restored it — **lesson: write to a temp file then `mv`, never redirect straight onto the real file**).
+- **Friend profile collapsing header** (`282d286`). Single FlatList: profile info scrolls away, Watched/Watching/Watchlist tabs sticky (`stickyHeaderIndices`), grid mode re-chunked into single-column rows (`numColumns` incompatible with sticky headers), loading/error/empty moved to the footer so tabs stay reachable. Long lists now use full screen height. (This screen's request-rec entry point is interwoven in the same file — committed together.)
+- **Library** (`de4ed97`): dropped the filter-zone background fill, added a hairline divider.
+- **Search results** (`9e6b21a`): bottom inset so the last result clears the floating nav.
+- **Avatar-stack overlap fix** (`0cbe822`).
+- **Notification badge resolved**: informational notifications clear on view; actionable items (pending recs, friend requests) persist until actioned not viewed; pending recs already in the user's library are excluded from the count. Verified correct on real data — the "9+" was legitimate test backlog, since cleared.
+
+**Migrations applied via dashboard** (NOT in Supabase migration history — if `db push` ever works, run `supabase migration repair --status applied` for all): `20260618120000`, `20260618130000`, `20260619120000`, `20260620120000`, `20260620130000`, `20260620140000`.
+
+**Pre-build config notes**
+
+- Photo-permission string still profile-picture-only wording; the feedback feature also uses photos — broaden to cover feedback screenshots before submit (still to do).
+- Android `adaptiveIcon`: `backgroundColor` changed from stale Expo default blue `#E6F4FE` to plum `#7A3960`. BUT both adaptive-icon PNGs are still Expo placeholder artwork (foreground = blue chevron, background = Expo blueprint), and `backgroundImage` renders over `backgroundColor`, so the plum won't show until the placeholder background is replaced. Needs real plum-brand adaptive-icon artwork (foreground + background layers) before any ANDROID release. NOT iOS/App-Store blocking — parked.
+
+**Needs production build + two-account verification** (built/verified single-account or via SQL only — must test end-to-end on the new build with real testers before submit): rec decline push + sender inbox render; send-time heads-up privacy gate (private must produce NO signal); friends-watched card with real friend data; request-a-rec full loop (request → notification → push → pre-targeted send → receive).
+
+**Next (tomorrow)**
+
+- Account deletion — Apple gate (5.1.1(v)). Confirmation + server-side delete across profile/items/friendships/recommendations/reviews/feedback/notifications + auth user. Design-first.
+- Security sweep — RLS coverage all tables, SECURITY DEFINER functions reviewed, Storage bucket policies (confirm feedback screenshots bucket is private), TMDB proxy/keys not exposed.
+- Micro-animations (polish).
+- THEN: two-account verification pass on the new build → App Store screenshots + admin → submit.
+
+**Tech debt / parked**
+
+- Unify the Home tab's hand-rolled header onto `ScreenHeader` (caused the two-place bell-icon edit; will keep causing "fixed one place not the other").
+- Point the review flow's inline visibility write at the shared `setItemVisibility`.
+- Explicit resolve/acknowledge for recs whose title is already in the library (Save is a no-op there).
+- request-a-rec "tied" phase (link the response rec back to the request, "because you asked" framing, request tracking) if v1 gets used.
+- Android adaptive-icon brand artwork (see pre-build notes).
+- `rec_watched` notification retraction on un-watch.
+
+---
+
 ## 2026-06-20 (cont. 3) — recipient-picker UX + small UI fixes
 
 **Shipped**
