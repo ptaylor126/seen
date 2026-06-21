@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Check } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { Check, Search as SearchIcon, X } from 'lucide-react-native';
+import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -93,6 +93,13 @@ export default function RecommendScreen() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [sending, setSending] = useState(false);
+    // Local recipient filter — mirrors the Friends tab / library local
+    // search (borderless surface pill, inline clear-X, Cancel-on-focus).
+    // Filters the rendered list only; selectedFriendIds is independent, so
+    // selection survives filtering and clearing.
+    const [localQuery, setLocalQuery] = useState('');
+    const [localFocused, setLocalFocused] = useState(false);
+    const localSearchInputRef = useRef<TextInput | null>(null);
 
     useEffect(() => {
         if (!mediaType || !Number.isFinite(tmdbId)) {
@@ -144,21 +151,59 @@ export default function RecommendScreen() {
                     return;
                 }
 
-                const { data: profiles, error: profilesError } = await supabase
-                    .from('profiles')
-                    .select('id, handle, display_name, avatar_url')
-                    .in('id', otherIds);
+                const [
+                    { data: profiles, error: profilesError },
+                    { data: sentRecs, error: sentRecsError },
+                ] = await Promise.all([
+                    supabase
+                        .from('profiles')
+                        .select('id, handle, display_name, avatar_url')
+                        .in('id', otherIds),
+                    // Recency ranking input: every rec the current user has
+                    // SENT, newest first. We only need (recipient, sent_at);
+                    // the first row seen per recipient is their most recent.
+                    supabase
+                        .from('recommendations')
+                        .select('to_user_id, sent_at')
+                        .eq('from_user_id', userId)
+                        .order('sent_at', { ascending: false }),
+                ]);
                 if (profilesError) throw profilesError;
+                if (sentRecsError) throw sentRecsError;
                 if (!active) return;
 
-                setFriends(
-                    (profiles ?? []).map((p) => ({
-                        userId: p.id,
-                        handle: p.handle,
-                        displayName: p.display_name,
-                        avatarUrl: p.avatar_url,
-                    })),
-                );
+                // Friend id -> most-recent sent_at. Query is already sorted
+                // newest-first, so the first hit per recipient wins.
+                const lastSentTo = new Map<string, string>();
+                for (const r of sentRecs ?? []) {
+                    if (r.to_user_id && r.sent_at && !lastSentTo.has(r.to_user_id)) {
+                        lastSentTo.set(r.to_user_id, r.sent_at);
+                    }
+                }
+
+                const rows: FriendRow[] = (profiles ?? []).map((p) => ({
+                    userId: p.id,
+                    handle: p.handle,
+                    displayName: p.display_name,
+                    avatarUrl: p.avatar_url,
+                }));
+
+                // Reorder (never filter): friends you've sent to most recently
+                // rise to the top by sent_at desc; everyone you've never sent
+                // to falls below, alphabetical by name for a stable order. ISO
+                // timestamps compare correctly as strings.
+                rows.sort((a, b) => {
+                    const aSent = lastSentTo.get(a.userId);
+                    const bSent = lastSentTo.get(b.userId);
+                    if (aSent && bSent) {
+                        return aSent < bSent ? 1 : aSent > bSent ? -1 : 0;
+                    }
+                    if (aSent) return -1;
+                    if (bSent) return 1;
+                    return a.displayName.localeCompare(b.displayName);
+                });
+
+                setFriends(rows);
             } catch (err) {
                 if (!active) return;
                 console.error('recommend init failed:', err);
@@ -177,6 +222,19 @@ export default function RecommendScreen() {
     const selectedCount = selectedFriendIds.size;
     const canSend =
         !sending && selectedCount > 0 && mediaType !== null && !loading;
+
+    // Case-insensitive match against display name AND @handle (haystack
+    // includes "@" so typing it or omitting it both work). Filtering
+    // preserves the recency order already baked into `friends`.
+    const normalizedQuery = localQuery.trim().toLowerCase();
+    const filteredFriends =
+        normalizedQuery.length === 0
+            ? friends
+            : friends.filter((f) =>
+                  `${f.displayName} @${f.handle}`
+                      .toLowerCase()
+                      .includes(normalizedQuery),
+              );
 
     function toggleFriend(userId: string) {
         setSelectedFriendIds((prev) => {
@@ -603,6 +661,85 @@ export default function RecommendScreen() {
                         </View>
                     ) : (
                         <>
+                            {/* Local recipient filter. Mirrors the Friends
+                                tab local search: borderless surface pill,
+                                inline clear-X (clear-but-stay), Cancel
+                                sibling on focus (blur + clear). Selection
+                                lives in selectedFriendIds, not the rendered
+                                list, so filtering never drops a pick. */}
+                            <View style={styles.searchRow}>
+                                <View
+                                    style={[
+                                        styles.searchBar,
+                                        { backgroundColor: palette.surface },
+                                    ]}
+                                >
+                                    <SearchIcon
+                                        color={palette.textMuted}
+                                        size={20}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                    <TextInput
+                                        ref={localSearchInputRef}
+                                        value={localQuery}
+                                        onChangeText={setLocalQuery}
+                                        placeholder="Search friends"
+                                        placeholderTextColor={palette.textMuted}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        returnKeyType="search"
+                                        onFocus={() => setLocalFocused(true)}
+                                        onBlur={() => setLocalFocused(false)}
+                                        style={[
+                                            styles.searchInput,
+                                            typography.body,
+                                            { color: palette.text },
+                                        ]}
+                                    />
+                                    {localQuery.length > 0 ? (
+                                        <Pressable
+                                            onPress={() => setLocalQuery('')}
+                                            hitSlop={spacing.sm}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Clear search"
+                                            style={({ pressed }) => [
+                                                pressed && { opacity: 0.6 },
+                                            ]}
+                                        >
+                                            <X
+                                                color={palette.textMuted}
+                                                size={18}
+                                                strokeWidth={ICON_STROKE_WIDTH}
+                                            />
+                                        </Pressable>
+                                    ) : null}
+                                </View>
+                                {localFocused ? (
+                                    <Pressable
+                                        onPress={() => {
+                                            setLocalQuery('');
+                                            localSearchInputRef.current?.blur();
+                                        }}
+                                        hitSlop={spacing.sm}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Cancel search"
+                                        style={({ pressed }) => [
+                                            styles.cancelButton,
+                                            pressed && { opacity: 0.6 },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                typography.body,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            Cancel
+                                        </Text>
+                                    </Pressable>
+                                ) : null}
+                            </View>
+
                             <Text
                                 style={[
                                     typography.micro,
@@ -612,9 +749,21 @@ export default function RecommendScreen() {
                             >
                                 SEND TO
                             </Text>
-                            <View style={styles.friendList}>
-                                {friends.map(renderFriendRow)}
-                            </View>
+                            {filteredFriends.length > 0 ? (
+                                <View style={styles.friendList}>
+                                    {filteredFriends.map(renderFriendRow)}
+                                </View>
+                            ) : (
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        styles.noMatch,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    No friends match “{localQuery.trim()}”.
+                                </Text>
+                            )}
                         </>
                     )}
                     </Pressable>
@@ -765,6 +914,39 @@ const styles = StyleSheet.create({
         marginTop: spacing.lg,
         marginBottom: spacing.sm,
         letterSpacing: 0.5,
+    },
+    searchRow: {
+        // Hosts the search pill + conditional Cancel sibling. Horizontal
+        // inset matches sectionLabel / friendList so it edge-aligns.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.lg,
+        marginTop: spacing.md,
+        marginBottom: spacing.sm,
+    },
+    searchBar: {
+        // Borderless surface pill (surface-vs-bg is the separation), flex
+        // so it shrinks when Cancel appears. Mirrors Friends/library search.
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.full,
+        height: 44,
+    },
+    cancelButton: {
+        paddingHorizontal: spacing.xs,
+    },
+    searchInput: {
+        flex: 1,
+        // Parent's fixed height owns vertical sizing.
+        paddingVertical: 0,
+    },
+    noMatch: {
+        paddingHorizontal: spacing.lg,
+        paddingTop: spacing.md,
     },
     friendList: {
         paddingHorizontal: spacing.lg,
