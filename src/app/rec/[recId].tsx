@@ -485,34 +485,59 @@ export default function RecScreen() {
         };
     }, []);
 
-    // Decline: set the rec to 'dismissed' (+ optional note) so it drops
-    // from the recipient's pending inbox. Optimistic — flip local status
-    // and show the undo bar immediately; revert on failure. After a short
-    // window (no undo), auto-return to the inbox.
+    // Decline ("Not for me"). DEFERRED two-step so the sender's
+    // declined-with-note notification is undo-safe (it's fired by the
+    // notify_recommendation_declined trigger only when dismiss_reason
+    // transitions to non-null):
+    //   Step 1 (now): status='dismissed', dismiss_reason=NULL — drops the
+    //     rec from the inbox, and writes NO note → trigger doesn't fire,
+    //     so nothing is sent during the undo window.
+    //   Step 2 (after the 4s window, only if there's a note AND no undo):
+    //     a second update sets dismiss_reason=<note> → THAT transition
+    //     fires the trigger → the sender is notified.
+    // Undo within the window writes pending + null, so the note is never
+    // persisted and the sender is never notified. A silent decline (no
+    // note) only ever does step 1 — fully silent, forever.
     async function handleConfirmDecline(note: string) {
         if (!rec || declineBusy) return;
         setDeclineBusy(true);
         setShowDeclineSheet(false);
         const previousStatus = rec.status;
+        const recId = rec.id;
         // Optimistic local flip so the Decline action hides at once.
         setRec((prev) => (prev ? { ...prev, status: 'dismissed' } : prev));
         try {
+            // Step 1 — dismiss WITHOUT the note (silent; no notification).
             const { error: declineErr } = await supabase
                 .from('recommendations')
-                .update({
-                    status: 'dismissed',
-                    // '' → null: silent decline stores no reason.
-                    dismiss_reason: note.length > 0 ? note : null,
-                })
-                .eq('id', rec.id);
+                .update({ status: 'dismissed', dismiss_reason: null })
+                .eq('id', recId);
             if (declineErr) throw declineErr;
 
-            // Brief "Declined · Undo" window, then return to the inbox
-            // (the rec is already out of the pending list).
+            // Brief "Declined · Undo" window, then return to the inbox.
             setUndoVisible(true);
             if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
             undoTimerRef.current = setTimeout(() => {
+                undoTimerRef.current = null;
                 setUndoVisible(false);
+                // Step 2 — window elapsed with no undo. Persist the note
+                // now (if any): this null→non-null transition fires the
+                // trigger that notifies the sender. Fire-and-forget so it
+                // still completes as the screen unmounts on router.back().
+                if (note.length > 0) {
+                    void supabase
+                        .from('recommendations')
+                        .update({ dismiss_reason: note })
+                        .eq('id', recId)
+                        .then(({ error }) => {
+                            if (error) {
+                                console.error(
+                                    'decline note write failed:',
+                                    error,
+                                );
+                            }
+                        });
+                }
                 router.back();
             }, 4000);
         } catch (err) {

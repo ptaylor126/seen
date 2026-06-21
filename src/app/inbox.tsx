@@ -113,13 +113,29 @@ interface RecCommentedItem {
     titleName: string | null;
 }
 
+// Sender-side: a recipient passed on this rec WITH a note (silent declines
+// never create a notification, so `note` is always present here).
+interface RecDeclinedItem {
+    kind: 'notification_rec_declined';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    decliner: ProfileSummary;
+    recId: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+    note: string | null;
+}
+
 type InboxItem =
     | IncomingRecItem
     | FriendRequestItem
     | RecWatchedItem
     | FriendAcceptedItem
     | RecReactedItem
-    | RecCommentedItem;
+    | RecCommentedItem
+    | RecDeclinedItem;
 
 // Sent recs are NOT unioned into InboxItem — different render path, no
 // notification semantics, no badge effects. Multi-recipient sends create
@@ -264,6 +280,7 @@ export default function InboxScreen() {
                         'friend_accepted',
                         'rec_reacted',
                         'rec_commented',
+                        'rec_declined',
                     ])
                     .order('created_at', { ascending: false })
                     .limit(MAX_ITEMS),
@@ -318,10 +335,11 @@ export default function InboxScreen() {
                     if (id) otherUserIds.add(id);
                 } else if (
                     n.kind === 'rec_reacted' ||
-                    n.kind === 'rec_commented'
+                    n.kind === 'rec_commented' ||
+                    n.kind === 'rec_declined'
                 ) {
-                    // Reactor / commenter is the other party on the
-                    // rec — payload.from_user_id per the trigger.
+                    // Reactor / commenter / decliner is the other party on
+                    // the rec — payload.from_user_id per the trigger.
                     const id = pickString(payload, 'from_user_id');
                     if (id) otherUserIds.add(id);
                 }
@@ -368,7 +386,8 @@ export default function InboxScreen() {
                 if (
                     n.kind !== 'rec_watched' &&
                     n.kind !== 'rec_reacted' &&
-                    n.kind !== 'rec_commented'
+                    n.kind !== 'rec_commented' &&
+                    n.kind !== 'rec_declined'
                 ) {
                     continue;
                 }
@@ -577,6 +596,30 @@ export default function InboxScreen() {
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
+                    });
+                } else if (n.kind === 'rec_declined') {
+                    const declinerId = pickString(payload, 'from_user_id');
+                    const decliner = declinerId
+                        ? profilesById.get(declinerId) ?? placeholderProfile
+                        : placeholderProfile;
+                    const recId = pickString(payload, 'recommendation_id');
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (!recId) continue;
+                    inboxItems.push({
+                        kind: 'notification_rec_declined',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        decliner,
+                        recId,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
+                                : null,
+                        note: pickString(payload, 'note'),
                     });
                 }
             }
@@ -995,6 +1038,50 @@ export default function InboxScreen() {
         );
     }
 
+    function renderRecDeclined(item: RecDeclinedItem) {
+        const title = item.titleName ?? 'your recommendation';
+        return (
+            <Pressable
+                onPress={() => router.push(`/rec/${item.recId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <Avatar
+                    avatarUrl={item.decliner.avatarUrl}
+                    displayName={item.decliner.displayName}
+                    seedId={item.decliner.userId}
+                    size={AVATAR_SIZE}
+                />
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text style={typography.bodyEmphasis}>
+                            {item.decliner.displayName}
+                        </Text>{' '}
+                        passed on{' '}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    {item.note ? (
+                        <Text
+                            style={[
+                                typography.caption,
+                                styles.note,
+                                { color: palette.textMuted },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            “{item.note}”
+                        </Text>
+                    ) : null}
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRow({ item }: { item: InboxItem }) {
         switch (item.kind) {
             case 'incoming_rec':
@@ -1009,6 +1096,8 @@ export default function InboxScreen() {
                 return renderRecReacted(item);
             case 'notification_rec_commented':
                 return renderRecCommented(item);
+            case 'notification_rec_declined':
+                return renderRecDeclined(item);
         }
     }
 

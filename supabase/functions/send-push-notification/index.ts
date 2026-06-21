@@ -43,7 +43,8 @@ type NotificationKind =
     | 'friend_request'
     | 'friend_accepted'
     | 'rec_reacted'
-    | 'rec_commented';
+    | 'rec_commented'
+    | 'rec_declined';
 
 interface NotificationRow {
     id: string;
@@ -372,6 +373,38 @@ async function buildMessage(
                     ? `${commenterName} commented on ${title}`
                     : `${commenterName} commented on your rec`,
                 body: bodyPreview,
+                data,
+            };
+        }
+        case 'rec_declined': {
+            // payload.from_user_id is the recipient who declined; the note
+            // rides in the payload (no separate fetch). Only NOTED declines
+            // create this row (silent declines never notify), so a note is
+            // always present — but guard + truncate for the lock screen.
+            const declinerId = stringField(notif.payload, 'from_user_id');
+            const note = stringField(notif.payload, 'note');
+            const tmdbId = numberField(notif.payload, 'tmdb_id');
+            const mediaType = stringField(notif.payload, 'media_type');
+            if (!declinerId) return null;
+
+            const [declinerName, title] = await Promise.all([
+                fetchDisplayName(supabase, declinerId),
+                tmdbId !== null && mediaType
+                    ? fetchTmdbTitle(tmdbId, mediaType)
+                    : Promise.resolve(null),
+            ]);
+            if (!declinerName) return null;
+            const notePreview = note
+                ? note.length > 80
+                    ? `${note.slice(0, 80)}…`
+                    : note
+                : undefined;
+            return {
+                // Gentle, sentence case — "passed on", not "declined".
+                title: title
+                    ? `${declinerName} passed on ${title}`
+                    : `${declinerName} passed on your recommendation`,
+                body: notePreview,
                 data,
             };
         }
