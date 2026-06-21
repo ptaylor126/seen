@@ -240,6 +240,11 @@ export default function InboxScreen() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState<string | null>(null);
+    // Notification ids that were unread the moment the inbox opened THIS
+    // visit — snapshotted before the on-focus read-sweep marks them read.
+    // Drives the per-row unread dot for this viewing only (option C); the
+    // sweep still clears read_at, so the next visit starts clean.
+    const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -250,6 +255,23 @@ export default function InboxScreen() {
             } = await supabase.auth.getSession();
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
+
+            // Snapshot which notification rows are unread RIGHT NOW —
+            // sequentially, BEFORE the read-sweep in the batch below marks
+            // them read (the sweep races the SELECT inside the same batch,
+            // and the notifications SELECT doesn't fetch read_at anyway).
+            // Best-effort: on error the snapshot is empty (no dots), never
+            // a broken inbox. This is the option-C "unread as of when I
+            // opened" source; the sweep still clears read_at so next visit
+            // is clean.
+            const unreadSnapshotRes = await supabase
+                .from('notifications')
+                .select('id')
+                .eq('user_id', userId)
+                .is('read_at', null);
+            const unreadSnapshot = new Set(
+                (unreadSnapshotRes.data ?? []).map((r) => r.id),
+            );
 
             // Four read sources + one notifications-read sweep, in
             // parallel. The Sent query is unconditional even when the
@@ -664,6 +686,9 @@ export default function InboxScreen() {
 
             inboxItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
             setItems(inboxItems.slice(0, MAX_ITEMS));
+            // Apply the open-time snapshot alongside the rows so the dots
+            // appear with this visit's data.
+            setUnreadIds(unreadSnapshot);
 
             // Sent items. Query is already ordered newest-first, so a
             // second sort is redundant — but keep it defensive in case
@@ -1203,7 +1228,7 @@ export default function InboxScreen() {
         );
     }
 
-    function renderRow({ item }: { item: InboxItem }) {
+    function renderRowContent(item: InboxItem) {
         switch (item.kind) {
             case 'incoming_rec':
                 return renderIncomingRec(item);
@@ -1222,6 +1247,32 @@ export default function InboxScreen() {
             case 'notification_rec_requested':
                 return renderRecRequested(item);
         }
+    }
+
+    function renderRow({ item }: { item: InboxItem }) {
+        const content = renderRowContent(item);
+        // Unread dot for notification rows that were unread when the inbox
+        // opened this visit. Only notification-sourced rows carry a
+        // notificationId — the `in` check narrows the union so incoming-rec
+        // and friend-request rows (table-sourced, no notification) never
+        // get one. Absolutely positioned over the row so it doesn't
+        // reflow the existing layout.
+        if ('notificationId' in item && unreadIds.has(item.notificationId)) {
+            return (
+                <View style={styles.rowWithDot}>
+                    {content}
+                    <View
+                        style={[
+                            styles.unreadDot,
+                            { backgroundColor: palette.accent },
+                        ]}
+                        accessibilityLabel="Unread"
+                        pointerEvents="none"
+                    />
+                </View>
+            );
+        }
+        return content;
     }
 
     function renderSentRec({ item }: { item: SentRecItem }) {
@@ -1377,6 +1428,22 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         paddingVertical: spacing.md,
         gap: spacing.md,
+    },
+    rowWithDot: {
+        // Positioning context for the absolute unread dot. No layout of
+        // its own — the wrapped row keeps its existing styling.
+        position: 'relative',
+    },
+    unreadDot: {
+        // Small accent dot at the trailing edge, vertically centred on the
+        // avatar (row paddingVertical + half the avatar). Absolute so it
+        // overlays without reflowing the row content.
+        position: 'absolute',
+        right: spacing.base,
+        top: spacing.md + AVATAR_SIZE / 2 - 4,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
     },
     rowText: {
         flex: 1,
