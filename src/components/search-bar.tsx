@@ -13,6 +13,7 @@ import {
     View,
 } from 'react-native';
 
+import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import {
     imageUrl,
     searchMulti,
@@ -294,6 +295,12 @@ export function SearchBarOverlay({
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
+    // The overlay is absolute-positioned to the screen bottom (under the
+    // floating nav), so the results list needs the same bottom inset the
+    // other tab lists use — nav height + bottom gap + safe-area inset —
+    // plus a small margin so the last row clears the nav pill and stays
+    // tappable. Reuses the shared hook so it tracks nav-height changes.
+    const tabBarInset = useFloatingTabBarInset();
 
     function renderTitleRow(item: SearchableTitle) {
         const titleText = item.media_type === 'movie' ? item.title : item.name;
@@ -453,7 +460,10 @@ export function SearchBarOverlay({
                     stickySectionHeadersEnabled={false}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={[
+                        styles.listContent,
+                        { paddingBottom: tabBarInset + spacing.lg },
+                    ]}
                     ItemSeparatorComponent={() => (
                         <View
                             style={[
