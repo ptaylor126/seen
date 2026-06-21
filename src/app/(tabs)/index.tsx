@@ -150,22 +150,19 @@ const WATCHING_POSTER_H = 60;
 const REC_CARD_SOLO_W = HERO_SCREEN_W - spacing.base * 2;
 
 // Friends row stacked-avatar overlay — bottom-right of each poster.
-// "2.5 arrangement": 2 avatars fully visible + a 3rd peeking half-
-// behind the 2nd to echo the 3-full-plus-peek poster row's visual
-// language. +N pill appears as a 4th left-most chip when
+// Up to 3 avatars overlapping left-to-right, most-recent watcher
+// rightmost and on top; a +N pill appears as a left-most chip when
 // totalWatchers > 3. Avatar bumped from 20 → 26pt for more presence
-// at the new arrangement (5 tiny chips → 3 bigger ones reads
-// cleaner). Each chip's OUTER is avatar + 2pt border × 2 sides =
-// 30pt.
+// (5 tiny chips → 3 bigger ones reads cleaner). Each chip's OUTER is
+// avatar + 2pt border × 2 sides = 30pt.
 const FRIENDS_GRID_AVATAR_SIZE = 26;
 const FRIENDS_GRID_MAX_AVATARS = 3;
-// Two overlap values for the 2.5 arrangement: MAIN between av1↔av2
-// (small, both clearly visible — av1 just slightly covers av2's
-// right edge), PEEK between av2↔av3 and av3↔+N (half-chip, so av3
-// shows only its left half from behind av2; +N similarly peeks from
-// behind av3). Half-chip = chip_outer / 2 = 15pt for the 30pt chip.
-const FRIENDS_GRID_MAIN_OVERLAP = 4;
-const FRIENDS_GRID_PEEK_OVERLAP = 15;
+// Single uniform overlap between adjacent chips (avatars AND the +N
+// chip): every chip after the leftmost tucks under its left neighbour
+// by the same amount, so the gaps read identically no matter how many
+// watchers there are. The leftmost chip (the +N pill when present,
+// else the back avatar) leads fully visible.
+const FRIENDS_GRID_OVERLAP = 4;
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -1027,23 +1024,21 @@ export default function HomeScreen() {
                                             ]}
                                         />
                                     )}
-                                    {/* Stacked-avatar social proof, 2.5
-                                        arrangement. Visual L→R:
+                                    {/* Stacked-avatar social proof.
+                                        Visual L→R:
                                         [+N (if any)][av3][av2][av1].
                                         Render order is left-to-right
                                         (front-of-stack = last drawn =
                                         rightmost), so the most-recent
                                         watcher (first item in `shown`)
                                         lands rightmost and on top.
-                                        Each chip after the first
-                                        overlaps its left neighbour via
-                                        a negative marginLeft. Two
-                                        overlap values: MAIN (4pt)
-                                        between av1↔av2 so both stay
-                                        clearly visible, PEEK (15pt =
-                                        half-chip) between av2↔av3 and
-                                        av3↔+N so the back chips peek
-                                        from behind. */}
+                                        Every chip after the leftmost
+                                        overlaps its left neighbour by
+                                        the SAME amount (negative
+                                        marginLeft), so the gaps are
+                                        uniform across the whole stack —
+                                        image avatars and the +N chip
+                                        alike. */}
                                     <View style={styles.friendsGridStack}>
                                         {extra > 0 ? (
                                             <View
@@ -1070,31 +1065,21 @@ export default function HomeScreen() {
                                             .slice()
                                             .reverse()
                                             .map((w, idx) => {
-                                                // Per-chip overlap: the
-                                                // rightmost chip (idx
-                                                // === shown.length - 1
-                                                // = the most-recent
-                                                // watcher) gets MAIN
-                                                // (minimal) so it sits
-                                                // alongside av2 without
-                                                // hiding it. Anything
-                                                // else non-leftmost
-                                                // gets PEEK (half-chip)
-                                                // so it tucks behind
-                                                // its right neighbour.
-                                                // The leftmost chip
-                                                // (idx 0 AND no +N
-                                                // before it) gets no
-                                                // overlap.
+                                                // Uniform overlap: every
+                                                // chip tucks under its
+                                                // left neighbour by the
+                                                // same amount. The only
+                                                // chip with no overlap is
+                                                // the leftmost one (idx 0
+                                                // AND no +N pill before
+                                                // it) — when a +N pill
+                                                // leads, even the back
+                                                // avatar overlaps it.
                                                 const isLeftmost =
                                                     idx === 0 && extra === 0;
-                                                const isMostRecent =
-                                                    idx === shown.length - 1;
                                                 const overlap = isLeftmost
                                                     ? 0
-                                                    : isMostRecent
-                                                        ? FRIENDS_GRID_MAIN_OVERLAP
-                                                        : FRIENDS_GRID_PEEK_OVERLAP;
+                                                    : FRIENDS_GRID_OVERLAP;
                                                 return (
                                                     <View
                                                         key={w.userId}
