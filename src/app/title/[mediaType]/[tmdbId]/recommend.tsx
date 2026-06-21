@@ -190,29 +190,104 @@ export default function RecommendScreen() {
         });
     }
 
+    // Recipient id -> display name for user-facing copy.
+    function displayNameFor(id: string) {
+        return friends.find((f) => f.userId === id)?.displayName ?? 'a friend';
+    }
+
+    // Gentle, sentence-case heads-up line for a recipient who already has
+    // this title in their (friends-visible) library.
+    function alreadyHasLine(name: string, status: string): string {
+        switch (status) {
+            case 'watched':
+                return `${name} has already watched this.`;
+            case 'watching':
+                return `${name} is already watching this.`;
+            case 'watchlist':
+                return `It's already on ${name}'s watchlist.`;
+            default:
+                return `${name} already has this in their library.`;
+        }
+    }
+
+    // Promise-wrapped Alert so handleSend can await the sender's choice.
+    // Non-blocking by design: "Send anyway" is always offered — this is
+    // information, not a restriction.
+    function confirmSendAnyway(message: string): Promise<boolean> {
+        return new Promise((resolve) => {
+            Alert.alert('Heads up', message, [
+                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Send anyway', onPress: () => resolve(true) },
+            ]);
+        });
+    }
+
     async function handleSend() {
         if (!canSend || !mediaType) return;
         setSending(true);
+        const recipientIds = Array.from(selectedFriendIds);
+        try {
+            // Privacy-safe heads-up. RLS on items (is_item_visible_to_auth)
+            // returns a row ONLY when it's friends-visible — visibility =
+            // 'friends' AND we're a confirmed friend. A PRIVATE item returns
+            // nothing here, indistinguishable from "no item", so the sender
+            // can never infer a hidden library entry. The privacy gate is
+            // enforced by the database, not by this query.
+            const { data: visibleItems, error: itemsError } = await supabase
+                .from('items')
+                .select('user_id, status')
+                .in('user_id', recipientIds)
+                .eq('tmdb_id', tmdbId)
+                .eq('media_type', mediaType);
+            if (itemsError) throw itemsError;
+
+            if (visibleItems && visibleItems.length > 0) {
+                // One line per already-has recipient, ordered by the picker
+                // for stable copy. Recipients with no (visible) item are
+                // silently absent — no "they haven't seen it" signal.
+                const message = recipientIds
+                    .map((id) => {
+                        const hit = visibleItems.find((it) => it.user_id === id);
+                        return hit
+                            ? alreadyHasLine(displayNameFor(id), hit.status)
+                            : null;
+                    })
+                    .filter((line): line is string => line !== null)
+                    .join('\n');
+                const proceed = await confirmSendAnyway(message);
+                if (!proceed) {
+                    setSending(false);
+                    return;
+                }
+            }
+
+            await performSend(recipientIds, mediaType);
+        } catch (err) {
+            console.error('send recommendation failed:', err);
+            surfaceError(err, "Couldn't send");
+            setSending(false);
+        }
+    }
+
+    async function performSend(recipientIds: string[], mt: MediaType) {
         try {
             // Fan out to all recipients in parallel via the existing
             // single-recipient RPC. allSettled (not Promise.all) so one
             // bad recipient doesn't abort the rest — each rec is its own
             // row and its own rec_received notification through the
             // existing trigger path, so partial success is meaningful.
-            const recipientIds = Array.from(selectedFriendIds);
             const results = await Promise.allSettled(
                 recipientIds.map((toId) =>
                     supabase.rpc('send_recommendation', {
                         to_user_id: toId,
                         tmdb_id: tmdbId,
-                        media_type: mediaType,
+                        media_type: mt,
                         note: trimmedNote.length > 0 ? trimmedNote : undefined,
                     }),
                 ),
             );
 
-            const nameFor = (id: string) =>
-                friends.find((f) => f.userId === id)?.displayName ?? 'a friend';
+            const nameFor = displayNameFor;
             const sent: string[] = [];
             const alreadySent: string[] = [];
             const failed: { name: string; message: string }[] = [];
