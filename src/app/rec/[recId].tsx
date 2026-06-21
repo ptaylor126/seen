@@ -1902,17 +1902,19 @@ const styles = StyleSheet.create({
         // bar from the plum page; a stroke/shadow read as a hard line.
     },
     composerFieldWrap: {
-        // Fully-rounded pill holding the input + the inline filled send
-        // circle. The surface fill + border live here (the TextInput
-        // inside is transparent). alignItems flex-end keeps the send
-        // circle bottom-aligned as the field grows. Small inner vertical
-        // padding gives the circle breathing room inside the pill.
+        // Rounded-rectangle field holding the input + the inline filled
+        // send circle. radius.lg (not radius.full): at single-line height
+        // it clamps to ~half-height so it still reads as a rounded pill,
+        // but as the field grows to multiple lines it holds a constant
+        // gentle corner instead of an oversized half-height pill curve.
+        // The surface fill lives here (the TextInput inside is
+        // transparent).
         flex: 1,
         flexDirection: 'row',
         // Center the send circle (and single-line text) vertically in the
-        // pill so the arrow reads centered.
+        // field so the arrow reads centered.
         alignItems: 'center',
-        borderRadius: radius.full,
+        borderRadius: radius.lg,
         // No border/outline — just the filled pill.
         paddingLeft: spacing.md,
         // Roomier right padding so the send circle sits comfortably off
