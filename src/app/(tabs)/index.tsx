@@ -719,8 +719,8 @@ export default function HomeScreen() {
                         <View>
                             <NotificationsIcon
                                 color={palette.text}
-                                width={24}
-                                height={24}
+                                width={26}
+                                height={26}
                             />
                             {unreadCount > 0 && (
                                 <View
