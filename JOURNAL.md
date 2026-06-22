@@ -109,7 +109,7 @@ Built end-to-end account deletion in three reviewed phases. Commits: `f7e92a3` (
 - **Avatar-stack overlap fix** (`0cbe822`).
 - **Notification badge resolved**: informational notifications clear on view; actionable items (pending recs, friend requests) persist until actioned not viewed; pending recs already in the user's library are excluded from the count. Verified correct on real data — the "9+" was legitimate test backlog, since cleared.
 
-**Migrations applied via dashboard** (NOT in Supabase migration history — if `db push` ever works, run `supabase migration repair --status applied` for all): `20260618120000`, `20260618130000`, `20260619120000`, `20260620120000`, `20260620130000`, `20260620140000`.
+**Migrations applied via dashboard** (NOT in Supabase migration history — if `db push` ever works, run `supabase migration repair --status applied` for all): `20260618120000`, `20260618130000`, `20260619120000`, `20260620120000`, `20260620130000`, `20260620140000`, `20260625120000_create_blocks_and_block_user`, `20260626120000_create_list_blocked_users`.
 
 **Pre-build config notes**
 

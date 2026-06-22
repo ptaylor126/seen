@@ -39,6 +39,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      blocks: {
+        Row: {
+          blocked_id: string
+          blocker_id: string
+          created_at: string
+        }
+        Insert: {
+          blocked_id: string
+          blocker_id?: string
+          created_at?: string
+        }
+        Update: {
+          blocked_id?: string
+          blocker_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "blocks_blocked_id_fkey"
+            columns: ["blocked_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "blocks_blocker_id_fkey"
+            columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       favorites: {
         Row: {
           created_at: string
@@ -648,6 +681,7 @@ export type Database = {
         Args: { request_id: string }
         Returns: undefined
       }
+      block_user: { Args: { other_user_id: string }; Returns: undefined }
       can_send_friend_request: { Args: { target: string }; Returns: boolean }
       claim_invite_link: { Args: { token: string }; Returns: undefined }
       decline_friend_request: {
@@ -676,6 +710,16 @@ export type Database = {
       is_party_to_comment: { Args: { comment_id: string }; Returns: boolean }
       is_party_to_rec: { Args: { rec_id: string }; Returns: boolean }
       is_recipient_of_rec: { Args: { rec_id: string }; Returns: boolean }
+      list_blocked_users: {
+        Args: never
+        Returns: {
+          avatar_url: string | null
+          blocked_at: string
+          display_name: string
+          handle: string
+          user_id: string
+        }[]
+      }
       reorder_favorites: {
         Args: { p_media_type: string; p_ordered_ids: string[] }
         Returns: undefined
@@ -693,6 +737,7 @@ export type Database = {
         }
         Returns: string
       }
+      unblock_user: { Args: { other_user_id: string }; Returns: undefined }
       unfriend: { Args: { other_user_id: string }; Returns: undefined }
     }
     Enums: {

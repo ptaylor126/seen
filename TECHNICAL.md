@@ -61,6 +61,19 @@ Mutual accepted friendship between two users. Always stored with user_a_id < use
 PK: (user_a_id, user_b_id)
 Index: user_b_id (for reverse lookups)
 
+### `blocks`
+Directed user blocks (App Store Guideline 1.2). One row per (blocker → blocked). Blocking is symmetric in EFFECT (a single row hides both users from each other) but stored directed so each user owns the rows they created. Block also auto-unfriends (see `block_user` RPC).
+
+| Column | Type | Notes |
+|---|---|---|
+| blocker_id | uuid | FK profiles.id, ON DELETE CASCADE |
+| blocked_id | uuid | FK profiles.id, ON DELETE CASCADE |
+| created_at | timestamptz | Default now() |
+
+PK: (blocker_id, blocked_id)
+CHECK: blocker_id <> blocked_id
+Index: (blocked_id, blocker_id) (reverse-direction lookups for the symmetric block test)
+
 ### `friend_requests`
 Pending friend requests. Removed once accepted (becomes a friendship row) or declined.
 
@@ -149,7 +162,7 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 **Two-layer permission model.** Postgres applies grants AND RLS. A client query first has to pass the role's table grants (`SELECT`/`INSERT`/`UPDATE`/`DELETE`) — only then does RLS evaluate which rows it can touch. Both layers are required: RLS without a matching grant fails with `permission denied (42501)` before any policy runs. The `authenticated` role must be granted the operations listed below for each table, matching the policies that follow. (See migration `20260519102336_grant_authenticated_privileges_on_public_tables.sql`.)
 
 ### profiles
-- SELECT: anyone authenticated can read any profile (handle, display_name, avatar). Required for search.
+- SELECT: anyone authenticated can read any non-deleted profile (handle, display_name, avatar) — required for search — EXCEPT a profile they're in a block with (`not is_blocked_with_auth(id)`). This is the one always-visible surface, so the block check lives here; your own profile is always visible (a self-block is impossible). Hottest read path — `blocks` is indexed for it.
 - UPDATE: only `id = auth.uid()`.
 - INSERT: blocked; created via signup trigger only.
 - DELETE: blocked; account deletion via dedicated Edge Function.
@@ -164,12 +177,17 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 
 ### friend_requests
 - SELECT: rows where you are sender or recipient.
-- INSERT: only `from_user_id = auth.uid()`, only if no existing friendship and no inverse pending request.
+- INSERT: only `from_user_id = auth.uid()`, only if no existing friendship, no inverse pending request, and no block between the two users (the `can_send_friend_request` helper now rejects across a block).
 - DELETE: only sender or recipient.
 
+### blocks
+- SELECT: only your own outgoing rows (`blocker_id = auth.uid()`) — for an unblock list. There is NO policy exposing rows where you are the blocked party, so a blocked user cannot query the table to confirm they were blocked.
+- INSERT/DELETE: only `blocker_id = auth.uid()`. Block/unblock go through the `block_user` / `unblock_user` RPCs.
+- Enforcement: the visibility helpers (`is_blocked_with_auth`, `is_party_to_rec_unblocked`, `is_party_to_comment_unblocked`) are SECURITY DEFINER and auth-relative (they only consult blocks involving the caller). The 2-arg base `is_blocked_pair` is internal — NOT granted to `authenticated` — so clients can't probe arbitrary pairs.
+
 ### recommendations
-- SELECT: rows where you are sender or recipient.
-- INSERT: only `from_user_id = auth.uid()`, only to friends, only if no existing (sender, recipient, tmdb_id, media_type) row.
+- SELECT: rows where you are sender or recipient, AND not blocked with the other party. Rec notes/comments/reactions are PARTY-scoped (not friendship-scoped), so unfriending does NOT hide an existing thread — the block check does. The block exclusion is applied to the SELECT on `recommendations`, `recommendation_comments`, `recommendation_reactions`, and `recommendation_comment_reactions` (via the `*_unblocked` helpers), and to the INSERT on comments/reactions (so a blocked user can't add to an old shared thread). Reaction/comment-reaction UPDATE/DELETE stay on the non-block helpers — own-row-only writes, already SELECT-hidden, so no leak.
+- INSERT: only `from_user_id = auth.uid()`, only to friends, only if no existing (sender, recipient, tmdb_id, media_type) row. New-rec-to-a-blocked-user is covered by the friendship gate (block auto-unfriends and re-friending is blocked).
 - UPDATE: recipient can update `status`, `dismiss_reason`. Sender cannot edit after send.
 
 ### invite_links
@@ -190,6 +208,8 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 - `accept_friend_request(request_id)` — moves friend_request → friendships row, deletes request, creates notifications for both users.
 - `decline_friend_request(request_id)` — deletes request silently.
 - `unfriend(other_user_id)` — deletes friendship row. Recs remain.
+- `block_user(other_user_id)` — SECURITY DEFINER, atomic (single transaction): records the block (`on conflict do nothing`), deletes the friendship, clears pending friend_requests both directions. Block implies not-friends. Silent (no notification). Idempotent + self-target guarded.
+- `unblock_user(other_user_id)` — deletes the caller's block row only; does NOT re-friend.
 - `claim_invite_link(token)` — creates immediate mutual friendship between token owner and auth.uid().
 - Account deletion (immediate, permanent — no soft delete):
   - `delete-account` Edge Function — verifies the caller's JWT, derives the uid from the token only, removes the caller's Storage objects (`avatars/{uid}/`, `feedback/{uid}/`), calls `delete_account_data(uid)`, then `auth.admin.deleteUser(uid)` LAST. Auth-user deletion last so an earlier failure leaves the account intact and retryable.

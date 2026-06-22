@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { useState } from 'react';
 import {
     ActivityIndicator,
@@ -129,6 +129,37 @@ export default function AccountScreen() {
             </View>
 
             <View style={styles.body}>
+                {/* Non-destructive settings, kept clearly separate from the
+                    destructive Delete block at the bottom. */}
+                <Pressable
+                    onPress={() => router.push('/profile/blocked')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Blocked users"
+                    style={({ pressed }) => [
+                        styles.settingsRow,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <Text
+                        style={[
+                            typography.body,
+                            styles.settingsLabel,
+                            { color: palette.text },
+                        ]}
+                    >
+                        Blocked users
+                    </Text>
+                    <ChevronRight
+                        color={palette.textMuted}
+                        size={20}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                </Pressable>
+
+                {/* Spacer keeps the destructive Delete block pinned at the
+                    bottom, visually distinct from the neutral row above. */}
+                <View style={styles.flexSpacer} />
+
                 {/* Delete account — prominent (not buried in a submenu) per
                     Apple guideline 5.1.1(v), styled destructive. */}
                 <View style={styles.deleteBlock}>
@@ -321,7 +352,15 @@ const styles = StyleSheet.create({
         flex: 1,
         paddingHorizontal: spacing.base,
         paddingTop: spacing.lg,
+        paddingBottom: spacing.xl,
     },
+    settingsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: spacing.md,
+    },
+    settingsLabel: { flex: 1 },
+    flexSpacer: { flex: 1 },
     deleteBlock: {
         gap: spacing.sm,
     },

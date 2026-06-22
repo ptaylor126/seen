@@ -970,6 +970,42 @@ export default function FriendDetailScreen() {
         );
     }
 
+    // Block user — overflow menu → confirm → block_user RPC (atomic: records
+    // the block, removes the friendship, clears pending requests both ways).
+    // Silent (no notification). Reuses the `removing` in-flight guard since,
+    // like unfriend, it ends by routing away. On success the profile becomes
+    // block-hidden, so we leave for the Friends tab.
+    async function performBlock() {
+        if (removing) return;
+        setRemoving(true);
+        try {
+            const { error } = await supabase.rpc('block_user', {
+                other_user_id: profile.id,
+            });
+            if (error) throw error;
+            router.replace({ pathname: '/friends' });
+        } catch (err) {
+            console.error('block user failed:', err);
+            setRemoving(false);
+            Alert.alert('Could not block user', 'Please try again.');
+        }
+    }
+
+    function confirmBlock() {
+        Alert.alert(
+            `Block @${profile.handle}?`,
+            "You won't see each other's profiles or recommendations, and they'll be removed as a friend.",
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Block',
+                    style: 'destructive',
+                    onPress: () => void performBlock(),
+                },
+            ],
+        );
+    }
+
     function openFriendMenu() {
         if (removing) return;
         Alert.alert(`@${profile.handle}`, undefined, [
@@ -987,6 +1023,11 @@ export default function FriendDetailScreen() {
                 text: 'Remove friend',
                 style: 'destructive',
                 onPress: confirmRemoveFriend,
+            },
+            {
+                text: 'Block user',
+                style: 'destructive',
+                onPress: confirmBlock,
             },
             { text: 'Cancel', style: 'cancel' },
         ]);
