@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { Search } from 'lucide-react-native';
 import { Fragment, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -12,7 +13,13 @@ import {
 } from 'react-native';
 
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import {
+    getPalette,
+    ICON_STROKE_WIDTH,
+    radius,
+    spacing,
+    typography,
+} from '@/theme/theme';
 
 // Movies and TV that have a poster — onboarding only ever surfaces
 // titles with art so the visual experience doesn't crater when an
@@ -228,28 +235,27 @@ export function OnboardingSearch({
             style={styles.container}
             onLayout={(e) => onContainerLayout?.(e.nativeEvent.layout.y)}
         >
-            <TextInput
-                value={query}
-                onChangeText={setQuery}
-                placeholder={placeholder}
-                placeholderTextColor={palette.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus={autoFocus}
-                returnKeyType="search"
-                onSubmitEditing={() => Keyboard.dismiss()}
-                // Hardcoded — see handle.tsx for rationale.
-                keyboardAppearance="light"
-                style={[
-                    styles.input,
-                    typography.body,
-                    {
-                        backgroundColor: palette.surface,
-                        borderColor: palette.border,
-                        color: palette.text,
-                    },
-                ]}
-            />
+            <View style={[styles.bar, { backgroundColor: palette.surface }]}>
+                <Search
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+                <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder={placeholder}
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoFocus={autoFocus}
+                    returnKeyType="search"
+                    onSubmitEditing={() => Keyboard.dismiss()}
+                    // Hardcoded — see handle.tsx for rationale.
+                    keyboardAppearance="light"
+                    style={[styles.input, typography.body, { color: palette.text }]}
+                />
+            </View>
             {loading ? (
                 <View style={styles.statusBlock}>
                     <ActivityIndicator color={palette.accent} />
@@ -320,12 +326,23 @@ const styles = StyleSheet.create({
         // so the search lays out at its natural content height and the
         // ScrollView handles overflow.
     },
-    input: {
-        height: 44,
-        borderRadius: radius.sm,
-        borderWidth: 1,
+    bar: {
+        // Borderless pill — matches the Home / Library search bars
+        // (search-bar.tsx). The surface fill against the page bg is the
+        // visual separation; no border needed.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
         paddingHorizontal: spacing.md,
+        borderRadius: radius.full,
+        height: 44,
         marginBottom: spacing.md,
+    },
+    input: {
+        flex: 1,
+        // padding zeroed: the parent .bar height owns vertical sizing so
+        // the icon and text stay aligned.
+        paddingVertical: 0,
     },
     statusBlock: {
         alignItems: 'center',
