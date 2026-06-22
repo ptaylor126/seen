@@ -45,6 +45,8 @@ import {
     formatRatingStars,
     type MediaType,
 } from '@/lib/rating';
+import { UserLink } from '@/components/user-link';
+import { goToProfile } from '@/lib/profile-nav';
 import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
@@ -1658,14 +1660,21 @@ function ReviewsSection({
                         ]}
                     >
                         <View style={styles.reviewHeaderRow}>
-                            <Avatar
-                                avatarUrl={r.author?.avatarUrl ?? null}
-                                displayName={
-                                    r.author?.displayName ?? 'Former user'
-                                }
-                                seedId={r.userId}
-                                size={32}
-                            />
+                            <UserLink
+                                userId={r.userId}
+                                disabled={isOwn || !r.userId}
+                                hitSlop={8}
+                                accessibilityLabel="View profile"
+                            >
+                                <Avatar
+                                    avatarUrl={r.author?.avatarUrl ?? null}
+                                    displayName={
+                                        r.author?.displayName ?? 'Former user'
+                                    }
+                                    seedId={r.userId}
+                                    size={32}
+                                />
+                            </UserLink>
                             <View style={styles.reviewHeaderText}>
                                 <Text
                                     style={[
@@ -1673,6 +1682,14 @@ function ReviewsSection({
                                         { color: palette.text },
                                     ]}
                                     numberOfLines={1}
+                                    onPress={
+                                        isOwn || !r.userId
+                                            ? undefined
+                                            : () =>
+                                                  goToProfile({
+                                                      userId: r.userId,
+                                                  })
+                                    }
                                 >
                                     {isOwn
                                         ? 'You'
@@ -1792,7 +1809,12 @@ function RecommendedBySection({
                 { backgroundColor: palette.surfaceElevated },
             ]}
         >
-            <View style={styles.recByHeader}>
+            <UserLink
+                handle={rec.sender.handle}
+                hitSlop={8}
+                accessibilityLabel={`View ${rec.sender.displayName}'s profile`}
+                style={styles.recByHeader}
+            >
                 <Avatar
                     avatarUrl={rec.sender.avatarUrl}
                     displayName={rec.sender.displayName}
@@ -1809,7 +1831,7 @@ function RecommendedBySection({
                 >
                     {rec.sender.displayName}
                 </Text>
-            </View>
+            </UserLink>
             {rec.note ? (
                 <Text
                     style={[

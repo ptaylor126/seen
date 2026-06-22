@@ -292,11 +292,16 @@ export default function FriendDetailScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const requestRec = useRequestRec();
-    const { handle: rawHandle } = useLocalSearchParams<{ handle: string }>();
+    const { handle: rawHandle, userId: rawTargetUserId } =
+        useLocalSearchParams<{ handle: string; userId?: string }>();
     // Handles are stored lowercase in the DB (per the handle column's
     // CHECK constraint). Defensively coerce the URL param so that a
     // capitalized link from somewhere still resolves.
     const handle = (rawHandle ?? '').toLowerCase();
+    // When navigated by user id (surfaces with no handle in scope — rec
+    // thread, reviews — via goToProfile/UserLink), resolve by id instead of
+    // handle. Takes precedence over the placeholder `u` handle segment.
+    const targetUserId = rawTargetUserId?.trim() || null;
 
     const [state, setState] = useState<ResolvedState>({ kind: 'loading' });
     const [activeTab, setActiveTab] = useState<ItemStatus>('watched');
@@ -350,7 +355,7 @@ export default function FriendDetailScreen() {
     // request elsewhere and came back). Stale-guard via `active`.
     useFocusEffect(
         useCallback(() => {
-            if (!handle) {
+            if (!handle && !targetUserId) {
                 setState({ kind: 'not-found' });
                 return;
             }
@@ -363,12 +368,17 @@ export default function FriendDetailScreen() {
                     const userId = session?.user.id;
                     if (!userId) throw new Error('Not authenticated');
 
-                    const { data: profileData, error: profileError } =
-                        await supabase
-                            .from('profiles')
-                            .select('id, display_name, handle, avatar_url')
-                            .eq('handle', handle)
-                            .maybeSingle();
+                    // Resolve by id when navigated by userId, else by handle.
+                    // RLS hides blocked/deleted profiles either way → null →
+                    // the same graceful not-found state below.
+                    const profilesQuery = supabase
+                        .from('profiles')
+                        .select('id, display_name, handle, avatar_url');
+                    const { data: profileData, error: profileError } = await (
+                        targetUserId
+                            ? profilesQuery.eq('id', targetUserId)
+                            : profilesQuery.eq('handle', handle)
+                    ).maybeSingle();
                     if (!active) return;
                     if (profileError) throw profileError;
                     if (!profileData) {
@@ -428,7 +438,7 @@ export default function FriendDetailScreen() {
             return () => {
                 active = false;
             };
-        }, [handle, router]),
+        }, [handle, targetUserId, router]),
     );
 
     // ---- Phase 2: fetch items for the active tab (only when friends).
@@ -852,7 +862,9 @@ export default function FriendDetailScreen() {
                             { color: palette.textMuted },
                         ]}
                     >
-                        @{rawHandle ?? 'this handle'} doesn&apos;t exist on Seen.
+                        {targetUserId
+                            ? "This profile isn't available."
+                            : `@${rawHandle ?? 'this handle'} doesn't exist on Seen.`}
                     </Text>
                 </View>
             </SafeAreaView>

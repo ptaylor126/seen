@@ -16,7 +16,9 @@ import {
 import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
+import { UserLink } from '@/components/user-link';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
+import { goToProfile } from '@/lib/profile-nav';
 import { maybeEnablePushAfterAccept } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
@@ -807,18 +809,29 @@ export default function InboxScreen() {
                     pressed && { opacity: 0.6 },
                 ]}
             >
-                <Avatar
-                    avatarUrl={item.sender.avatarUrl}
-                    displayName={item.sender.displayName}
-                    seedId={item.sender.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.sender.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.sender.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.sender.avatarUrl}
+                        displayName={item.sender.displayName}
+                        seedId={item.sender.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.sender.handle })
+                            }
+                        >
                             {item.sender.displayName}
                         </Text>{' '}
                         recommended <Text style={typography.bodyEmphasis}>{title}</Text>
@@ -928,18 +941,29 @@ export default function InboxScreen() {
         const busy = actionBusy === item.requestId;
         return (
             <View style={styles.row}>
-                <Avatar
-                    avatarUrl={item.sender.avatarUrl}
-                    displayName={item.sender.displayName}
-                    seedId={item.sender.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.sender.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.sender.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.sender.avatarUrl}
+                        displayName={item.sender.displayName}
+                        seedId={item.sender.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.sender.handle })
+                            }
+                        >
                             {item.sender.displayName}
                         </Text>{' '}
                         <Text style={{ color: palette.textMuted }}>
@@ -1016,18 +1040,29 @@ export default function InboxScreen() {
                     pressed && canNavigate && { opacity: 0.6 },
                 ]}
             >
-                <Avatar
-                    avatarUrl={item.watcher.avatarUrl}
-                    displayName={item.watcher.displayName}
-                    seedId={item.watcher.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.watcher.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.watcher.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.watcher.avatarUrl}
+                        displayName={item.watcher.displayName}
+                        seedId={item.watcher.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.watcher.handle })
+                            }
+                        >
                             {item.watcher.displayName}
                         </Text>{' '}
                         watched <Text style={typography.bodyEmphasis}>{title}</Text>
@@ -1077,18 +1112,29 @@ export default function InboxScreen() {
                 onPress={() => router.push(`/rec/${item.recId}`)}
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
-                <Avatar
-                    avatarUrl={item.reactor.avatarUrl}
-                    displayName={item.reactor.displayName}
-                    seedId={item.reactor.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.reactor.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.reactor.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.reactor.avatarUrl}
+                        displayName={item.reactor.displayName}
+                        seedId={item.reactor.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.reactor.handle })
+                            }
+                        >
                             {item.reactor.displayName}
                         </Text>{' '}
                         reacted {item.emoji} to{' '}
@@ -1109,18 +1155,29 @@ export default function InboxScreen() {
                 onPress={() => router.push(`/rec/${item.recId}`)}
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
-                <Avatar
-                    avatarUrl={item.commenter.avatarUrl}
-                    displayName={item.commenter.displayName}
-                    seedId={item.commenter.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.commenter.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.commenter.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.commenter.avatarUrl}
+                        displayName={item.commenter.displayName}
+                        seedId={item.commenter.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.commenter.handle })
+                            }
+                        >
                             {item.commenter.displayName}
                         </Text>{' '}
                         commented on{' '}
@@ -1141,18 +1198,29 @@ export default function InboxScreen() {
                 onPress={() => router.push(`/rec/${item.recId}`)}
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
-                <Avatar
-                    avatarUrl={item.decliner.avatarUrl}
-                    displayName={item.decliner.displayName}
-                    seedId={item.decliner.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.decliner.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.decliner.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.decliner.avatarUrl}
+                        displayName={item.decliner.displayName}
+                        seedId={item.decliner.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.decliner.handle })
+                            }
+                        >
                             {item.decliner.displayName}
                         </Text>{' '}
                         passed on{' '}
@@ -1192,18 +1260,29 @@ export default function InboxScreen() {
                 }
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
-                <Avatar
-                    avatarUrl={item.requester.avatarUrl}
-                    displayName={item.requester.displayName}
-                    seedId={item.requester.userId}
-                    size={AVATAR_SIZE}
-                />
+                <UserLink
+                    handle={item.requester.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.requester.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.requester.avatarUrl}
+                        displayName={item.requester.displayName}
+                        seedId={item.requester.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
                 <View style={styles.rowText}>
                     <Text
                         style={[typography.body, { color: palette.text }]}
                         numberOfLines={2}
                     >
-                        <Text style={typography.bodyEmphasis}>
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.requester.handle })
+                            }
+                        >
                             {item.requester.displayName}
                         </Text>{' '}
                         asked you for a recommendation
@@ -1327,7 +1406,12 @@ export default function InboxScreen() {
                         numberOfLines={1}
                     >
                         To{' '}
-                        <Text style={{ color: palette.text }}>
+                        <Text
+                            style={{ color: palette.text }}
+                            onPress={() =>
+                                goToProfile({ handle: item.recipient.handle })
+                            }
+                        >
                             {item.recipient.displayName}
                         </Text>{' '}
                         (@{item.recipient.handle})

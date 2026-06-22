@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { UserLink } from '@/components/user-link';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RatingSheet } from '@/components/rating-sheet';
 import { ScreenHeader } from '@/components/screen-header';
@@ -922,7 +923,10 @@ export default function HomeScreen() {
                     contrast; dark pill over dark images relies on
                     the pill's own dark fill for separation from
                     the surrounding pixels. */}
-                <View
+                <UserLink
+                    handle={rec.sender.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${rec.sender.displayName}'s profile`}
                     style={[
                         styles.recommenderPill,
                         { backgroundColor: 'rgba(36, 26, 32, 0.88)' },
@@ -952,7 +956,7 @@ export default function HomeScreen() {
                         </Text>{' '}
                         recommends
                     </Text>
-                </View>
+                </UserLink>
 
                 {/* Overflow (3-dots), top-right. Its own Pressable captures
                     the tap so the card's main onPress (open rec page)

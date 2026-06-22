@@ -25,10 +25,12 @@ import { Avatar } from '@/components/avatar';
 import { DeclineSheet } from '@/components/decline-sheet';
 import { RatingSheet } from '@/components/rating-sheet';
 import { RecActionSheet } from '@/components/rec-action-sheet';
+import { UserLink } from '@/components/user-link';
 import {
     formatLibraryBadge,
     type ItemStatus,
 } from '@/lib/item-status';
+import { goToProfile } from '@/lib/profile-nav';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import { promptReport } from '@/lib/report';
 import { maybeRequestReview } from '@/lib/review';
@@ -1130,12 +1132,19 @@ export default function RecScreen() {
                         · {when}", directly above the note so the note reads
                         as that person's words. */}
                     <View style={styles.recLine}>
-                        <Avatar
-                            avatarUrl={sender?.avatarUrl ?? null}
-                            displayName={senderName}
-                            seedId={rec.fromUserId ?? sender?.userId ?? rec.id}
-                            size={REC_LINE_AVATAR_SIZE}
-                        />
+                        <UserLink
+                            userId={rec.fromUserId}
+                            disabled={isMeSender}
+                            hitSlop={8}
+                            accessibilityLabel={`View ${senderName}'s profile`}
+                        >
+                            <Avatar
+                                avatarUrl={sender?.avatarUrl ?? null}
+                                displayName={senderName}
+                                seedId={rec.fromUserId ?? sender?.userId ?? rec.id}
+                                size={REC_LINE_AVATAR_SIZE}
+                            />
+                        </UserLink>
                         <Text
                             style={[
                                 typography.caption,
@@ -1149,6 +1158,14 @@ export default function RecScreen() {
                                     styles.recommenderName,
                                     { color: palette.accent },
                                 ]}
+                                onPress={
+                                    isMeSender
+                                        ? undefined
+                                        : () =>
+                                              goToProfile({
+                                                  userId: rec.fromUserId,
+                                              })
+                                }
                             >
                                 {pillName}
                             </Text>{' '}
@@ -1262,7 +1279,12 @@ export default function RecScreen() {
                         </View>
                     ) : null}
                     {otherReaction ? (
-                        <View style={styles.otherReactionRow}>
+                        <UserLink
+                            userId={otherReaction.userId}
+                            hitSlop={8}
+                            accessibilityLabel="View profile"
+                            style={styles.otherReactionRow}
+                        >
                             <Avatar
                                 avatarUrl={
                                     otherReactionProfile?.avatarUrl ?? null
@@ -1289,7 +1311,7 @@ export default function RecScreen() {
                                 ).split(/\s+/)[0]}{' '}
                                 reacted {otherReaction.emoji}
                             </Text>
-                        </View>
+                        </UserLink>
                     ) : null}
 
                     {/* Action area — RECIPIENT ONLY (Save / decline are
@@ -1433,16 +1455,23 @@ export default function RecScreen() {
                                         }
                                         style={styles.commentRow}
                                     >
-                                        <Avatar
-                                            avatarUrl={
-                                                c.author?.avatarUrl ?? null
-                                            }
-                                            displayName={authorName}
-                                            seedId={
-                                                c.userId ?? `deleted:${c.id}`
-                                            }
-                                            size={28}
-                                        />
+                                        <UserLink
+                                            userId={c.userId}
+                                            disabled={isMine || !c.userId}
+                                            hitSlop={8}
+                                            accessibilityLabel={`View ${authorName}'s profile`}
+                                        >
+                                            <Avatar
+                                                avatarUrl={
+                                                    c.author?.avatarUrl ?? null
+                                                }
+                                                displayName={authorName}
+                                                seedId={
+                                                    c.userId ?? `deleted:${c.id}`
+                                                }
+                                                size={28}
+                                            />
+                                        </UserLink>
                                         <View style={styles.commentText}>
                                             <View style={styles.commentMeta}>
                                                 <Text
@@ -1453,6 +1482,14 @@ export default function RecScreen() {
                                                             fontWeight: '600',
                                                         },
                                                     ]}
+                                                    onPress={
+                                                        isMine || !c.userId
+                                                            ? undefined
+                                                            : () =>
+                                                                  goToProfile({
+                                                                      userId: c.userId,
+                                                                  })
+                                                    }
                                                 >
                                                     {isMine
                                                         ? 'You'
