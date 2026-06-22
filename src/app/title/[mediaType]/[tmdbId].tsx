@@ -1231,6 +1231,37 @@ export default function TitleDetailScreen() {
                     })}
                 </View>
 
+                {/* Recommend — a primary outgoing action. Filled accent
+                    (vs. the outlined status pills above) so the visual
+                    hierarchy reads "pick where this sits in your
+                    library, then send it to a friend". */}
+                <Pressable
+                    onPress={() =>
+                        router.push(`/title/${mediaType}/${tmdbId}/recommend`)
+                    }
+                    style={({ pressed }) => [
+                        styles.recommendButton,
+                        {
+                            backgroundColor: palette.accent,
+                            opacity: pressed ? 0.6 : 1,
+                        },
+                    ]}
+                >
+                    <Send
+                        color={palette.textInverse}
+                        size={18}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.textInverse },
+                        ]}
+                    >
+                        Recommend to a friend
+                    </Text>
+                </Pressable>
+
                 {/* Cast — top ~10 by billing order. Tapping any card
                     routes to the existing /person/[personId] screen so
                     the user stays in-app on the actor's filmography
@@ -1284,37 +1315,6 @@ export default function TitleDetailScreen() {
                     providers={providersForRegion}
                     palette={palette}
                 />
-
-                {/* Recommend — a primary outgoing action. Filled accent
-                    (vs. the outlined status pills above) so the visual
-                    hierarchy reads "pick where this sits in your
-                    library, then send it to a friend". */}
-                <Pressable
-                    onPress={() =>
-                        router.push(`/title/${mediaType}/${tmdbId}/recommend`)
-                    }
-                    style={({ pressed }) => [
-                        styles.recommendButton,
-                        {
-                            backgroundColor: palette.accent,
-                            opacity: pressed ? 0.6 : 1,
-                        },
-                    ]}
-                >
-                    <Send
-                        color={palette.textInverse}
-                        size={18}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            { color: palette.textInverse },
-                        ]}
-                    >
-                        Recommend to a friend
-                    </Text>
-                </Pressable>
             </ScrollView>
 
             <CloseButton
@@ -2236,7 +2236,6 @@ const styles = StyleSheet.create({
     // row clear breathing room above (genres) and below (Cast).
     statusChipRow: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.base,
@@ -2248,10 +2247,14 @@ const styles = StyleSheet.create({
         marginBottom: 0,
     },
     // Substantial pill: more internal padding (md/sm) than the Library
-    // filter chips so it feels tappable and present — taller, NOT wider.
+    // filter chips so it feels tappable and present. flex:1 makes the
+    // three chips share the row as equal-width thirds (full content width,
+    // aligned to the Recommend button below), with the label centred.
     // Borderless — the fill alone defines the chip (soft plum wash
     // unselected / solid accent selected, applied inline per state).
     statusChip: {
+        flex: 1,
+        alignItems: 'center',
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
         borderRadius: radius.full,
