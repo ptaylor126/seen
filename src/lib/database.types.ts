@@ -526,6 +526,39 @@ export type Database = {
           },
         ]
       }
+      reports: {
+        Row: {
+          created_at: string
+          id: string
+          reason: string | null
+          reported_id: string
+          reported_type: string
+          reported_user_id: string | null
+          reporter_id: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          reason?: string | null
+          reported_id: string
+          reported_type: string
+          reported_user_id?: string | null
+          reporter_id?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          reason?: string | null
+          reported_id?: string
+          reported_type?: string
+          reported_user_id?: string | null
+          reporter_id?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       reviews: {
         Row: {
           body: string

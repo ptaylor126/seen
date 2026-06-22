@@ -3,6 +3,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
     ChevronLeft,
     MessageSquarePlus,
+    MoreHorizontal,
     MoreVertical,
     Search as SearchIcon,
     Send,
@@ -36,6 +37,7 @@ import {
 } from '@/lib/library-view';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
+import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
 import {
     ensureTitle,
@@ -98,6 +100,7 @@ interface RecBetween {
 // placeholder instead of the body (the reveal flow lives on the title
 // page). rating is the friend's items.rating for the title, if any.
 interface RecentReview {
+    id: string;
     tmdbId: number;
     mediaType: MediaType;
     title: string;
@@ -601,7 +604,7 @@ export default function FriendDetailScreen() {
             try {
                 const { data: reviewRows, error: revErr } = await supabase
                     .from('reviews')
-                    .select('tmdb_id, media_type, body, contains_spoilers, updated_at')
+                    .select('id, tmdb_id, media_type, body, contains_spoilers, updated_at')
                     .eq('user_id', friendId)
                     .order('updated_at', { ascending: false })
                     .limit(RECENT_REVIEWS_LIMIT);
@@ -644,6 +647,7 @@ export default function FriendDetailScreen() {
                 const built: RecentReview[] = rows.map((r) => {
                     const key = `${r.media_type}:${r.tmdb_id}`;
                     return {
+                        id: r.id,
                         tmdbId: r.tmdb_id,
                         mediaType: r.media_type as MediaType,
                         title: titleByKey.get(key)?.title ?? 'Untitled',
@@ -970,6 +974,16 @@ export default function FriendDetailScreen() {
         if (removing) return;
         Alert.alert(`@${profile.handle}`, undefined, [
             {
+                text: 'Report user',
+                onPress: () =>
+                    promptReport({
+                        type: 'profile',
+                        id: profile.id,
+                        reportedUserId: profile.id,
+                        title: 'Report user',
+                    }),
+            },
+            {
                 text: 'Remove friend',
                 style: 'destructive',
                 onPress: confirmRemoveFriend,
@@ -1221,6 +1235,17 @@ export default function FriendDetailScreen() {
                                         },
                                     })
                                 }
+                                // Long-press to Report this friend's review
+                                // (App Store 1.2). Always someone else's review
+                                // on a friend's profile, so no self-check needed.
+                                onLongPress={() =>
+                                    promptReport({
+                                        type: 'review',
+                                        id: r.id,
+                                        reportedUserId: profile.id,
+                                        title: 'Report review',
+                                    })
+                                }
                                 style={({ pressed }) => [
                                     styles.reviewRow,
                                     pressed && { opacity: 0.6 },
@@ -1291,6 +1316,32 @@ export default function FriendDetailScreen() {
                                         </Text>
                                     )}
                                 </View>
+                                {/* Visible Report affordance (App Store 1.2) —
+                                    primary path; the row also long-presses.
+                                    Always the friend's review (not yours). */}
+                                <Pressable
+                                    onPress={() =>
+                                        promptReport({
+                                            type: 'review',
+                                            id: r.id,
+                                            reportedUserId: profile.id,
+                                            title: 'Report review',
+                                        })
+                                    }
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Report review"
+                                    style={({ pressed }) => [
+                                        styles.reviewReportButton,
+                                        pressed && { opacity: 0.5 },
+                                    ]}
+                                >
+                                    <MoreHorizontal
+                                        color={palette.textMuted}
+                                        size={18}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                </Pressable>
                             </Pressable>
                         );
                     })}
@@ -1646,6 +1697,11 @@ const styles = StyleSheet.create({
     reviewText: {
         flex: 1,
         gap: spacing.xs,
+    },
+    reviewReportButton: {
+        // Trailing "⋯" on the review row — reviewText's flex:1 pushes it to
+        // the right edge; row aligns flex-start so it sits top-right. Quiet.
+        padding: spacing.xs,
     },
     reviewTitleRow: {
         flexDirection: 'row',

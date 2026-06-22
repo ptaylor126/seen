@@ -6,6 +6,7 @@ import {
     ExternalLink,
     Lock,
     LockOpen,
+    MoreHorizontal,
     Pencil,
     Send,
     X,
@@ -44,6 +45,7 @@ import {
     formatRatingStars,
     type MediaType,
 } from '@/lib/rating';
+import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import {
@@ -1627,11 +1629,28 @@ function ReviewsSection({
                     : shouldHide
                         ? () => onReveal(r.id)
                         : undefined;
+                // Long-press to Report someone else's review (App Store 1.2).
+                // Not for your own review, and only when there's an author to
+                // attribute it to.
+                const reportable = !isOwn && !!r.userId;
                 return (
                     <Pressable
                         key={r.id}
                         onPress={tapAction}
-                        disabled={!tapAction}
+                        onLongPress={
+                            reportable
+                                ? () =>
+                                      promptReport({
+                                          type: 'review',
+                                          id: r.id,
+                                          reportedUserId: r.userId,
+                                          title: 'Report review',
+                                      })
+                                : undefined
+                        }
+                        // Stay enabled if EITHER a tap or a long-press action
+                        // exists — a disabled Pressable fires neither.
+                        disabled={!tapAction && !reportable}
                         style={({ pressed }) => [
                             styles.reviewCard,
                             { borderColor: palette.border },
@@ -1684,6 +1703,34 @@ function ReviewsSection({
                                     </Text>
                                 </View>
                             </View>
+                            {/* Visible Report affordance (App Store 1.2) —
+                                primary path; the card also long-presses.
+                                Someone else's review only (reportable). */}
+                            {reportable ? (
+                                <Pressable
+                                    onPress={() =>
+                                        promptReport({
+                                            type: 'review',
+                                            id: r.id,
+                                            reportedUserId: r.userId,
+                                            title: 'Report review',
+                                        })
+                                    }
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Report review"
+                                    style={({ pressed }) => [
+                                        styles.reviewReportButton,
+                                        pressed && { opacity: 0.5 },
+                                    ]}
+                                >
+                                    <MoreHorizontal
+                                        color={palette.textMuted}
+                                        size={18}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                </Pressable>
+                            ) : null}
                         </View>
                         {shouldHide ? (
                             <Text
@@ -2495,6 +2542,11 @@ const styles = StyleSheet.create({
     reviewHeaderText: {
         flex: 1,
         gap: spacing.xs,
+    },
+    reviewReportButton: {
+        // Trailing "⋯" on the review header — reviewHeaderText's flex:1
+        // pushes it to the card's right edge. Quiet (textMuted).
+        padding: spacing.xs,
     },
     reviewMetaRow: {
         // Rating (accent) + timestamp (muted) on one line under the name.

@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowUp, ChevronRight, X, XCircle } from 'lucide-react-native';
+import { ArrowUp, ChevronRight, MoreHorizontal, X, XCircle } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -30,6 +30,7 @@ import {
     type ItemStatus,
 } from '@/lib/item-status';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { promptReport } from '@/lib/report';
 import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
@@ -162,6 +163,9 @@ export default function RecScreen() {
         commentId: string;
         anchorY: number;
         isOwn: boolean;
+        // Comment author's user id — used to stamp a report's reported_user_id
+        // for someone else's comment. null if the author was deleted.
+        authorId: string | null;
     } | null>(null);
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
@@ -1150,15 +1154,74 @@ export default function RecScreen() {
                             </Text>{' '}
                             {pillVerb} · {relativeTimestamp(rec.sentAt)}
                         </Text>
+                        {/* Visible Report affordance (App Store 1.2) — primary
+                            path; the note also long-presses. Recipient only
+                            (can't report your own note), with a sender to
+                            attribute it to. */}
+                        {!isMeSender && rec.fromUserId ? (
+                            <Pressable
+                                onPress={() =>
+                                    promptReport({
+                                        type: 'recommendation',
+                                        id: rec.id,
+                                        reportedUserId: rec.fromUserId,
+                                        title: 'Report recommendation',
+                                    })
+                                }
+                                hitSlop={spacing.sm}
+                                accessibilityRole="button"
+                                accessibilityLabel="Report recommendation"
+                                style={({ pressed }) => [
+                                    styles.recReportButton,
+                                    pressed && { opacity: 0.5 },
+                                ]}
+                            >
+                                <MoreHorizontal
+                                    color={palette.textMuted}
+                                    size={18}
+                                    strokeWidth={ICON_STROKE_WIDTH}
+                                />
+                            </Pressable>
+                        ) : null}
                     </View>
 
                     {/* The note — the hero of the screen. Large quote
                         treatment, full text (no truncation), wraps for
-                        long notes. */}
+                        long notes. Long-press to Report the recommendation
+                        (App Store 1.2) — only for the recipient (you can't
+                        report your own note), and only when there's a sender
+                        to attribute it to. */}
                     {rec.note ? (
-                        <Text style={[styles.noteHero, { color: palette.text }]}>
-                            “{rec.note}”
-                        </Text>
+                        !isMeSender && rec.fromUserId ? (
+                            <Pressable
+                                onLongPress={() =>
+                                    promptReport({
+                                        type: 'recommendation',
+                                        id: rec.id,
+                                        reportedUserId: rec.fromUserId,
+                                        title: 'Report recommendation',
+                                    })
+                                }
+                                style={({ pressed }) => [
+                                    pressed && { opacity: 0.6 },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.noteHero,
+                                        { color: palette.text },
+                                    ]}
+                                >
+                                    “{rec.note}”
+                                </Text>
+                            </Pressable>
+                        ) : (
+                            <Text
+                                style={[styles.noteHero, { color: palette.text }]}
+                            >
+                                “{rec.note}”
+                            </Text>
+                        )
                     ) : null}
 
                     {/* Reactions — curated emoji picker (no label). Recipient
@@ -1365,6 +1428,7 @@ export default function RecScreen() {
                                                 anchorY:
                                                     e.nativeEvent.pageY,
                                                 isOwn: isMine,
+                                                authorId: c.userId,
                                             })
                                         }
                                         style={styles.commentRow}
@@ -1627,57 +1691,85 @@ export default function RecScreen() {
                                 Each item dismisses the popover before
                                 calling its handler so any follow-up
                                 dialog (Alert) lands on a clean screen. */}
-                            {commentMenuFor.isOwn ? (
-                                <View
-                                    style={[
-                                        styles.commentMenuActions,
-                                        { borderTopColor: palette.border },
-                                    ]}
-                                >
-                                    {(
-                                        [
+                            {(() => {
+                                // Own comment → Delete; someone else's →
+                                // Report (App Store 1.2). Never both — you
+                                // can't report your own comment. authorId
+                                // guards a deleted author (nothing to
+                                // attribute a report to). One shared map.
+                                const menuActions: Array<{
+                                    label: string;
+                                    destructive?: boolean;
+                                    onPress: () => void;
+                                }> = commentMenuFor.isOwn
+                                    ? [
+                                          {
+                                              label: 'Delete',
+                                              destructive: true,
+                                              onPress: () => {
+                                                  const cid =
+                                                      commentMenuFor.commentId;
+                                                  setCommentMenuFor(null);
+                                                  handleDeleteComment(cid);
+                                              },
+                                          },
+                                      ]
+                                    : commentMenuFor.authorId
+                                      ? [
                                             {
-                                                label: 'Delete',
+                                                label: 'Report',
                                                 destructive: true,
                                                 onPress: () => {
                                                     const cid =
                                                         commentMenuFor.commentId;
+                                                    const aid =
+                                                        commentMenuFor.authorId;
                                                     setCommentMenuFor(null);
-                                                    handleDeleteComment(cid);
+                                                    promptReport({
+                                                        type: 'comment',
+                                                        id: cid,
+                                                        reportedUserId: aid,
+                                                        title: 'Report comment',
+                                                    });
                                                 },
                                             },
-                                        ] as Array<{
-                                            label: string;
-                                            destructive?: boolean;
-                                            onPress: () => void;
-                                        }>
-                                    ).map((action) => (
-                                        <Pressable
-                                            key={action.label}
-                                            onPress={action.onPress}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={action.label}
-                                            style={({ pressed }) => [
-                                                styles.commentMenuActionItem,
-                                                { opacity: pressed ? 0.6 : 1 },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    typography.body,
-                                                    {
-                                                        color: action.destructive
-                                                            ? palette.error
-                                                            : palette.text,
-                                                    },
+                                        ]
+                                      : [];
+                                return menuActions.length > 0 ? (
+                                    <View
+                                        style={[
+                                            styles.commentMenuActions,
+                                            { borderTopColor: palette.border },
+                                        ]}
+                                    >
+                                        {menuActions.map((action) => (
+                                            <Pressable
+                                                key={action.label}
+                                                onPress={action.onPress}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={action.label}
+                                                style={({ pressed }) => [
+                                                    styles.commentMenuActionItem,
+                                                    { opacity: pressed ? 0.6 : 1 },
                                                 ]}
                                             >
-                                                {action.label}
-                                            </Text>
-                                        </Pressable>
-                                    ))}
-                                </View>
-                            ) : null}
+                                                <Text
+                                                    style={[
+                                                        typography.body,
+                                                        {
+                                                            color: action.destructive
+                                                                ? palette.error
+                                                                : palette.text,
+                                                        },
+                                                    ]}
+                                                >
+                                                    {action.label}
+                                                </Text>
+                                            </Pressable>
+                                        ))}
+                                    </View>
+                                ) : null;
+                            })()}
                         </View>
                     </View>
                 ) : null}
@@ -1847,6 +1939,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: spacing.sm,
         marginTop: spacing.md,
+    },
+    recReportButton: {
+        // Trailing "⋯" on the recommender line — pushed to the row's far
+        // edge, quiet (textMuted) so it doesn't compete with the note.
+        marginLeft: 'auto',
+        padding: spacing.xs,
     },
     noteHero: {
         // The hero note — large pull-quote. Geist regular at a generous
