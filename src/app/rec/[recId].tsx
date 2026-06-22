@@ -30,6 +30,7 @@ import {
     type ItemStatus,
 } from '@/lib/item-status';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
@@ -454,6 +455,14 @@ export default function RecScreen() {
     // the same rule server-side). The sender still sees the full row +
     // the recipient's caption underneath, but the picker cells are inert.
     const isRecipient = !!myUserId && !!rec && myUserId === rec.toUserId;
+
+    // Review-prompt trigger A: the user has actually VIEWED a rec sent to
+    // them. Fires once isRecipient flips true after load. maybeRequestReview
+    // re-evaluates BOTH trigger conditions itself and self-limits to once
+    // ever — fire-and-forget, never gates this screen.
+    useEffect(() => {
+        if (isRecipient) void maybeRequestReview();
+    }, [isRecipient]);
 
     // Track keyboard visibility so the composer can drop its bottom
     // safe-area inset while typing (the keyboard covers the home-indicator

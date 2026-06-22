@@ -29,6 +29,7 @@ import {
 } from '@/components/search-bar';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
@@ -645,6 +646,11 @@ export default function HomeScreen() {
     useFocusEffect(
         useCallback(() => {
             let active = true;
+            // Review-prompt trigger B (5-day fallback): runs on every Home
+            // focus / app open. Fire-and-forget — re-evaluates both trigger
+            // conditions itself, self-limits to once ever, never gates this
+            // screen or the data load below.
+            void maybeRequestReview();
             (async () => {
                 try {
                     const result = await load();
