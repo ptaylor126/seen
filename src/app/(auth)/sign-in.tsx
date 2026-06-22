@@ -172,6 +172,11 @@ const styles = StyleSheet.create({
     },
     disclosure: {
         textAlign: 'center',
+        // Constrain to the button width and centre so the sentence wraps into
+        // two balanced lines ("…Terms" / "and Privacy Policy.") instead of
+        // orphaning "Policy." alone on the last line at full screen width.
+        alignSelf: 'center',
+        maxWidth: BUTTON_WIDTH,
         paddingBottom: spacing.lg,
     },
 });
