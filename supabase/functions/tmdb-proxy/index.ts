@@ -81,10 +81,6 @@ Deno.serve(async (req: Request) => {
         // Passing the JWT directly to getUser() validates it against
         // the auth server unambiguously.
         const authHeader = req.headers.get('Authorization');
-        console.log('tmdb-proxy received auth header:', {
-            present: !!authHeader,
-            prefix: authHeader?.slice(0, 30),
-        });
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             console.warn('tmdb-proxy: missing or malformed auth header');
             return jsonResponse(
@@ -109,7 +105,6 @@ Deno.serve(async (req: Request) => {
         if (authError || !user) {
             console.warn('tmdb-proxy auth.getUser rejected jwt:', {
                 error: authError?.message,
-                jwtStart: jwt.slice(0, 30),
                 userPresent: !!user,
             });
             return jsonResponse(
@@ -120,7 +115,6 @@ Deno.serve(async (req: Request) => {
                 401,
             );
         }
-        console.log('tmdb-proxy: auth ok for user', user.id);
 
         // ---- 2. Collect path + extra params from either the URL query string
         //         (curl/debug usage) or the JSON body (the standard path used by

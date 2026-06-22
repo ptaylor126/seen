@@ -10,10 +10,15 @@
 //        Method:  POST
 //        URL:     https://<project-ref>.supabase.co/functions/v1/send-push-notification
 //        Headers: Content-Type: application/json
+//                 X-Webhook-Secret: <the WEBHOOK_SECRET value from step 2>
 //                 (Authorization is auto-populated by Supabase with the
-//                  project's anon key — sufficient gate at MVP scale;
-//                  see "Auth model" note below.)
+//                  project's anon key, but X-Webhook-Secret is the real
+//                  gate — see "Auth model" note below.)
 //   2. Edge Function secrets (Settings → Edge Functions):
+//        WEBHOOK_SECRET        — REQUIRED. A long random string. Must exactly
+//                                 match the X-Webhook-Secret header set on the
+//                                 DB webhook above. The function refuses to run
+//                                 (500) if this is not set.
 //        EXPO_ACCESS_TOKEN     — optional, only if Expo Push Security is enabled
 //                                 in EAS Dashboard (otherwise omit).
 //        TMDB_ACCESS_TOKEN     — already set for tmdb-proxy; we reuse it.
@@ -25,12 +30,15 @@
 // fans out one push per push_tokens row for the recipient, and reaps
 // any tokens that come back DeviceNotRegistered.
 //
-// Auth model: Supabase's webhook UI auto-fills Authorization with the
-// project's anon key. The default Edge Function gateway verifies that
-// JWT before our handler runs, so we don't add a second check here. If
-// we later need stronger gating (e.g. to lock the function down even
-// against leaked anon keys), wire in a WEBHOOK_SECRET shared with the
-// webhook config.
+// Auth model: the DB webhook sends a shared secret in the X-Webhook-Secret
+// header, which we verify against WEBHOOK_SECRET before doing anything else
+// — this is the real authenticator. The gateway's verify_jwt only proves
+// the caller holds SOME valid project JWT, and the project's anon key is
+// PUBLIC (shipped in the app bundle), so it cannot distinguish the webhook
+// from a forged caller. As defence in depth, the notification row is
+// re-fetched from the DB by id and the push is built from THAT row, never
+// from the request body — so forged body content can't drive a push even
+// if the secret ever leaked.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -96,10 +104,23 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ error: 'method_not_allowed' }, 405);
         }
 
-        // ---- 1. Parse + validate the webhook payload.
-        //         Auth is handled by the Edge Function gateway (Supabase
-        //         webhook → anon-key JWT). See header docs for the
-        //         upgrade path if we ever need a stronger check.
+        // ---- 0. Shared-secret gate (the real authenticator). Reject
+        //         before any work if X-Webhook-Secret is missing or doesn't
+        //         match WEBHOOK_SECRET. Fail closed if the secret isn't
+        //         configured — without it we can't distinguish the webhook
+        //         from a forged caller holding the public anon key.
+        const expectedSecret = Deno.env.get('WEBHOOK_SECRET');
+        if (!expectedSecret) {
+            console.error('send-push: WEBHOOK_SECRET not set — refusing');
+            return jsonResponse({ error: 'misconfigured' }, 500);
+        }
+        const providedSecret = req.headers.get('X-Webhook-Secret');
+        if (!providedSecret || providedSecret !== expectedSecret) {
+            return jsonResponse({ error: 'unauthorized' }, 401);
+        }
+
+        // ---- 1. Parse the webhook payload. Only record.id is trusted from
+        //         the body — the authoritative row is re-fetched below.
         const body = (await req.json()) as WebhookBody;
         if (body.type !== 'INSERT' || body.table !== 'notifications') {
             // Config mistake (webhook firing on wrong events) — log
@@ -110,8 +131,8 @@ Deno.serve(async (req: Request) => {
             });
             return jsonResponse({ ok: true, ignored: true }, 200);
         }
-        const notif = body.record;
-        if (!notif || !notif.user_id || !notif.kind) {
+        const recordId = body.record?.id;
+        if (!recordId) {
             return jsonResponse({ error: 'malformed_record' }, 400);
         }
 
@@ -124,6 +145,31 @@ Deno.serve(async (req: Request) => {
         const supabase = createClient(supabaseUrl, serviceRoleKey, {
             auth: { persistSession: false },
         });
+
+        // ---- 2b. Re-fetch the notification by id. The push is built from
+        //          THIS row, never from body.record — a forged payload can
+        //          at most name an id that must actually exist in the table.
+        const { data: notifRow, error: notifError } = await supabase
+            .from('notifications')
+            .select('id, user_id, kind, payload, read_at, created_at')
+            .eq('id', recordId)
+            .maybeSingle();
+        if (notifError) {
+            console.error('send-push: notification re-fetch failed', notifError);
+            return jsonResponse(
+                {
+                    error: 'notification_fetch_failed',
+                    detail: notifError.message,
+                },
+                500,
+            );
+        }
+        const notif = notifRow as NotificationRow | null;
+        if (!notif || !notif.user_id || !notif.kind) {
+            // No such row (forged id, or deleted before we ran) — nothing
+            // legitimate to push.
+            return jsonResponse({ error: 'notification_not_found' }, 404);
+        }
 
         // ---- 3. Fetch the recipient's push tokens.
         const { data: tokens, error: tokensError } = await supabase
