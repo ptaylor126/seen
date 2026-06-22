@@ -1549,6 +1549,12 @@ const styles = StyleSheet.create({
     rowText: {
         flex: 1,
         gap: spacing.xs,
+        // Reserve a right gutter so a long title never runs under the
+        // absolute "needs attention" dot (unreadDot sits at right: base,
+        // 8px wide). 32 ends the text ~8px clear of the dot's left edge.
+        // Applied to every row for a consistent text right-edge; the dot
+        // itself is unchanged.
+        paddingRight: spacing.xl,
     },
     note: {
         fontStyle: 'italic',
