@@ -9,7 +9,6 @@ import {
 } from 'lucide-react-native';
 import { useCallback, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     FlatList,
     Pressable,
     StyleSheet,
@@ -19,6 +18,7 @@ import {
     View,
 } from 'react-native';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RequestRecSheet } from '@/components/request-rec-sheet';
@@ -54,6 +54,7 @@ export default function FriendsScreen() {
     const [friends, setFriends] = useState<FriendRow[]>([]);
     const [pendingIncoming, setPendingIncoming] = useState(0);
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
 
     // Local name/handle filter — mirrors the library + friend-library
@@ -244,10 +245,8 @@ export default function FriendsScreen() {
                 }
             />
 
-            {loading ? (
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : error ? (
                 <View style={styles.fillCenter}>
                     <Text style={[typography.body, { color: palette.error }]}>

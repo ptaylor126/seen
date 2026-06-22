@@ -3,7 +3,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { ChevronRight, Pencil } from 'lucide-react-native';
 import { Fragment, useCallback, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Pressable,
     ScrollView,
@@ -13,6 +12,7 @@ import {
     View,
 } from 'react-native';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ScreenHeader } from '@/components/screen-header';
 import { TopFiveSections } from '@/components/top-five-sections';
@@ -42,6 +42,7 @@ export default function ProfileScreen() {
     // which meant edits never showed because the tab stays mounted
     // and the effect never re-fired.
     const { status, profile } = useProfile();
+    const showLoader = useDeferredLoading(status === 'loading');
     const [favorites, setFavorites] = useState<UserFavorites>({
         movies: [],
         tv: [],
@@ -115,13 +116,11 @@ export default function ProfileScreen() {
         },
     ];
 
-    if (status === 'loading') {
+    if (showLoader) {
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
                 <ScreenHeader title="Profile" unreadCount={unreadCount} />
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+                <FullScreenLoader />
             </View>
         );
     }

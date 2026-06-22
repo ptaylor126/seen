@@ -3,7 +3,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Pressable,
     ScrollView,
@@ -14,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { maybeEnablePushAfterAccept } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import {
@@ -42,6 +42,7 @@ export default function FriendRequestsScreen() {
     const [incoming, setIncoming] = useState<RequestRow[]>([]);
     const [outgoing, setOutgoing] = useState<RequestRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState<string | null>(null);
 
@@ -336,10 +337,8 @@ export default function FriendRequestsScreen() {
                 </Text>
             </View>
 
-            {loading ? (
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : error ? (
                 <View style={styles.fillCenter}>
                     <Text style={[typography.body, { color: palette.error }]}>

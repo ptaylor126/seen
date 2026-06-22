@@ -3,7 +3,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { CheckCircle, XCircle } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     FlatList,
     Pressable,
@@ -13,6 +12,7 @@ import {
     View,
 } from 'react-native';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
@@ -240,6 +240,7 @@ export default function InboxScreen() {
     const [sentItems, setSentItems] = useState<SentRecItem[]>([]);
     const [view, setView] = useState<InboxView>('received');
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState<string | null>(null);
     // Notification ids that were unread the moment the inbox opened THIS
@@ -1443,10 +1444,8 @@ export default function InboxScreen() {
                 />
             </View>
 
-            {loading ? (
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : error ? (
                 <View style={styles.fillCenter}>
                     <Text

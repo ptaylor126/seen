@@ -17,6 +17,7 @@ import {
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { useProfile } from '@/hooks/use-profile';
 import { pickAndUploadAvatar, removeAvatar } from '@/lib/avatar-upload';
@@ -39,6 +40,7 @@ export default function EditProfileScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const { status, profile, refresh } = useProfile();
+    const showLoader = useDeferredLoading(status === 'loading' || !profile);
 
     const insets = useSafeAreaInsets();
     const nameInputRef = useRef<TextInput | null>(null);
@@ -298,19 +300,22 @@ export default function EditProfileScreen() {
         );
     }
 
-    if (status === 'loading' || !profile) {
+    if (showLoader) {
         return (
             <SafeAreaView
                 style={[styles.root, { backgroundColor: palette.bg }]}
                 edges={['top']}
             >
                 {renderHeader()}
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+                <FullScreenLoader />
             </SafeAreaView>
         );
     }
+
+    // Unreachable: showLoader (busy) is true whenever status==='loading' ||
+    // !profile, so reaching here means the profile is loaded — this also
+    // narrows the type for the JSX below.
+    if (!profile) return null;
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.bg }}>

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import supabase from '@/lib/supabase';
 import {
@@ -37,6 +38,7 @@ export default function BlockedUsersScreen() {
 
     // null = still loading; [] = loaded, none blocked.
     const [rows, setRows] = useState<BlockedUser[] | null>(null);
+    const showLoader = useDeferredLoading(rows === null);
     const [error, setError] = useState(false);
     // user_id currently being unblocked — guards against double-tap and dims
     // that row while the RPC is in flight.
@@ -181,10 +183,8 @@ export default function BlockedUsersScreen() {
                 </Text>
             </View>
 
-            {rows === null ? (
-                <View style={styles.center}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : error ? (
                 <View style={styles.center}>
                     <Text
@@ -197,7 +197,7 @@ export default function BlockedUsersScreen() {
                         Couldn&apos;t load your blocked users. Please try again.
                     </Text>
                 </View>
-            ) : rows.length === 0 ? (
+            ) : !rows || rows.length === 0 ? (
                 <View style={styles.center}>
                     <Text
                         style={[

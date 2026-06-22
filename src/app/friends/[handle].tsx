@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { SegmentedControl } from '@/components/segmented-control';
 import { TopFiveSections } from '@/components/top-five-sections';
@@ -304,6 +305,7 @@ export default function FriendDetailScreen() {
     const targetUserId = rawTargetUserId?.trim() || null;
 
     const [state, setState] = useState<ResolvedState>({ kind: 'loading' });
+    const showLoader = useDeferredLoading(state.kind === 'loading');
     const [activeTab, setActiveTab] = useState<ItemStatus>('watched');
     const [items, setItems] = useState<ItemRow[]>([]);
     const [itemsLoading, setItemsLoading] = useState(false);
@@ -824,19 +826,21 @@ export default function FriendDetailScreen() {
         </Pressable>
     );
 
-    if (state.kind === 'loading') {
+    if (showLoader) {
         return (
             <SafeAreaView
                 style={[styles.root, { backgroundColor: palette.bg }]}
                 edges={['top']}
             >
                 <View style={styles.headerBar}>{backButton}</View>
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+                <FullScreenLoader />
             </SafeAreaView>
         );
     }
+
+    // Unreachable: showLoader (busy) covers the 'loading' state — narrows it
+    // out of the union for the branches below.
+    if (state.kind === 'loading') return null;
 
     if (state.kind === 'not-found') {
         return (

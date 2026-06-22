@@ -13,6 +13,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -49,6 +50,15 @@ const DRAG_THRESHOLD_PX = 5;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
+// Confirmation beat duration — how long the "row collapses, ★ N pops" plays
+// after Done before onSubmit fires (and the parent closes the sheet).
+const CONFIRM_BEAT_MS = 380;
+
+// Half-scale (1-10) rating → display stars number, e.g. 7 -> "3.5", 10 -> "5".
+function formatStarsLabel(rating: number): string {
+    const stars = rating / 2;
+    return Number.isInteger(stars) ? String(stars) : stars.toFixed(1);
+}
 
 type StarVariant = 'empty' | 'half' | 'full';
 
@@ -106,6 +116,10 @@ export function RatingSheet({
     const [pressedRating, setPressedRating] = useState<number | null>(null);
     // Measured row width — set via onLayout. Drives the X→value mapping.
     const [rowWidth, setRowWidth] = useState(0);
+    // Confirmation beat: Done flips this true, the star row collapses and a
+    // single "★ N" pops in, THEN onSubmit fires (delayed so the beat is
+    // visible before the parent closes the sheet). Reset on each open.
+    const [confirming, setConfirming] = useState(false);
 
     // Refs mirror state for the PanResponder closures: the responder is
     // created once via useRef, so its handlers can't close over the
@@ -118,6 +132,14 @@ export function RatingSheet({
     // transition into a new half-star value rather than on every move
     // event.
     const lastHapticValueRef = useRef<number | null>(null);
+    // Pending onSubmit timer for the confirmation beat; cleared on unmount.
+    const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(
+        () => () => {
+            if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+        },
+        [],
+    );
 
     useEffect(() => {
         rowWidthRef.current = rowWidth;
@@ -131,6 +153,7 @@ export function RatingSheet({
         if (visible) {
             setSelected(initialRating);
             setPressedRating(null);
+            setConfirming(false);
             lastHapticValueRef.current = null;
         }
     }, [visible, initialRating]);
@@ -228,7 +251,15 @@ export function RatingSheet({
     }
 
     function handleDone() {
-        onSubmit(selected);
+        // Done is disabled unless a rating is selected; guard anyway and
+        // ignore re-taps once the beat is running.
+        if (selected === null || confirming) return;
+        // Play the confirmation beat, THEN submit — the delay lets the row
+        // collapse + "★ N" pop show before the parent closes the sheet.
+        setConfirming(true);
+        confirmTimerRef.current = setTimeout(() => {
+            onSubmit(selected);
+        }, CONFIRM_BEAT_MS);
     }
 
     function handleSkip() {
@@ -280,6 +311,17 @@ export function RatingSheet({
                     >
                         How was it?
                     </Text>
+                    <View style={styles.ratingArea}>
+                    <MotiView
+                        // Collapses toward center as the confirmation beat
+                        // plays; scale 1 / opacity 1 normally so it's inert.
+                        animate={{
+                            scale: confirming ? 0.2 : 1,
+                            opacity: confirming ? 0 : 1,
+                        }}
+                        transition={{ type: 'timing', duration: 240 }}
+                        pointerEvents={confirming ? 'none' : 'auto'}
+                    >
                     <View
                         ref={rowRef}
                         onLayout={handleRowLayout}
@@ -295,7 +337,21 @@ export function RatingSheet({
                                     ? palette.textMuted
                                     : palette.accent;
                             return (
-                                <View key={starIndex} style={styles.starCell}>
+                                <MotiView
+                                    key={starIndex}
+                                    // Staggered entrance — each star scales/
+                                    // fades in slightly after the previous as
+                                    // the sheet opens (plays once on mount).
+                                    from={{ opacity: 0, scale: 0.5 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    transition={{
+                                        type: 'spring',
+                                        damping: 14,
+                                        stiffness: 200,
+                                        delay: starIndex * 55,
+                                    }}
+                                    style={styles.starCell}
+                                >
                                     {/* The visual layer renders behind the
                                         tap overlays; pointerEvents:none on
                                         the style so finger events fall
@@ -372,47 +428,89 @@ export function RatingSheet({
                                             { opacity: pressed || busy ? 0.6 : 1 },
                                         ]}
                                     />
-                                </View>
+                                </MotiView>
                             );
                         })}
                     </View>
-                    <Pressable
-                        onPress={handleDone}
-                        disabled={doneDisabled}
-                        style={({ pressed }) => [
-                            styles.doneButton,
-                            {
-                                backgroundColor: palette.accent,
-                                opacity: doneDisabled ? 0.4 : pressed ? 0.6 : 1,
-                            },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.textInverse },
-                            ]}
+                    </MotiView>
+                    {/* Confirmation beat — the chosen rating as a single
+                        "★ N" that springs up where the collapsing row was. */}
+                    {confirming && selected !== null ? (
+                        <MotiView
+                            from={{ scale: 0.4, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            transition={{
+                                type: 'spring',
+                                damping: 12,
+                                stiffness: 240,
+                            }}
+                            pointerEvents="none"
+                            style={styles.confirmOverlay}
                         >
-                            Done
-                        </Text>
-                    </Pressable>
-                    <Pressable
-                        onPress={handleSkip}
-                        disabled={busy}
-                        style={({ pressed }) => [
-                            styles.skipButton,
-                            { opacity: pressed || busy ? 0.6 : 1 },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.textMuted },
-                            ]}
-                        >
-                            Skip
-                        </Text>
-                    </Pressable>
+                            <Star
+                                color={palette.accent}
+                                fill={palette.accent}
+                                size={40}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                            <Text
+                                style={[
+                                    typography.heading,
+                                    { color: palette.text },
+                                ]}
+                            >
+                                {formatStarsLabel(selected)}
+                            </Text>
+                        </MotiView>
+                    ) : null}
+                    </View>
+                    {/* Done / Skip hide during the confirmation beat so the
+                        "★ N" stands alone before the sheet closes. */}
+                    {!confirming ? (
+                        <>
+                            <Pressable
+                                onPress={handleDone}
+                                disabled={doneDisabled}
+                                style={({ pressed }) => [
+                                    styles.doneButton,
+                                    {
+                                        backgroundColor: palette.accent,
+                                        opacity: doneDisabled
+                                            ? 0.4
+                                            : pressed
+                                              ? 0.6
+                                              : 1,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textInverse },
+                                    ]}
+                                >
+                                    Done
+                                </Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={handleSkip}
+                                disabled={busy}
+                                style={({ pressed }) => [
+                                    styles.skipButton,
+                                    { opacity: pressed || busy ? 0.6 : 1 },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    Skip
+                                </Text>
+                            </Pressable>
+                        </>
+                    ) : null}
                 </Animated.View>
             </View>
         </Modal>
@@ -435,6 +533,19 @@ const styles = StyleSheet.create({
     title: {
         textAlign: 'center',
         marginBottom: spacing.lg,
+    },
+    // Wraps the star row + the confirmation "★ N" overlay so the latter
+    // centers over the same area as the row collapses out.
+    ratingArea: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    confirmOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
     },
     starsRow: {
         flexDirection: 'row',

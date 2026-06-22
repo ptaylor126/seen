@@ -13,7 +13,6 @@ import {
 } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Dimensions,
     Pressable,
@@ -25,6 +24,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { AvatarStack } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
@@ -195,6 +195,7 @@ export default function TitleDetailScreen() {
 
     const [detail, setDetail] = useState<Detail | null>(null);
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
     const [currentStatus, setCurrentStatus] = useState<ItemStatus | null>(null);
     // Existing items.rating, if any. Drives the RatingSheet's
@@ -846,12 +847,12 @@ export default function TitleDetailScreen() {
     // notch, leaving just the spacing.base gap).
     const closeButtonTop = insets.top + spacing.base;
 
-    if (loading) {
+    if (showLoader) {
         return (
             <View
                 style={[styles.root, styles.fillCenter, { backgroundColor: palette.bg }]}
             >
-                <ActivityIndicator color={palette.accent} />
+                <FullScreenLoader />
                 <CloseButton
                     top={closeButtonTop}
                     bg={palette.overlay}

@@ -3,7 +3,6 @@ import { useRouter } from 'expo-router';
 import { GripVertical, Plus, X } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Modal,
     Pressable,
@@ -24,6 +23,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { RatingSheet } from '@/components/rating-sheet';
 import { ScreenHeader } from '@/components/screen-header';
 import { useProfile } from '@/hooks/use-profile';
@@ -195,6 +195,7 @@ export default function EditFavoritesScreen() {
         tv: [],
     });
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     // `busy` blocks re-entry during the add/remove flow (pick a title,
     // run the items lookup, run the upsert, etc.). A single bool covers
     // every mutation — the user can't usefully start a second mutation
@@ -842,10 +843,8 @@ export default function EditFavoritesScreen() {
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader title="Edit Top 5" showBackButton />
-            {loading ? (
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : (
                 // NestableScrollContainer instead of plain ScrollView so
                 // the per-section NestableDraggableFlatList can host

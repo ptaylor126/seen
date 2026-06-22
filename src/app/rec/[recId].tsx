@@ -2,9 +2,9 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowUp, ChevronRight, MoreHorizontal, X, XCircle } from 'lucide-react-native';
+import { MotiView } from 'moti';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Dimensions,
     Keyboard,
@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { DeclineSheet } from '@/components/decline-sheet';
 import { RatingSheet } from '@/components/rating-sheet';
@@ -138,6 +139,7 @@ export default function RecScreen() {
     const recId = typeof params.recId === 'string' ? params.recId : '';
 
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
     const [myUserId, setMyUserId] = useState<string | null>(null);
     const [rec, setRec] = useState<RecSummary | null>(null);
@@ -694,9 +696,20 @@ export default function RecScreen() {
 
     async function handleReactionTap(emoji: ReactionEmoji) {
         if (!myUserId || !rec || reactionBusy || !isRecipient) return;
+        const removing = myReaction === emoji;
+        // Optimistic: flip my reaction in local state FIRST so the picker
+        // cell + its pop land instantly, not after the DB round-trip. Snapshot
+        // the prior list to roll back on failure.
+        const previous = reactions;
+        setReactions((prev) => {
+            const withoutMine = prev.filter((r) => r.userId !== myUserId);
+            return removing
+                ? withoutMine
+                : [...withoutMine, { userId: myUserId, emoji }];
+        });
         setReactionBusy(true);
         try {
-            if (myReaction === emoji) {
+            if (removing) {
                 // Tap the active emoji to remove.
                 const { error: delErr } = await supabase
                     .from('recommendation_reactions')
@@ -704,9 +717,6 @@ export default function RecScreen() {
                     .eq('recommendation_id', rec.id)
                     .eq('user_id', myUserId);
                 if (delErr) throw delErr;
-                setReactions((prev) =>
-                    prev.filter((r) => r.userId !== myUserId),
-                );
             } else {
                 // Upsert — INSERT if no row yet, UPDATE if already
                 // reacted with a different emoji. The PK on (rec,
@@ -723,14 +733,10 @@ export default function RecScreen() {
                         { onConflict: 'recommendation_id,user_id' },
                     );
                 if (upsertErr) throw upsertErr;
-                setReactions((prev) => {
-                    const withoutMine = prev.filter(
-                        (r) => r.userId !== myUserId,
-                    );
-                    return [...withoutMine, { userId: myUserId, emoji }];
-                });
             }
         } catch (err) {
+            // Roll back the optimistic change.
+            setReactions(previous);
             console.error('reaction update failed:', err);
             Alert.alert(
                 "Couldn't react",
@@ -914,13 +920,11 @@ export default function RecScreen() {
         </Pressable>
     );
 
-    if (loading) {
+    if (showLoader) {
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
                 {closeButton}
-                <View style={styles.fillCenter}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+                <FullScreenLoader />
             </View>
         );
     }
@@ -1270,15 +1274,43 @@ export default function RecScreen() {
                                             },
                                         ]}
                                     >
-                                        <Text style={styles.reactionEmoji}>
-                                            {emoji}
-                                        </Text>
+                                        {/* Pop the emoji when it becomes the
+                                            selected reaction. Keyed on active
+                                            so selecting remounts it (springs
+                                            from 0.6 → 1); deselecting starts
+                                            at 1 (no pop). Optimistic state
+                                            makes this fire instantly on tap. */}
+                                        <MotiView
+                                            key={isActive ? `on-${emoji}` : `off-${emoji}`}
+                                            from={{ scale: isActive ? 0.6 : 1 }}
+                                            animate={{ scale: 1 }}
+                                            transition={{
+                                                type: 'spring',
+                                                damping: 9,
+                                                stiffness: 300,
+                                            }}
+                                        >
+                                            <Text style={styles.reactionEmoji}>
+                                                {emoji}
+                                            </Text>
+                                        </MotiView>
                                     </Pressable>
                                 );
                             })}
                         </View>
                     ) : null}
                     {otherReaction ? (
+                        <MotiView
+                            // Spring pop when the other party's reaction
+                            // arrives (mounts on realtime/load).
+                            from={{ scale: 0, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            transition={{
+                                type: 'spring',
+                                damping: 11,
+                                stiffness: 260,
+                            }}
+                        >
                         <UserLink
                             userId={otherReaction.userId}
                             hitSlop={8}
@@ -1312,6 +1344,7 @@ export default function RecScreen() {
                                 reacted {otherReaction.emoji}
                             </Text>
                         </UserLink>
+                        </MotiView>
                     ) : null}
 
                     {/* Action area — RECIPIENT ONLY (Save / decline are
@@ -1527,8 +1560,28 @@ export default function RecScreen() {
                                                             r.userId ===
                                                             myUserId;
                                                         return (
-                                                            <View
+                                                            <MotiView
                                                                 key={r.userId}
+                                                                // Spring pop as
+                                                                // a reaction
+                                                                // lands (yours
+                                                                // on tap, or a
+                                                                // new one via
+                                                                // realtime —
+                                                                // stable key so
+                                                                // only new
+                                                                // chips pop).
+                                                                from={{
+                                                                    scale: 0,
+                                                                }}
+                                                                animate={{
+                                                                    scale: 1,
+                                                                }}
+                                                                transition={{
+                                                                    type: 'spring',
+                                                                    damping: 11,
+                                                                    stiffness: 260,
+                                                                }}
                                                                 style={[
                                                                     styles.commentReactionChip,
                                                                     {
@@ -1546,7 +1599,7 @@ export default function RecScreen() {
                                                                 >
                                                                     {r.emoji}
                                                                 </Text>
-                                                            </View>
+                                                            </MotiView>
                                                         );
                                                     })}
                                                 </View>

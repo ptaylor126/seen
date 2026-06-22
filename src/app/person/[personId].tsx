@@ -3,7 +3,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Dimensions,
     Pressable,
     ScrollView,
@@ -14,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { type LibraryGridCols } from '@/lib/library-view';
 import {
@@ -132,6 +132,7 @@ export default function PersonScreen() {
         Record<Department, TMDBPersonCredit[]>
     >({ acting: [], directing: [], writing: [] });
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -210,10 +211,8 @@ export default function PersonScreen() {
                 <X color={palette.text} size={20} strokeWidth={ICON_STROKE_WIDTH} />
             </Pressable>
 
-            {loading ? (
-                <View style={styles.centered}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : error || !detail ? (
                 <View style={styles.centered}>
                     <Text style={[typography.body, { color: palette.textMuted }]}>

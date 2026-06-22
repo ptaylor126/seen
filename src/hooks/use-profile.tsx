@@ -55,6 +55,12 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     const refresh = useCallback(async () => {
         const gen = ++generationRef.current;
         let attempt = 0;
+        // Bounded retries for an EMPTY-but-valid profile result (a transient
+        // token/RLS race on cold start) before concluding "no profile". Keeps a
+        // genuinely new signup resolving to onboarding once the retries are
+        // exhausted, while stopping an existing user from being surfaced as
+        // ready+null (which bounces them through the onboarding flash).
+        const EMPTY_PROFILE_MAX_ATTEMPTS = 4;
 
         // Loop until: (a) success, (b) we're superseded by a newer
         // refresh() call, or (c) the user signs out (detected via the
@@ -119,6 +125,19 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
                             await supabase.auth.signOut();
                             return;
                         }
+                    }
+                    // Valid (non-deleted) user but the profiles query came back
+                    // empty. For an EXISTING user this is a transient cold-start
+                    // race (auth token / RLS not settled, or refresh ordering) —
+                    // surfacing ready+null here is what bounced onboarded users
+                    // through the onboarding flash. Retry a bounded number of
+                    // times; the row loads on a later attempt. A genuinely new
+                    // signup stays empty across all attempts and then resolves
+                    // to ready+null → onboarding, so the new-user path is kept.
+                    if (attempt < EMPTY_PROFILE_MAX_ATTEMPTS) {
+                        const delayMs = Math.min(300 * attempt, 1200);
+                        await new Promise((resolve) => setTimeout(resolve, delayMs));
+                        continue;
                     }
                     setState({ status: 'ready', profile: null });
                     return;

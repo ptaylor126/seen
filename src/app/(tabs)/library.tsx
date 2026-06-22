@@ -9,7 +9,6 @@ import {
 } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import {
-    ActivityIndicator,
     Dimensions,
     FlatList,
     Pressable,
@@ -21,6 +20,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ScreenHeader } from '@/components/screen-header';
@@ -164,6 +164,7 @@ export default function LibraryScreen() {
     const [activeTab, setActiveTab] = useState<ItemStatus>('watchlist');
     const [rows, setRows] = useState<LibraryRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
     // Per-row privacy writes in flight, keyed by row id, so a row's
     // toggle disables itself without blocking the rest of the list.
@@ -908,10 +909,8 @@ export default function LibraryScreen() {
                 />
             </View>
 
-            {loading ? (
-                <View style={styles.statusBlock}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {showLoader ? (
+                <FullScreenLoader />
             ) : error ? (
                 <View style={styles.statusBlock}>
                     <Text

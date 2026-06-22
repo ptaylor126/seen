@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
@@ -74,6 +75,7 @@ export default function ReviewScreen() {
     const [initialContainsSpoilers, setInitialContainsSpoilers] =
         useState(false);
     const [loading, setLoading] = useState(true);
+    const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
@@ -347,10 +349,8 @@ export default function ReviewScreen() {
                         </View>
                     )}
 
-                    {loading ? (
-                        <View style={styles.statusBlock}>
-                            <ActivityIndicator color={palette.accent} />
-                        </View>
+                    {showLoader ? (
+                        <FullScreenLoader />
                     ) : error ? (
                         <View style={styles.statusBlock}>
                             <Text style={[typography.body, { color: palette.error }]}>

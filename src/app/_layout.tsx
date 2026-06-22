@@ -7,14 +7,25 @@ import {
 } from '@expo-google-fonts/geist';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, View, useColorScheme } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { LaunchSequence } from '@/components/launch-sequence';
+import { LaunchReadyContext } from '@/hooks/use-launch-ready';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
 import { useSession } from '@/hooks/use-session';
-import { getPalette } from '@/theme/theme';
+
+// Pin the root navigator's initial/anchor route to (tabs). With three root
+// groups — (auth), (onboarding), (tabs) — and no app/index.tsx, expo-router
+// has no deterministic base and falls back to mounting a group screen
+// ((onboarding)/welcome) as the initial route on cold launch. That base stays
+// visible for the whole session+profile-resolve window (~1s) until the routing
+// effect replaces it — i.e. an already-onboarded user briefly sees onboarding.
+// Anchoring to (tabs) makes home the base for everyone; signed-out /
+// not-onboarded users are then replaced OUT to (auth)/(onboarding) by the
+// routing effect, so onboarding never mounts for an onboarded user.
+export const unstable_settings = { anchor: '(tabs)' };
 
 // Keep the native splash up through font load — without this the splash
 // hides as soon as the first React frame mounts (even a `null` render),
@@ -84,8 +95,6 @@ function RootLayoutInner() {
     const profile = useProfile();
     const segments = useSegments();
     const router = useRouter();
-    const scheme = useColorScheme() ?? 'light';
-    const palette = getPalette(scheme);
 
     // Drive routing once both the session AND the profile have resolved.
     // Three terminal states:
@@ -103,11 +112,22 @@ function RootLayoutInner() {
             return;
         }
 
-        // Wait for profile too — without it we don't know the onboarded
-        // flag and would route the user to the wrong group.
-        if (profile.status !== 'ready') return;
+        // Wait for profile too. BOTH conditions are required:
+        //   1. status === 'ready', AND
+        //   2. a RESOLVED profile row exists (profile.profile != null).
+        // status alone is insufficient: refresh() never flips status back to
+        // 'loading' when a new refresh starts, so a prior refresh can leave
+        // status==='ready' with a null/stale profile (e.g. a cold-start
+        // getSession() that briefly saw no session set ready+null) while a NEW
+        // refresh is still in flight. Reading onboarded then coerces the null
+        // profile to false (?? false) and misroutes an onboarded user into
+        // onboarding. Gating on profile.profile means onboarded is only ever
+        // read from the real resolved row. A genuinely new user has a row with
+        // onboarded=false (created by the signup trigger), so they still reach
+        // onboarding.
+        if (profile.status !== 'ready' || !profile.profile) return;
 
-        const onboarded = profile.profile?.onboarded ?? false;
+        const onboarded = profile.profile.onboarded;
         if (!onboarded) {
             if (!inOnboardingGroup) router.replace('/(onboarding)/welcome');
             return;
@@ -120,12 +140,38 @@ function RootLayoutInner() {
         }
     }, [session, profile, segments, router]);
 
-    const showLoading =
-        session.status === 'loading' ||
-        (!!session.session && profile.status === 'loading');
+    // Launch readiness — the launch sequence stays up until the real
+    // destination is ready (not a timer). Signed-out → just session resolved;
+    // not-onboarded → session + profile; onboarded → also HOME's first data
+    // load, reported via markDestinationReady (settles on success OR error).
+    const [homeReady, setHomeReady] = useState(false);
+    const markDestinationReady = useCallback(() => setHomeReady(true), []);
+
+    // Gate dismissal on the resolved destination route being ACTIVE — not just
+    // the data — so the overlay covers the routing transition. Otherwise an
+    // already-onboarded user briefly sees the default/onboarding screen (the
+    // pre-routing initial route) before the replace-to-(tabs) lands. Onboarded
+    // also waits for home's first data load (homeReady).
+    const inAuthGroup = segments[0] === '(auth)';
+    const inOnboardingGroup = segments[0] === '(onboarding)';
+    const inTabsGroup = segments[0] === '(tabs)';
+
+    const ready =
+        session.status === 'ready' &&
+        (!session.session
+            ? inAuthGroup
+            : profile.status === 'ready' &&
+              ((profile.profile?.onboarded ?? false)
+                  ? inTabsGroup && homeReady
+                  : inOnboardingGroup));
+
+    // One-time gate: the animated launch overlay shows on cold start and
+    // dismisses once (ready + intro done, or the safety timeout). It does not
+    // return for later in-app transitions.
+    const [launchActive, setLaunchActive] = useState(true);
 
     return (
-        <>
+        <LaunchReadyContext.Provider value={{ markDestinationReady }}>
             <Stack screenOptions={{ headerShown: false }}>
                 {/* fullScreenModal (not 'modal'): the title page is reached
                     both standalone AND stacked over the rec view (itself a
@@ -170,19 +216,12 @@ function RootLayoutInner() {
                     options={{ presentation: 'card' }}
                 />
             </Stack>
-            {showLoading && (
-                <View style={[styles.loadingOverlay, { backgroundColor: palette.bg }]}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {launchActive && (
+                <LaunchSequence
+                    ready={ready}
+                    onDone={() => setLaunchActive(false)}
+                />
             )}
-        </>
+        </LaunchReadyContext.Provider>
     );
 }
-
-const styles = StyleSheet.create({
-    loadingOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-});

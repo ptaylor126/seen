@@ -2,9 +2,8 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Film, MoreHorizontal } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Dimensions,
     Pressable,
@@ -17,6 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { UserLink } from '@/components/user-link';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
@@ -28,6 +28,7 @@ import {
     SearchBarOverlay,
     useSearchBar,
 } from '@/components/search-bar';
+import { useLaunchReady } from '@/hooks/use-launch-ready';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import { maybeRequestReview } from '@/lib/review';
@@ -602,6 +603,11 @@ export default function HomeScreen() {
     const insets = useSafeAreaInsets();
     const tabBarInset = useFloatingTabBarInset();
     const { count: unreadCount } = useUnreadCount();
+    // Launch sequence: tell the root the destination (home) is ready once the
+    // first data load settles, so the launch overlay can hand off. Ref guards
+    // it to a single report (the cold-start load), not later focus refetches.
+    const { markDestinationReady } = useLaunchReady();
+    const reportedReadyRef = useRef(false);
 
     const [data, setData] = useState<HomeData | null>(null);
     const [loading, setLoading] = useState(true);
@@ -664,12 +670,18 @@ export default function HomeScreen() {
                     setError(err instanceof Error ? err.message : 'Failed to load');
                 } finally {
                     if (active) setLoading(false);
+                    // Report once — success or error — so a failed first load
+                    // still releases the launch overlay (to home's error state).
+                    if (!reportedReadyRef.current) {
+                        reportedReadyRef.current = true;
+                        markDestinationReady();
+                    }
                 }
             })();
             return () => {
                 active = false;
             };
-        }, [load]),
+        }, [load, markDestinationReady]),
     );
 
     async function handleRefresh() {
@@ -1464,12 +1476,9 @@ export default function HomeScreen() {
     // ---- Top-level body
 
     let body: React.ReactNode;
-    if (loading && !data) {
-        body = (
-            <View style={styles.fillCenter}>
-                <ActivityIndicator color={palette.accent} />
-            </View>
-        );
+    const showLoader = useDeferredLoading(loading && !data);
+    if (showLoader) {
+        body = <FullScreenLoader />;
     } else if (error && !data) {
         body = (
             <View style={styles.fillCenter}>
