@@ -1045,41 +1045,48 @@ export default function FriendDetailScreen() {
                     }
                     style={({ pressed }) => [
                         styles.recommendButton,
-                        { borderColor: palette.accent, opacity: pressed ? 0.6 : 1 },
+                        {
+                            backgroundColor: palette.accent,
+                            borderColor: palette.accent,
+                            opacity: pressed ? 0.6 : 1,
+                        },
                     ]}
                 >
                     <Send
-                        color={palette.accent}
-                        size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text
-                        style={[typography.bodyEmphasis, { color: palette.accent }]}
-                    >
-                        Recommend something
-                    </Text>
-                </Pressable>
-                {/* Untied request: nudges this friend to send a rec.
-                    Quieter than "Recommend something" (text-tinted, no
-                    accent fill) since it's the lighter-weight ask. */}
-                <Pressable
-                    onPress={() =>
-                        requestRec.open(profile.id, profile.displayName)
-                    }
-                    style={({ pressed }) => [
-                        styles.requestButton,
-                        { opacity: pressed ? 0.6 : 1 },
-                    ]}
-                >
-                    <MessageSquarePlus
-                        color={palette.textMuted}
+                        color={palette.textInverse}
                         size={16}
                         strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
                         style={[
                             typography.bodyEmphasis,
-                            { color: palette.textMuted },
+                            { color: palette.textInverse },
+                        ]}
+                    >
+                        Recommend something
+                    </Text>
+                </Pressable>
+                {/* Untied request: nudges this friend to send a rec. The
+                    secondary (outlined) sibling to the filled "Recommend
+                    something" primary — the lighter-weight ask. */}
+                <Pressable
+                    onPress={() =>
+                        requestRec.open(profile.id, profile.displayName)
+                    }
+                    style={({ pressed }) => [
+                        styles.requestButton,
+                        { borderColor: palette.border, opacity: pressed ? 0.6 : 1 },
+                    ]}
+                >
+                    <MessageSquarePlus
+                        color={palette.text}
+                        size={16}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.text },
                         ]}
                     >
                         Request a recommendation
@@ -1727,27 +1734,42 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.lg,
         borderRadius: radius.full,
     },
+    // Primary action — filled accent, no visible border. Mirrors the
+    // title screen's recommendButton treatment (filled accent, radius.sm,
+    // md vertical padding) so "Recommend something" reads the same across
+    // screens. Fill + matching-colour border applied inline; the border is
+    // the same colour as the fill (so invisible) purely to keep an
+    // identical box height to the outlined secondary below — they're a
+    // matched, full-width pair. alignSelf stretch fills the profileBlock's
+    // base padding so both buttons share the same width + edges.
     recommendButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        alignSelf: 'stretch',
         gap: spacing.sm,
-        paddingVertical: spacing.sm,
+        paddingVertical: spacing.md,
         paddingHorizontal: spacing.base,
-        borderRadius: radius.full,
+        borderRadius: radius.sm,
         borderWidth: 1.5,
         marginTop: spacing.md,
     },
+    // Secondary action — outlined (bordered, no fill) per our convention
+    // (filled = no border, outlined = bordered). Same width / height /
+    // radius as the primary above so they read as one matched pair;
+    // borderColor applied inline. The small marginTop is the gap between
+    // the two buttons.
     requestButton: {
-        // Borderless sibling under the recommend button — the lighter
-        // "ask" action sits quieter than the bordered "send" action.
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        alignSelf: 'stretch',
         gap: spacing.sm,
-        paddingVertical: spacing.sm,
+        paddingVertical: spacing.md,
         paddingHorizontal: spacing.base,
-        marginTop: spacing.xs,
+        borderRadius: radius.sm,
+        borderWidth: 1.5,
+        marginTop: spacing.sm,
     },
     filterZone: {
         // No shaded band — the controls sit on the page background (fill

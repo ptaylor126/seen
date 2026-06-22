@@ -1840,12 +1840,13 @@ const styles = StyleSheet.create({
     },
     recLine: {
         // Recommender attribution row above the note: small avatar + the
-        // "{name} recommends · {when}" line. Generous gap above (below the
-        // image), tight tie to the note below.
+        // "{name} recommends · {when}" line. Modest gap above (below the
+        // image) so the title block and recommender read as one connected
+        // unit; tight tie to the note below.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
-        marginTop: spacing.lg,
+        marginTop: spacing.md,
     },
     noteHero: {
         // The hero note — large pull-quote. Geist regular at a generous
