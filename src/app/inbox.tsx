@@ -1251,13 +1251,31 @@ export default function InboxScreen() {
 
     function renderRow({ item }: { item: InboxItem }) {
         const content = renderRowContent(item);
-        // Unread dot for notification rows that were unread when the inbox
-        // opened this visit. Only notification-sourced rows carry a
-        // notificationId — the `in` check narrows the union so incoming-rec
-        // and friend-request rows (table-sourced, no notification) never
-        // get one. Absolutely positioned over the row so it doesn't
-        // reflow the existing layout.
-        if ('notificationId' in item && unreadIds.has(item.notificationId)) {
+        // Dot shows for unread-informational OR not-yet-actioned-actionable
+        // rows. This mirrors the bell badge's source of truth exactly (see
+        // use-unread-count.ts) so the two can't drift:
+        //   - informational: a notification row that was unread when the
+        //     inbox opened this visit. Only notification rows carry a
+        //     notificationId; the read-sweep clears read_at on view, so this
+        //     dot is gone next visit. (rec_requested is informational too —
+        //     it clears on view, matching the badge; no persistent dot.)
+        //   - friend_request: present ⇒ still pending (accept/decline delete
+        //     the row), so the dot persists until actioned.
+        //   - incoming_rec: actionable while recStatus === 'pending' AND the
+        //     title isn't in the library (libraryStatus === null) — same rule
+        //     the badge uses (status pending minus library membership).
+        //     Adding it to the library or watching/dismissing it clears the
+        //     dot. Persists across visits (derived from row state, not
+        //     read_at). NB: libraryStatus is best-effort (load() logs + nulls
+        //     on items-fetch failure), so the dot fails OPEN here where the
+        //     badge fails closed — acceptable for a dot.
+        const showDot =
+            ('notificationId' in item && unreadIds.has(item.notificationId)) ||
+            item.kind === 'friend_request' ||
+            (item.kind === 'incoming_rec' &&
+                item.recStatus === 'pending' &&
+                item.libraryStatus === null);
+        if (showDot) {
             return (
                 <View style={styles.rowWithDot}>
                     {content}
@@ -1266,7 +1284,7 @@ export default function InboxScreen() {
                             styles.unreadDot,
                             { backgroundColor: palette.accent },
                         ]}
-                        accessibilityLabel="Unread"
+                        accessibilityLabel="Needs attention"
                         pointerEvents="none"
                     />
                 </View>
