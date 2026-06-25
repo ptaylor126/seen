@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Platform,
     Pressable,
+    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -23,6 +25,14 @@ import {
 } from '@/theme/theme';
 
 const MIN_HANDLE_LENGTH = 3;
+
+// "Invite friends" share. Simple version: shares the App Store link with a
+// short pitch via the OS share sheet. It does NOT auto-connect the recipient
+// as a friend — that's the deferred deep-link project (see the invite-link
+// note further down + src/app/friends/invite.tsx).
+const APP_STORE_URL = 'https://apps.apple.com/app/id6775920785';
+const INVITE_PITCH =
+    'Join me on Seen — recommendations from friends you actually trust.';
 
 export default function AddFriendScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -61,6 +71,24 @@ export default function AddFriendScreen() {
             active = false;
         };
     }, []);
+
+    // Open the OS share sheet with the App Store link. On iOS the link is
+    // passed as a separate `url` item so iOS builds a rich LinkPresentation
+    // preview — for an apps.apple.com URL that's the Seen app icon + name
+    // pulled from the listing (the share-sheet thumbnail). Android's Share
+    // ignores `url`, so there the link goes inline in the message text. A
+    // cancel rejects the promise, which we swallow.
+    async function handleInvite() {
+        try {
+            await Share.share(
+                Platform.OS === 'ios'
+                    ? { message: INVITE_PITCH, url: APP_STORE_URL }
+                    : { message: `${INVITE_PITCH} ${APP_STORE_URL}` },
+            );
+        } catch (err) {
+            console.error('invite share failed:', err);
+        }
+    }
 
     async function handleSubmit() {
         if (!canSubmit) return;
@@ -195,13 +223,43 @@ export default function AddFriendScreen() {
                     )}
                 </Pressable>
 
-                {/* The "Or — Friend not on Seen yet? → Send invite
-                    link" affordance that used to sit below this form
-                    was removed because the invite URL doesn't deep-
-                    link into the app yet (see src/app/friends/invite.tsx
-                    header). The backend invite_links + claim_invite_link
-                    path stays in place for when Universal Link / App
-                    Link plumbing lands. */}
+                {/* Invite action — sits directly under the handle form.
+                    (The old in-app invite-link affordance was removed
+                    because that URL doesn't deep-link yet; this just
+                    shares the App Store link — no auto-connect. The
+                    backend invite_links + claim_invite_link path stays in
+                    place for when the deferred Universal Link / App Link
+                    work lands; see src/app/friends/invite.tsx.) */}
+                <View style={styles.inviteGroup}>
+                    <Text
+                        style={[
+                            typography.caption,
+                            styles.inviteCaption,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        Know someone who&apos;s not on Seen yet?
+                    </Text>
+                    <Pressable
+                        onPress={handleInvite}
+                        style={({ pressed }) => [
+                            styles.inviteButton,
+                            {
+                                borderColor: palette.accent,
+                                opacity: pressed ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.accent },
+                            ]}
+                        >
+                            Invite friends
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
         </SafeAreaView>
     );
@@ -266,6 +324,20 @@ const styles = StyleSheet.create({
     submitButton: {
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    // Caption + button kept snug together (own gap); the body's larger gap
+    // sets the group apart from the "Send request" button above.
+    inviteGroup: { gap: spacing.sm },
+    inviteCaption: { textAlign: 'center' },
+    // Secondary (outlined) action — same shape as submitButton but a coral
+    // outline instead of a fill, so it reads below the primary "Send
+    // request". Mirrors the secondary button in friends/invite.tsx.
+    inviteButton: {
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
     },
