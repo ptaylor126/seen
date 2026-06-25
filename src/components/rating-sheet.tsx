@@ -51,8 +51,13 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
 // Confirmation beat duration — how long the "row collapses, ★ N pops" plays
-// after Done before onSubmit fires (and the parent closes the sheet).
-const CONFIRM_BEAT_MS = 380;
+// after Done before onSubmit fires (and the parent closes the sheet). The
+// collapse timing + pop spring below are scaled to fill this window so the
+// beat reads clearly rather than flashing past.
+const CONFIRM_BEAT_MS = 1000;
+// Collapse of the stars row (scales/fades toward center). ~60% of the beat,
+// so the row is gone with a beat of breathing room before onSubmit fires.
+const CONFIRM_COLLAPSE_MS = 600;
 
 // Half-scale (1-10) rating → display stars number, e.g. 7 -> "3.5", 10 -> "5".
 function formatStarsLabel(rating: number): string {
@@ -319,7 +324,10 @@ export function RatingSheet({
                             scale: confirming ? 0.2 : 1,
                             opacity: confirming ? 0 : 1,
                         }}
-                        transition={{ type: 'timing', duration: 240 }}
+                        transition={{
+                            type: 'timing',
+                            duration: CONFIRM_COLLAPSE_MS,
+                        }}
                         pointerEvents={confirming ? 'none' : 'auto'}
                     >
                     <View
@@ -440,9 +448,13 @@ export function RatingSheet({
                             from={{ scale: 0.4, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             transition={{
+                                // Softened (lower stiffness/damping, same ratio)
+                                // so the "★ N" springs up over a longer, legible
+                                // arc that fills the longer beat instead of
+                                // snapping in early and then sitting idle.
                                 type: 'spring',
-                                damping: 12,
-                                stiffness: 240,
+                                damping: 8,
+                                stiffness: 90,
                             }}
                             pointerEvents="none"
                             style={styles.confirmOverlay}
