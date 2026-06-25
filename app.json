@@ -7,6 +7,12 @@
     "icon": "./assets/icon.png",
     "scheme": "seen",
     "userInterfaceStyle": "light",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f5b6bf67-e85d-4d40-b863-62fd4cbef79e"
+    },
     "ios": {
       "bundleIdentifier": "com.paultaylor.seen",
       "usesAppleSignIn": true,
