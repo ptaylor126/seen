@@ -80,3 +80,22 @@ If you need a value that isn't in `theme.ts`, the order of operations is:
 3. Single-use only? It's probably premature to add a token. Use inline.
 
 Tokens proliferate when this discipline lapses.
+
+## Versioning — the two numbers
+
+There are two distinct release numbers. Don't confuse them.
+
+- **Build number** (iOS `buildNumber` / Android `versionCode`): auto-increments
+  on every EAS build via `autoIncrement` in `eas.json` (with
+  `appVersionSource: "remote"`, EAS owns it). **Never set this manually.**
+- **Version string** (`app.json` → `expo.version`, e.g. `1.0.1`): does **NOT**
+  auto-bump. **Manually increase it before each App Store submission** — patch
+  `1.0.x` for fixes, minor `1.x.0` for features. App Store Connect rejects a
+  build whose version string isn't higher than the live one, so a forgotten
+  bump fails submission.
+
+Current live: **1.0.0**. Next submission: **1.0.1**.
+
+Note: the version string is separate from the OTA `runtimeVersion` (the
+`fingerprint` policy — see `app.json`), which gates update compatibility, not
+App Store ordering.
