@@ -187,6 +187,17 @@ export default function RecScreen() {
     const [currentRating, setCurrentRating] = useState<number | null>(null);
     const [showActionSheet, setShowActionSheet] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
+    // Presenting the rating modal while the action-sheet modal is still
+    // animating its dismissal is silently dropped on iOS — which left the rec
+    // in a half-state and blocked later modals. So a 'watched' pick opens the
+    // rating sheet only once BOTH are true: the upsert succeeded
+    // (pendingRatingRef) AND the action sheet has fully unmounted
+    // (actionSheetClosedRef). Either can win the race — the upsert may resolve
+    // before or after the ~180ms close animation — so whichever finishes last
+    // calls maybeOpenRatingSheet(). Refs (not state) so the async upsert and
+    // the onClosed callback always read the latest values.
+    const pendingRatingRef = useRef(false);
+    const actionSheetClosedRef = useRef(true);
     const [statusBusy, setStatusBusy] = useState(false);
     // Decline ("Not for me") flow: the sheet + its in-flight write. A
     // declined rec now stays on screen in a persistent "you passed on this"
@@ -602,15 +613,31 @@ export default function RecScreen() {
         }
     }
 
+    // Opens the rating sheet only once a 'watched' pick has both succeeded and
+    // the action sheet has fully dismissed (see the refs above). Idempotent —
+    // called from whichever of the two finishes last; clears the pending flag
+    // so it fires exactly once.
+    function maybeOpenRatingSheet() {
+        if (pendingRatingRef.current && actionSheetClosedRef.current) {
+            pendingRatingRef.current = false;
+            setShowRatingSheet(true);
+        }
+    }
+
     // Set the recipient's library status from the action sheet. Mirrors
     // the title page: upsert the items row (nulling rating/watched_at off
     // 'watched', stamping watched_at on it), stamp the shared titles
     // catalogue via ensureTitle (the rec-send path doesn't), and for
-    // 'watched' open the rating sheet (applyWatchedRating then transitions
-    // this rec → watched in handleRate). Watchlist/watching leave the rec
-    // untouched (stays pending in the inbox). Optimistic; reverts on error.
+    // 'watched' open the rating sheet (deferred until the action sheet has
+    // fully dismissed — see maybeOpenRatingSheet; applyWatchedRating then
+    // transitions this rec → watched in handleRate). Watchlist/watching leave
+    // the rec untouched (stays pending in the inbox). Optimistic; reverts on
+    // error.
     async function handlePickStatus(status: ItemStatus) {
         setShowActionSheet(false);
+        // The sheet is now dismissing (not yet closed); onClosed will flip
+        // this true when its close animation finishes.
+        actionSheetClosedRef.current = false;
         if (!rec || statusBusy || status === currentStatus) return;
         setStatusBusy(true);
         const prevStatus = currentStatus;
@@ -655,8 +682,17 @@ export default function RecScreen() {
                 });
             }
 
-            if (isWatched) setShowRatingSheet(true);
+            // Upsert succeeded. Don't open the rating sheet inline — the
+            // action sheet may still be dismissing. Record the intent and try
+            // to open; if the sheet hasn't finished closing yet, onClosed will.
+            if (isWatched) {
+                pendingRatingRef.current = true;
+                maybeOpenRatingSheet();
+            }
         } catch (err) {
+            // Upsert failed — abandon any pending rating open so a late
+            // onClosed doesn't surface the rating sheet over a reverted state.
+            pendingRatingRef.current = false;
             setCurrentStatus(prevStatus);
             setCurrentRating(prevRating);
             console.error('set status failed:', err);
@@ -1873,6 +1909,13 @@ export default function RecScreen() {
                 busy={statusBusy}
                 onClose={() => setShowActionSheet(false)}
                 onPickStatus={handlePickStatus}
+                onClosed={() => {
+                    // Action sheet fully unmounted — safe to present the
+                    // rating sheet now. Opens it if the 'watched' upsert has
+                    // already succeeded; otherwise the upsert's own call wins.
+                    actionSheetClosedRef.current = true;
+                    maybeOpenRatingSheet();
+                }}
             />
 
             {/* Rating sheet — opens after a 'watched' pick. */}

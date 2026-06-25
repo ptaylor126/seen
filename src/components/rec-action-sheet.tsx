@@ -30,6 +30,11 @@ interface RecActionSheetProps {
     busy: boolean;
     onClose: () => void;
     onPickStatus: (status: ItemStatus) => void;
+    // Fired once the close animation has finished and the sheet is fully
+    // unmounted. The rec view uses this to present the rating sheet only
+    // after this modal is gone — presenting a second modal while this one
+    // is still dismissing is silently dropped on iOS.
+    onClosed?: () => void;
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -53,6 +58,7 @@ export function RecActionSheet({
     busy,
     onClose,
     onPickStatus,
+    onClosed,
 }: RecActionSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -80,7 +86,13 @@ export function RecActionSheet({
                 easing: Easing.in(Easing.cubic),
                 useNativeDriver: true,
             }).start(({ finished }) => {
-                if (finished) setMounted(false);
+                if (finished) {
+                    setMounted(false);
+                    // Sheet is fully unmounted now — safe for the parent to
+                    // present a follow-up modal (the rating sheet) without
+                    // colliding with this one's dismissal.
+                    onClosed?.();
+                }
             });
         }
     }, [visible, progress]);
