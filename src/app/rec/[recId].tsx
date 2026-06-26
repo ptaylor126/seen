@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowUp, ChevronRight, MoreHorizontal, X, XCircle } from 'lucide-react-native';
 import { MotiView } from 'moti';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -455,6 +455,110 @@ export default function RecScreen() {
     useEffect(() => {
         void load();
     }, [load]);
+
+    // Resync the library status + rec lifecycle status whenever the screen
+    // regains focus — e.g. the user opened "View details", changed the status
+    // on the title screen (which writes items.status/rating, and for 'watched'
+    // also transitions THIS rec → watched), then came back. Pushing the title
+    // screen leaves this screen mounted, so the mount `load` never re-runs and
+    // these would otherwise show stale.
+    //
+    // Mirrors the title screen's own useFocusEffect: it depends ONLY on the
+    // stable `recId` route param (re-deriving tmdb_id/media_type from the DB),
+    // so its identity never changes on internal state updates. That matters
+    // twice over — it can't re-run when we optimistically setRec during
+    // decline/watched, and it's structurally impossible for it to fire mid
+    // watched-flow (the action/rating sheets are modals on THIS screen, so the
+    // screen never loses focus during that sequence).
+    //
+    // READ-ONLY into state: it only sets currentStatus / currentRating and (via
+    // a functional, diff-guarded update) rec.status. It deliberately does NOT
+    // touch pendingRatingRef, actionSheetClosedRef, showRatingSheet,
+    // showActionSheet, or statusBusy — the watched-flow modal sequencing must
+    // not be perturbed.
+    const skipFirstFocusRef = useRef(true);
+    useFocusEffect(
+        useCallback(() => {
+            // Skip the initial mount focus — `load` already read these, so a
+            // resync here would just be a redundant round-trip.
+            if (skipFirstFocusRef.current) {
+                skipFirstFocusRef.current = false;
+                return;
+            }
+            if (!recId) return;
+            let active = true;
+            (async () => {
+                try {
+                    const {
+                        data: { session },
+                    } = await supabase.auth.getSession();
+                    const uid = session?.user.id;
+                    if (!uid || !active) return;
+
+                    // Re-read the rec's lifecycle status + its title
+                    // coordinates together, so we can resync the library row
+                    // without depending on the loaded `rec` object.
+                    const { data: recRow, error: recErr } = await supabase
+                        .from('recommendations')
+                        .select('status, tmdb_id, media_type')
+                        .eq('id', recId)
+                        .maybeSingle();
+                    if (!active || recErr || !recRow) return;
+
+                    const { data: itemRow, error: itemErr } = await supabase
+                        .from('items')
+                        .select('status, rating')
+                        .eq('user_id', uid)
+                        .eq('tmdb_id', recRow.tmdb_id)
+                        .eq('media_type', recRow.media_type)
+                        .maybeSingle();
+                    if (!active) return;
+
+                    // Library status + rating. A present row with a known
+                    // status updates both; an absent row means the title was
+                    // removed from the library on the title screen → clear
+                    // back to "not in library". Skip on a query error so a
+                    // network blip doesn't wipe the displayed status.
+                    if (!itemErr) {
+                        if (
+                            itemRow &&
+                            (itemRow.status === 'watchlist' ||
+                                itemRow.status === 'watching' ||
+                                itemRow.status === 'watched')
+                        ) {
+                            setCurrentStatus(itemRow.status);
+                            setCurrentRating(
+                                typeof itemRow.rating === 'number'
+                                    ? itemRow.rating
+                                    : null,
+                            );
+                        } else {
+                            setCurrentStatus(null);
+                            setCurrentRating(null);
+                        }
+                    }
+
+                    // Rec lifecycle status — 'watched' set on the title screen
+                    // transitions this too. Functional + diff-guarded so we
+                    // never clobber a concurrent optimistic change and only
+                    // re-render when it actually differs.
+                    setRec((prev) =>
+                        prev &&
+                        typeof recRow.status === 'string' &&
+                        prev.status !== recRow.status
+                            ? { ...prev, status: recRow.status }
+                            : prev,
+                    );
+                } catch (err) {
+                    // Non-fatal: a failed resync just leaves the prior state.
+                    console.error('rec status resync on focus failed:', err);
+                }
+            })();
+            return () => {
+                active = false;
+            };
+        }, [recId]),
+    );
 
     const myReaction: ReactionEmoji | null = myUserId
         ? reactions.find((r) => r.userId === myUserId)?.emoji ?? null
