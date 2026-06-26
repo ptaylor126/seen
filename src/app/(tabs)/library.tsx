@@ -132,6 +132,11 @@ const EMPTY_MESSAGES: Record<ItemStatus, string> = {
     watched: 'No watched titles yet.',
 };
 
+// Stable empty-array reference for not-yet-loaded tabs, so the derived
+// `rows` keeps a constant identity across renders (avoids needless
+// re-runs in useLibraryFilters while a tab is still loading).
+const NO_ROWS: LibraryRow[] = [];
+
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
 
@@ -162,9 +167,34 @@ export default function LibraryScreen() {
     const { count: unreadCount } = useUnreadCount();
 
     const [activeTab, setActiveTab] = useState<ItemStatus>('watchlist');
-    const [rows, setRows] = useState<LibraryRow[]>([]);
+    // Per-tab cache: each status tab's last-loaded rows. A tab stays
+    // undefined until its first successful load, so switching to an
+    // already-loaded tab renders its cached rows instantly. The focus
+    // effect still refetches the active tab in the background
+    // (stale-while-revalidate), so the cache refreshes without ever
+    // flashing the loader on a revisit.
+    const [rowsByTab, setRowsByTab] = useState<
+        Partial<Record<ItemStatus, LibraryRow[]>>
+    >({});
+    const activeRows = rowsByTab[activeTab];
+    const hasLoaded = activeRows !== undefined;
+    const rows = activeRows ?? NO_ROWS;
+    // Apply an in-place update to the ACTIVE tab's cached rows (e.g. an
+    // optimistic per-row edit). No-op if the tab hasn't loaded yet.
+    const updateActiveRows = useCallback(
+        (updater: (rows: LibraryRow[]) => LibraryRow[]) => {
+            setRowsByTab((prev) => {
+                const current = prev[activeTab];
+                if (!current) return prev;
+                return { ...prev, [activeTab]: updater(current) };
+            });
+        },
+        [activeTab],
+    );
     const [loading, setLoading] = useState(true);
-    const showLoader = useDeferredLoading(loading);
+    // Loader only on a genuine first load of a never-seen tab. Once a tab
+    // has cached rows, a background revalidation never shows the loader.
+    const showLoader = useDeferredLoading(loading && !hasLoaded);
     const [error, setError] = useState<string | null>(null);
     // Per-row privacy writes in flight, keyed by row id, so a row's
     // toggle disables itself without blocking the rest of the list.
@@ -341,14 +371,22 @@ export default function LibraryScreen() {
                         };
                     });
 
-                    setRows(combined);
+                    // `activeTab` here is the value captured when this effect
+                    // run was created (the effect re-runs per tab), so it's
+                    // the correct cache key for this fetch. The `active` guard
+                    // above already bailed if the user switched mid-fetch, so
+                    // this only writes for the still-current tab.
+                    setRowsByTab((prev) => ({ ...prev, [activeTab]: combined }));
                 } catch (err) {
                     if (!active) return;
                     console.error('library fetch failed:', err);
                     setError(
                         err instanceof Error ? err.message : 'Failed to load library',
                     );
-                    setRows([]);
+                    // Don't clobber the cache: a never-loaded tab stays
+                    // undefined (so the error state shows), and a cached tab
+                    // keeps its rows (a failed background revalidation leaves
+                    // the last-good data on screen).
                 } finally {
                     if (active) setLoading(false);
                 }
@@ -522,7 +560,7 @@ export default function LibraryScreen() {
         const next: ItemVisibility =
             row.visibility === 'private' ? 'friends' : 'private';
 
-        setRows((prev) =>
+        updateActiveRows((prev) =>
             prev.map((r) =>
                 r.id === row.id ? { ...r, visibility: next } : r,
             ),
@@ -542,7 +580,7 @@ export default function LibraryScreen() {
             });
         } catch (err) {
             // Revert the optimistic flip for just this row.
-            setRows((prev) =>
+            updateActiveRows((prev) =>
                 prev.map((r) =>
                     r.id === row.id
                         ? { ...r, visibility: row.visibility }
@@ -911,7 +949,10 @@ export default function LibraryScreen() {
 
             {showLoader ? (
                 <FullScreenLoader />
-            ) : error ? (
+            ) : error && !hasLoaded ? (
+                // Only surface the error when the tab has no cached rows. A
+                // failed background revalidation on an already-loaded tab
+                // keeps the last-good rows on screen instead.
                 <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.error }]}
