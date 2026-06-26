@@ -591,14 +591,23 @@ export default function RecScreen() {
     // safe-area inset while typing (the keyboard covers the home-indicator
     // area; keeping the inset leaves a white gap above the keyboard).
     // willShow/Hide on iOS for in-step animation; did* on Android.
+    //
+    // On show we ALSO scroll the thread to the end so the latest message
+    // stays visible right above the composer instead of being clipped behind
+    // the shrunk scroll area (the composer is pinned outside the ScrollView,
+    // so the KeyboardAvoidingView shrinks the list from the bottom without
+    // re-scrolling). keyboardWillShow on iOS animates the scroll in step with
+    // the keyboard; keyboardDidShow on Android fires once the frame is known.
+    // Same scrollRef/scrollToEnd mechanism as handlePostComment.
     useEffect(() => {
         const showEvt =
             Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
         const hideEvt =
             Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-        const showSub = Keyboard.addListener(showEvt, () =>
-            setKeyboardOpen(true),
-        );
+        const showSub = Keyboard.addListener(showEvt, () => {
+            setKeyboardOpen(true);
+            scrollRef.current?.scrollToEnd({ animated: true });
+        });
         const hideSub = Keyboard.addListener(hideEvt, () =>
             setKeyboardOpen(false),
         );
@@ -1766,13 +1775,17 @@ export default function RecScreen() {
                         {
                             backgroundColor: palette.surface,
                             // Keyboard up → the home-indicator inset is
-                            // covered by the keyboard, so drop it (just the
-                            // small gap) to sit flush above the keyboard.
+                            // covered by the keyboard, so drop it to a small
+                            // gap. spacing.md (not spacing.sm) gives a little
+                            // breathing room above the keyboard's top edge so
+                            // the input doesn't sit flush against it — minimal
+                            // bump, NOT keyboardVerticalOffset (a non-zero
+                            // offset previously over-padded; see the KAV note).
                             // Keyboard down → just the safe-area inset, so
                             // the bar sits snug at the very bottom (no extra
                             // gap above the home indicator).
                             paddingBottom: keyboardOpen
-                                ? spacing.sm
+                                ? spacing.md
                                 : insets.bottom,
                         },
                     ]}
@@ -1800,6 +1813,15 @@ export default function RecScreen() {
                         <TextInput
                             value={composer}
                             onChangeText={setComposer}
+                            // Fallback for the focus-without-keyboard-event
+                            // case (e.g. a hardware keyboard, where no
+                            // keyboardWillShow/DidShow fires): still pull the
+                            // latest message above the input on focus.
+                            onFocus={() =>
+                                scrollRef.current?.scrollToEnd({
+                                    animated: true,
+                                })
+                            }
                             placeholder={
                                 comments.length === 0
                                     ? 'Start a conversation'
