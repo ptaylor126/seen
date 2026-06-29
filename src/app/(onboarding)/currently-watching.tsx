@@ -22,8 +22,6 @@ import {
     type SearchableItem,
 } from '@/components/onboarding-search';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
-import { useProfile } from '@/hooks/use-profile';
-import { finishOnboarding } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
@@ -53,7 +51,6 @@ export default function CurrentlyWatchingScreen() {
     // ScrollView's contentContainer — see best-watched.tsx for the
     // pattern.
     const searchYRef = useRef(0);
-    const { refresh: refreshProfile } = useProfile();
 
     function handleSearchLayout(y: number) {
         searchYRef.current = y;
@@ -141,13 +138,15 @@ export default function CurrentlyWatchingScreen() {
         }
     }
 
-    async function handleContinue() {
+    // Onboarding no longer completes here — the invite step is now the final
+    // screen and owns the onboarded-flag flip. Both paths just advance to it.
+    function handleContinue() {
         if (!added || busy) return;
-        await finishOnboarding({ refreshProfile });
+        router.push('/(onboarding)/invite');
     }
 
-    async function handleSkip() {
-        await finishOnboarding({ refreshProfile });
+    function handleSkip() {
+        router.push('/(onboarding)/invite');
     }
 
     return (
@@ -199,8 +198,8 @@ export default function CurrentlyWatchingScreen() {
                     What are you watching right now?
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Anything you&apos;re in the middle of? Add it —
-                    we&apos;ll keep track.
+                    Anything you&apos;re partway through? Add it so it&apos;s
+                    easy to pick back up.
                 </Text>
                 {added ? (
                     <View
