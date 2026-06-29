@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
@@ -25,6 +26,7 @@ import {
 } from '@/theme/theme';
 
 const MIN_HANDLE_LENGTH = 3;
+const MATCH_AVATAR_SIZE = 44;
 
 // "Invite friends" share. Simple version: shares the App Store link with a
 // short pitch via the OS share sheet. It does NOT auto-connect the recipient
@@ -40,14 +42,25 @@ export default function AddFriendScreen() {
     const router = useRouter();
 
     const [handle, setHandle] = useState('');
+    // Lookup ("Find") in flight.
     const [busy, setBusy] = useState(false);
+    // The single exact match from handleLookup, shown for confirmation before
+    // the request is sent. null = nothing matched / not looked up yet.
+    const [match, setMatch] = useState<{
+        id: string;
+        handle: string;
+        displayName: string | null;
+        avatarUrl: string | null;
+    } | null>(null);
+    // Friend-request insert in flight (the confirmed "Send request" step).
+    const [sending, setSending] = useState(false);
     const [myHandle, setMyHandle] = useState<string | null>(null);
 
     const trimmed = handle.trim().toLowerCase();
     const canSubmit = trimmed.length >= MIN_HANDLE_LENGTH && !busy;
 
     // Pre-fetch the current user's handle so the self-request guard in
-    // handleSubmit can compare against it before doing the target lookup.
+    // handleLookup can compare against it before doing the target lookup.
     useEffect(() => {
         let active = true;
         (async () => {
@@ -90,7 +103,11 @@ export default function AddFriendScreen() {
         }
     }
 
-    async function handleSubmit() {
+    // Step 1 — exact-handle lookup. Resolves the single matching profile so
+    // the user can confirm it's the right person BEFORE the request is sent.
+    // Still exact-match (.eq) — no fuzzy/prefix search, no browsing by partial
+    // handle. The widened select pulls display_name + avatar for the card.
+    async function handleLookup() {
         if (!canSubmit) return;
 
         // Self-request guard — block before the lookup so we don't bother
@@ -102,31 +119,48 @@ export default function AddFriendScreen() {
 
         setBusy(true);
         try {
+            const { data: target, error: lookupError } = await supabase
+                .from('profiles')
+                .select('id, handle, display_name, avatar_url')
+                .eq('handle', trimmed)
+                .maybeSingle();
+            if (lookupError) throw lookupError;
+            if (!target) {
+                setMatch(null);
+                Alert.alert('Not found', `No user found with handle @${trimmed}`);
+                return;
+            }
+            setMatch({
+                id: target.id,
+                handle: target.handle,
+                displayName: target.display_name,
+                avatarUrl: target.avatar_url,
+            });
+        } catch (err) {
+            console.error('handle lookup failed:', err);
+            surfaceError(err, "Couldn't look up that handle");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // Step 2 — send the request to the confirmed match. The INSERT policy
+    // enforces no-existing-friendship and no-reverse-pending-request via
+    // can_send_friend_request; the unique constraint on (from, to) catches
+    // duplicate sends. Any of those surface as a Postgrest error here.
+    async function handleSend() {
+        if (!match || sending) return;
+        setSending(true);
+        try {
             const {
                 data: { session },
             } = await supabase.auth.getSession();
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            // Look up the target user by handle.
-            const { data: target, error: lookupError } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('handle', trimmed)
-                .maybeSingle();
-            if (lookupError) throw lookupError;
-            if (!target) {
-                Alert.alert('Not found', `No user found with handle @${trimmed}`);
-                return;
-            }
-
-            // The INSERT policy enforces no-existing-friendship and
-            // no-reverse-pending-request via can_send_friend_request;
-            // the unique constraint on (from, to) catches duplicate sends.
-            // Any of those failures surface as a Postgrest error here.
             const { error: insertError } = await supabase
                 .from('friend_requests')
-                .insert({ from_user_id: userId, to_user_id: target.id });
+                .insert({ from_user_id: userId, to_user_id: match.id });
             if (insertError) throw insertError;
 
             Alert.alert('Sent', 'Friend request sent.', [
@@ -136,7 +170,7 @@ export default function AddFriendScreen() {
             console.error('send friend request failed:', err);
             surfaceError(err, "Couldn't send request");
         } finally {
-            setBusy(false);
+            setSending(false);
         }
     }
 
@@ -184,44 +218,121 @@ export default function AddFriendScreen() {
                     </Text>
                     <TextInput
                         value={handle}
-                        onChangeText={setHandle}
+                        onChangeText={(text) => {
+                            setHandle(text);
+                            // Editing invalidates a shown match — require a
+                            // fresh lookup before the request can be sent.
+                            if (match) setMatch(null);
+                        }}
                         placeholder="handle"
                         placeholderTextColor={palette.textMuted}
                         autoCapitalize="none"
                         autoCorrect={false}
                         autoComplete="off"
                         spellCheck={false}
-                        returnKeyType="send"
-                        onSubmitEditing={handleSubmit}
-                        editable={!busy}
+                        returnKeyType="search"
+                        onSubmitEditing={handleLookup}
+                        editable={!busy && !sending}
                         style={[styles.input, typography.body, { color: palette.text }]}
                     />
                 </View>
 
-                <Pressable
-                    onPress={handleSubmit}
-                    disabled={!canSubmit}
-                    style={({ pressed }) => [
-                        styles.submitButton,
-                        {
-                            backgroundColor: palette.accent,
-                            opacity: !canSubmit ? 0.4 : pressed ? 0.6 : 1,
-                        },
-                    ]}
-                >
-                    {busy ? (
-                        <ActivityIndicator color={palette.textInverse} />
-                    ) : (
-                        <Text
+                {match ? (
+                    // Confirmation step — show who matched so the user can be
+                    // sure it's the right person before sending. Handle is
+                    // primary; display name sits under it, omitted entirely
+                    // when blank (no empty second line).
+                    <View style={styles.matchGroup}>
+                        <View
                             style={[
-                                typography.bodyEmphasis,
-                                { color: palette.textInverse },
+                                styles.matchCard,
+                                {
+                                    backgroundColor: palette.surface,
+                                    borderColor: palette.border,
+                                },
                             ]}
                         >
-                            Send request
-                        </Text>
-                    )}
-                </Pressable>
+                            <Avatar
+                                avatarUrl={match.avatarUrl}
+                                displayName={match.displayName || match.handle}
+                                seedId={match.id}
+                                size={MATCH_AVATAR_SIZE}
+                            />
+                            <View style={styles.matchText}>
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.text },
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    @{match.handle}
+                                </Text>
+                                {match.displayName && match.displayName.trim() ? (
+                                    <Text
+                                        style={[
+                                            typography.caption,
+                                            { color: palette.textMuted },
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {match.displayName.trim()}
+                                    </Text>
+                                ) : null}
+                            </View>
+                        </View>
+
+                        <Pressable
+                            onPress={handleSend}
+                            disabled={sending}
+                            style={({ pressed }) => [
+                                styles.submitButton,
+                                {
+                                    backgroundColor: palette.accent,
+                                    opacity: sending ? 0.4 : pressed ? 0.6 : 1,
+                                },
+                            ]}
+                        >
+                            {sending ? (
+                                <ActivityIndicator color={palette.textInverse} />
+                            ) : (
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textInverse },
+                                    ]}
+                                >
+                                    Send request
+                                </Text>
+                            )}
+                        </Pressable>
+                    </View>
+                ) : (
+                    <Pressable
+                        onPress={handleLookup}
+                        disabled={!canSubmit}
+                        style={({ pressed }) => [
+                            styles.submitButton,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: !canSubmit ? 0.4 : pressed ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        {busy ? (
+                            <ActivityIndicator color={palette.textInverse} />
+                        ) : (
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.textInverse },
+                                ]}
+                            >
+                                Find
+                            </Text>
+                        )}
+                    </Pressable>
+                )}
 
                 {/* Invite action — sits directly under the handle form.
                     (The old in-app invite-link affordance was removed
@@ -317,7 +428,8 @@ const styles = StyleSheet.create({
         height: 48,
         borderRadius: radius.sm,
         borderWidth: 1,
-        gap: spacing.xs,
+        // No gap — the "@" prefix sits flush against the typed text so it
+        // reads "@paul", not "@ paul".
     },
     atPrefix: { fontWeight: '600' },
     input: { flex: 1, height: '100%' },
@@ -327,6 +439,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    // Confirmation card + Send button kept snug as one unit; the body's
+    // larger gap separates it from the input above and the invite group below.
+    matchGroup: { gap: spacing.md },
+    matchCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        padding: spacing.md,
+        borderRadius: radius.sm,
+        borderWidth: 1,
+    },
+    // 2pt between the handle and the display name under it.
+    matchText: { flex: 1, gap: 2 },
     // Caption + button kept snug together (own gap); the body's larger gap
     // sets the group apart from the "Send request" button above.
     inviteGroup: { gap: spacing.sm },
