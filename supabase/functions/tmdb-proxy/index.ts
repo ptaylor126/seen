@@ -37,6 +37,13 @@ const ALLOWED_PATH_PATTERNS: RegExp[] = [
     /^person\/\d+$/,
     /^person\/\d+\/combined_credits$/,
     /^configuration$/,
+    // --- Onboarding poster-grid blend (TMDB list endpoints). Exact paths
+    //     only; list params (page, with_genres, sort_by) ride as forwarded
+    //     query params in the request body, NOT in the path string.
+    /^trending\/(movie|tv)\/week$/,
+    /^(movie|tv)\/popular$/,
+    /^(movie|tv)\/top_rated$/,
+    /^discover\/(movie|tv)$/,
 ];
 
 // Character filter runs BEFORE the allowlist regex. Catches '?', '&', '%',
