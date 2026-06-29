@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { LoadError } from '@/components/load-error';
 import { AvatarStack } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
 import {
@@ -197,6 +198,9 @@ export default function TitleDetailScreen() {
     const [loading, setLoading] = useState(true);
     const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
+    // Bumped by the error screen's "Try again" to re-fire the detail load
+    // (it's a dependency of the load effect below).
+    const [reloadKey, setReloadKey] = useState(0);
     const [currentStatus, setCurrentStatus] = useState<ItemStatus | null>(null);
     // Existing items.rating, if any. Drives the RatingSheet's
     // initialRating so re-rates land on the user's previous pick.
@@ -490,7 +494,7 @@ export default function TitleDetailScreen() {
         return () => {
             active = false;
         };
-    }, [mediaType, tmdbId]);
+    }, [mediaType, tmdbId, reloadKey]);
 
     // Refresh ALL reviews for this title on every screen focus.
     // Returning from the /review modal lands here and gets the
@@ -864,13 +868,18 @@ export default function TitleDetailScreen() {
     }
 
     if (error || !detail) {
+        // Friendly fallback — the underlying TMDB error (often a transient
+        // upstream 500) is logged, never shown. "Try again" re-fires the load.
         return (
-            <View
-                style={[styles.root, styles.fillCenter, { backgroundColor: palette.bg }]}
-            >
-                <Text style={[typography.body, { color: palette.textMuted }]}>
-                    {error ?? 'Title not available'}
-                </Text>
+            <View style={[styles.root, { backgroundColor: palette.bg }]}>
+                <LoadError
+                    title="Couldn't load this title"
+                    onRetry={() => {
+                        setError(null);
+                        setLoading(true);
+                        setReloadKey((k) => k + 1);
+                    }}
+                />
                 <CloseButton
                     top={closeButtonTop}
                     bg={palette.overlay}

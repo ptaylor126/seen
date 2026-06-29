@@ -273,15 +273,6 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
     const headers = session?.access_token
         ? { Authorization: `Bearer ${session.access_token}` }
         : undefined;
-    // TEMP diagnostic for the persistent 401 — correlate this client
-    // log with the Edge Function logs in the Supabase dashboard.
-    console.log('[tmdb-proxy] callProxy:', {
-        path,
-        hasSession: !!session,
-        hasToken: !!session?.access_token,
-        tokenStart: session?.access_token?.slice(0, 30),
-        expiresAt: session?.expires_at,
-    });
 
     const invoke = () =>
         supabase.functions.invoke<T>('tmdb-proxy', {
@@ -289,26 +280,26 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
             headers,
         });
 
+    // HTTP status of a FunctionsHttpError (the original Response rides on
+    // `.context`); undefined for transport errors or a successful result.
+    const httpStatus = (r: { error: unknown }): number | undefined => {
+        const ctx = (r.error as { context?: unknown } | null)?.context;
+        return ctx instanceof Response ? ctx.status : undefined;
+    };
+
     let result = await invoke();
 
     // Silent retry once on FunctionsFetchError ONLY — that's the
     // transport-layer fetch rejection (network blip, DNS hiccup,
     // Supabase Edge Runtime cold-start exceeding the socket timeout),
-    // not a real HTTP response. Most of these resolve on the second
-    // attempt and the user never sees an error. HTTP errors (4xx/5xx
-    // → FunctionsHttpError) are NOT retried: those are conscious
-    // server responses (auth issue, malformed request, function code
-    // error) where a blind retry would mask the underlying problem
-    // and waste a round-trip. Single retry only — avoids unbounded
-    // hammering on genuinely-down endpoints and keeps worst-case
-    // latency bounded (one back-off interval, not exponential).
+    // not a real HTTP response. Most resolve on the second attempt and
+    // the user never sees an error. (5xx HTTP errors get their OWN retry
+    // just below; 4xx is never retried — the 401 stale-session sign-out
+    // must run exactly once.)
     //
-    // ~700ms back-off: long enough to cover most cellular blips and
-    // give the proxy a moment to start warming up after a cold-start
-    // socket timeout, short enough that an onboarding user perceives
-    // it as "slight loading lag" rather than "broken." Tuning sweet
-    // spot — go lower and we miss too many transients; go higher and
-    // every retry feels like a hang.
+    // ~700ms back-off: long enough to cover most cellular blips and give
+    // the proxy a moment to warm up after a cold-start socket timeout,
+    // short enough to read as "slight loading lag" rather than "broken."
     if (
         result.error &&
         (result.error as Error).name === 'FunctionsFetchError'
@@ -319,6 +310,28 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
         );
         await new Promise<void>((resolve) => setTimeout(resolve, 700));
         result = await invoke();
+    }
+
+    // Retry on upstream 5xx — TMDB intermittently returns HTTP 500
+    // (status_code 11, "Internal error: Something went wrong, contact
+    // TMDb.") on detail / append_to_response=credits calls. These are
+    // transient upstream flakes that almost always succeed on a retry, so
+    // recover them silently before the user sees an error. Up to 2 retries
+    // with a short escalating back-off (300ms, 600ms). 4xx is NEVER retried
+    // here — those are conscious responses (auth, bad request), and the 401
+    // stale-session sign-out below must fire exactly once.
+    const MAX_5XX_RETRIES = 2;
+    for (let attempt = 1; attempt <= MAX_5XX_RETRIES; attempt++) {
+        const status = httpStatus(result);
+        if (status === undefined || status < 500 || status > 599) break;
+        console.warn(
+            `[tmdb-proxy] upstream ${status} (attempt ${attempt}/${MAX_5XX_RETRIES}) — retrying after back-off`,
+        );
+        await new Promise<void>((resolve) =>
+            setTimeout(resolve, 300 * attempt),
+        );
+        result = await invoke();
+        if (!result.error) break;
     }
 
     const { data, error } = result;
@@ -348,8 +361,20 @@ async function callProxy<T>(path: string, params: ProxyParams = {}): Promise<T> 
             console.warn('[tmdb-proxy] 401 — signing out stale session');
             await supabase.auth.signOut();
         }
-        const prefix = status ? `tmdb-proxy ${status}` : 'tmdb-proxy';
-        throw new Error(`${prefix}: ${detail || error.message}`);
+        // Log the raw upstream body for diagnostics ONLY — it must never go
+        // into the thrown message (it used to render verbatim as a wall of
+        // JSON on the title/rec screens). Cap the log so a huge cast list
+        // doesn't flood the console.
+        if (detail) {
+            console.warn(
+                `[tmdb-proxy] ${status ?? '?'} error body:`,
+                detail.slice(0, 500),
+            );
+        }
+        // Short, body-free message — callers map this to friendly UI copy.
+        throw new Error(
+            status ? `tmdb-proxy ${status}` : `tmdb-proxy: ${error.message}`,
+        );
     }
 
     if (data === null) {

@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { DeclineSheet } from '@/components/decline-sheet';
+import { LoadError } from '@/components/load-error';
 import { RatingSheet } from '@/components/rating-sheet';
 import { RecActionSheet } from '@/components/rec-action-sheet';
 import { UserLink } from '@/components/user-link';
@@ -141,6 +142,10 @@ export default function RecScreen() {
     const [loading, setLoading] = useState(true);
     const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
+    // Whether the current error is worth a retry. true for transient/load
+    // failures (connection, TMDB) → show "Try again"; false for terminal
+    // states (invalid / not found / no access) → friendly message, no button.
+    const [canRetry, setCanRetry] = useState(false);
     const [myUserId, setMyUserId] = useState<string | null>(null);
     const [rec, setRec] = useState<RecSummary | null>(null);
     const [titleMeta, setTitleMeta] = useState<TitleMeta | null>(null);
@@ -212,7 +217,8 @@ export default function RecScreen() {
     // a quick re-mount doesn't race.
     const load = useCallback(async () => {
         if (!recId) {
-            setError('Invalid rec');
+            setError('This rec link is invalid.');
+            setCanRetry(false);
             setLoading(false);
             return;
         }
@@ -233,7 +239,8 @@ export default function RecScreen() {
                 .maybeSingle();
             if (recErr) throw recErr;
             if (!recRow) {
-                setError('Rec not found');
+                setError('This rec is no longer available.');
+                setCanRetry(false);
                 setLoading(false);
                 return;
             }
@@ -244,7 +251,8 @@ export default function RecScreen() {
             const fromUserId = recRow.from_user_id;
             const toUserId = recRow.to_user_id;
             if (userId !== fromUserId && userId !== toUserId) {
-                setError('You do not have access to this rec');
+                setError("You don't have access to this rec.");
+                setCanRetry(false);
                 setLoading(false);
                 return;
             }
@@ -253,7 +261,8 @@ export default function RecScreen() {
                     ? (recRow.media_type as MediaType)
                     : null;
             if (!mediaType) {
-                setError('Rec has invalid media type');
+                setError('This rec is unavailable.');
+                setCanRetry(false);
                 setLoading(false);
                 return;
             }
@@ -445,8 +454,11 @@ export default function RecScreen() {
                 );
             }
         } catch (err) {
+            // Transient/connection failure (incl. the rec row fetch failing
+            // offline, or the TMDB title metadata flaking) — retryable.
             console.error('rec detail load failed:', err);
             setError(err instanceof Error ? err.message : 'Failed to load');
+            setCanRetry(true);
         } finally {
             setLoading(false);
         }
@@ -1078,16 +1090,29 @@ export default function RecScreen() {
         );
     }
     if (error || !rec || !titleMeta) {
+        // Friendly fallback for every failure. Retryable (connection / TMDB)
+        // → "Try again" re-fires the load; terminal states (invalid / gone /
+        // no access — canRetry=false) show their specific message, no button.
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
                 {closeButton}
-                <View style={styles.fillCenter}>
-                    <Text
-                        style={[typography.body, { color: palette.textMuted }]}
-                    >
-                        {error ?? 'Rec not available'}
-                    </Text>
-                </View>
+                <LoadError
+                    title={canRetry ? "Couldn't load this rec" : 'Rec unavailable'}
+                    message={
+                        canRetry
+                            ? 'Check your connection and try again.'
+                            : error ?? 'This rec isn’t available.'
+                    }
+                    onRetry={
+                        canRetry
+                            ? () => {
+                                  setError(null);
+                                  setLoading(true);
+                                  void load();
+                              }
+                            : undefined
+                    }
+                />
             </View>
         );
     }
@@ -2094,12 +2119,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         gap: spacing.xs,
         paddingVertical: spacing.sm,
-    },
-    fillCenter: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: spacing.xl,
     },
     closeButton: {
         position: 'absolute',

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
+import { LoadError } from '@/components/load-error';
 import {
     imageUrl,
     searchMulti,
@@ -77,6 +78,8 @@ export interface SearchBarState {
     handleFocus: () => void;
     dismiss: () => void;
     handleResultTap: (item: SearchableItem) => void;
+    // Re-runs the current query's search (used by the friendly error retry).
+    retry: () => void;
 }
 
 // Owns every piece of search state + the debounced TMDB query + the
@@ -90,6 +93,9 @@ export function useSearchBar(): SearchBarState {
     const [results, setResults] = useState<SearchableItem[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Bumped by the friendly error's "Try again" to re-run the current
+    // query's search (a dependency of the debounced search effect below).
+    const [reloadKey, setReloadKey] = useState(0);
 
     // 300ms debounce + stale-result guard. Cancellation runs on every
     // query change AND on unmount.
@@ -142,7 +148,7 @@ export function useSearchBar(): SearchBarState {
             active = false;
             clearTimeout(handle);
         };
-    }, [query]);
+    }, [query, reloadKey]);
 
     const handleFocus = useCallback(() => {
         setOpen(true);
@@ -188,6 +194,7 @@ export function useSearchBar(): SearchBarState {
         handleFocus,
         dismiss,
         handleResultTap,
+        retry: () => setReloadKey((k) => k + 1),
     };
 }
 
@@ -416,15 +423,22 @@ export function SearchBarOverlay({
                 // search" hint here is redundant and gets cut off behind
                 // the keyboard on shorter devices.
                 <View style={styles.statusBlock} />
+            ) : state.error ? (
+                // Friendly fallback — never show the raw proxy/TMDB error.
+                // Retry re-runs the current query's search.
+                <LoadError
+                    compact
+                    title="Couldn't reach search"
+                    message="Check your connection and try again."
+                    onRetry={state.retry}
+                />
             ) : state.results.length === 0 ? (
                 <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={2}
                     >
-                        {state.error
-                            ? state.error
-                            : `No results for "${state.query.trim()}"`}
+                        {`No results for "${state.query.trim()}"`}
                     </Text>
                 </View>
             ) : (
