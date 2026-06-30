@@ -464,3 +464,49 @@ export function getPersonCombinedCredits(
 export function getConfiguration(): Promise<TMDBConfiguration> {
     return callProxy('configuration');
 }
+
+// ---------------------------------------------------------------------------
+// List endpoints — feed the onboarding poster grid's blend (trending /
+// popular / top_rated / discover-by-genre). Thin passthroughs like the search
+// wrappers above, so callProxy's transient-5xx retry applies automatically.
+// Each is single-media-type (caller passes 'movie' | 'tv'); the blend screen
+// tags media_type per source from the call site, since popular/top_rated/
+// discover responses don't carry it. Proxy paths were added to the allowlist
+// in tmdb-proxy (deliberate, exact paths) — see that function.
+// ---------------------------------------------------------------------------
+
+// Trending this week. (Week window only — that's what the allowlist permits.)
+export function getTrending(
+    media: 'movie' | 'tv',
+    page = 1,
+): Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>> {
+    return callProxy(`trending/${media}/week`, { page });
+}
+
+export function getPopular(
+    media: 'movie' | 'tv',
+    page = 1,
+): Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>> {
+    return callProxy(`${media}/popular`, { page });
+}
+
+export function getTopRated(
+    media: 'movie' | 'tv',
+    page = 1,
+): Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>> {
+    return callProxy(`${media}/top_rated`, { page });
+}
+
+// `genreIds` are TMDB genre ids; comma-joined = OR-match ("any of these"),
+// which is what the blend wants for category spread. with_genres + page ride
+// as forwarded query params (the allowlist matches the path only).
+export function discoverByGenre(
+    media: 'movie' | 'tv',
+    genreIds: number[],
+    page = 1,
+): Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>> {
+    return callProxy(`discover/${media}`, {
+        with_genres: genreIds.join(','),
+        page,
+    });
+}

@@ -1,8 +1,8 @@
 /**
  * Forward-path stamping into the shared `public.titles` catalogue.
  *
- * Every items-insert site (title-detail status change, onboarding
- * currently-watching pick, onboarding best-watched pick) calls
+ * Every items-insert site (title-detail status change, the onboarding
+ * steps via setOnboardingItemStatus) calls
  * `ensureTitle` after its items upsert succeeds. The RPC does
  * INSERT ... ON CONFLICT DO NOTHING server-side, so:
  *   - First-time titles get stamped into the catalogue as the user

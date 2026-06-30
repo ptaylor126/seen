@@ -58,8 +58,8 @@ interface OnboardingSearchProps {
     onContainerLayout?: (y: number) => void;
 }
 
-// Shared TMDB search input + results list used by the two add-an-item
-// onboarding steps (best-watched, currently-watching).
+// Shared TMDB search input + results list used by the search-based
+// onboarding step (currently-watching).
 // Owns the debounce + stale-guard internally; the owning screen handles
 // what to do with each picked item via onPick. Results render as a
 // plain flex column (NOT a FlatList) because each owning screen wraps

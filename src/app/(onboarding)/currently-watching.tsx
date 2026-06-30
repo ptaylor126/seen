@@ -22,8 +22,7 @@ import {
     type SearchableItem,
 } from '@/components/onboarding-search';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
-import supabase from '@/lib/supabase';
-import { ensureTitle } from '@/lib/titles';
+import { setOnboardingItemStatus } from '@/lib/onboarding-utils';
 import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
@@ -48,8 +47,8 @@ export default function CurrentlyWatchingScreen() {
     const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
     const scrollRef = useRef<ScrollView | null>(null);
     // y-offset of the OnboardingSearch container inside the
-    // ScrollView's contentContainer — see best-watched.tsx for the
-    // pattern.
+    // ScrollView's contentContainer — scroll the input + first result to
+    // the top of the visible area when results appear.
     const searchYRef = useRef(0);
 
     function handleSearchLayout(y: number) {
@@ -68,58 +67,32 @@ export default function CurrentlyWatchingScreen() {
         setBusy(true);
         Keyboard.dismiss();
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const userId = session?.user.id;
-            if (!userId) throw new Error('Not authenticated');
-
             const title = item.media_type === 'movie' ? item.title : item.name;
-            // Repeated picks overwrite via the (user_id, tmdb_id, media_type)
-            // unique constraint — last pick wins, matching the visible
-            // confirmation. The user can re-pick freely without leaving
-            // a trail of half-committed rows.
-            //
-            // rating + watched_at are explicitly nulled: if the same show
-            // was added in a prior onboarding step as 'watched' with a
-            // rating, the items_rating_only_when_watched_check constraint
-            // would fail on the status='watching' transition unless we
-            // clear them here.
-            const { error } = await supabase.from('items').upsert(
-                {
-                    user_id: userId,
-                    tmdb_id: item.id,
-                    media_type: item.media_type,
-                    status: 'watching',
-                    rating: null,
-                    watched_at: null,
-                },
-                { onConflict: 'user_id,tmdb_id,media_type' },
-            );
-            if (error) throw error;
-
-            // Stamp the shared catalogue. Non-blocking — `ensureTitle`
-            // swallows its own errors. Search results carry `genre_ids`
-            // and `original_language` directly (the detail endpoint isn't
-            // hit on this path), and `poster_path` is non-null by the
-            // SearchableItem narrowing.
             const rawDate =
                 item.media_type === 'movie'
                     ? item.release_date
                     : item.first_air_date;
-            void ensureTitle({
-                tmdbId: item.id,
-                mediaType: item.media_type,
-                title,
-                posterPath: item.poster_path,
-                backdropPath: item.backdrop_path,
-                releaseDate:
-                    typeof rawDate === 'string' && rawDate.length > 0
-                        ? rawDate
-                        : null,
-                originalLanguage: item.original_language,
-                genreIds: item.genre_ids,
-            });
+            // Shared onboarding write (upsert 'watching' + ensureTitle). Repeated
+            // picks overwrite via the (user_id, tmdb_id, media_type) unique
+            // constraint; rating/watched_at are nulled inside the helper so a
+            // title previously added as 'watched' with a rating doesn't trip the
+            // items_rating_only_when_watched_check constraint.
+            await setOnboardingItemStatus(
+                {
+                    tmdbId: item.id,
+                    mediaType: item.media_type,
+                    title,
+                    posterPath: item.poster_path,
+                    backdropPath: item.backdrop_path,
+                    releaseDate:
+                        typeof rawDate === 'string' && rawDate.length > 0
+                            ? rawDate
+                            : null,
+                    originalLanguage: item.original_language,
+                    genreIds: item.genre_ids,
+                },
+                'watching',
+            );
 
             setAdded({
                 tmdbId: item.id,
@@ -138,15 +111,15 @@ export default function CurrentlyWatchingScreen() {
         }
     }
 
-    // Onboarding no longer completes here — the invite step is now the final
-    // screen and owns the onboarded-flag flip. Both paths just advance to it.
+    // Both paths advance to the poster-grid step (onboarding completes later,
+    // on the final invite step).
     function handleContinue() {
         if (!added || busy) return;
-        router.push('/(onboarding)/invite');
+        router.push('/(onboarding)/poster-grid');
     }
 
     function handleSkip() {
-        router.push('/(onboarding)/invite');
+        router.push('/(onboarding)/poster-grid');
     }
 
     return (
@@ -172,7 +145,7 @@ export default function CurrentlyWatchingScreen() {
             ]}
             edges={['top']}
         >
-            <OnboardingProgress currentStep={4} totalSteps={4} />
+            <OnboardingProgress currentStep={3} totalSteps={4} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -318,8 +291,8 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     footer: {
-        // Absolutely positioned — see best-watched.tsx footer for the
-        // rationale (snap to keyboard top, not slide).
+        // Absolutely positioned so the buttons snap to the keyboard's top
+        // edge the moment it shows, instead of sliding up with it.
         position: 'absolute',
         left: spacing.base,
         right: spacing.base,

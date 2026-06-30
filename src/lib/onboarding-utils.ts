@@ -4,7 +4,10 @@
 
 import { Alert } from 'react-native';
 
+import { type ItemStatus } from '@/lib/item-status';
+import { type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
+import { ensureTitle } from '@/lib/titles';
 
 // Two-word "playful animal" names — retained for potential future use
 // (e.g. a dice-randomize on a profile-edit screen). Not currently
@@ -111,6 +114,83 @@ export function validateHandle(handle: string): HandleValidationResult {
         return { valid: false, reason: 'Please pick a different handle' };
     }
     return { valid: true };
+}
+
+// Normalized title shape for onboarding item writes — exactly the fields
+// ensureTitle needs. Each onboarding screen maps its own raw item (a search
+// result, a blended list summary) into this before writing.
+export interface OnboardingTitle {
+    tmdbId: number;
+    mediaType: MediaType;
+    title: string;
+    posterPath: string | null;
+    backdropPath: string | null;
+    releaseDate: string | null;
+    originalLanguage: string;
+    genreIds: number[];
+}
+
+// Single shared write path for onboarding item marking — the SAME items upsert
+// + ensureTitle the onboarding steps use, DRYed here (the currently-watching
+// step and the poster grid both go through this; no copy-pasted SQL). status
+// semantics:
+//   - 'watched'              → upsert watched + stamp watched_at; rating left
+//                              untouched (undefined drops the key on conflict).
+//   - 'watching' | 'watchlist' → upsert that status, nulling rating + watched_at
+//                              (items_rating_only_when_watched_check requires
+//                              rating be null off 'watched').
+//   - null                   → REMOVE the item (delete the row). Used by the
+//                              poster grid's tap-to-unmark; same delete shape
+//                              the title screen's toggle-off uses.
+// ensureTitle stamps the shared catalogue (non-blocking; it swallows its own
+// errors) so the title renders in the library afterward.
+export async function setOnboardingItemStatus(
+    title: OnboardingTitle,
+    status: ItemStatus | null,
+): Promise<void> {
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    const userId = session?.user.id;
+    if (!userId) throw new Error('Not authenticated');
+
+    if (status === null) {
+        const { error } = await supabase
+            .from('items')
+            .delete()
+            .eq('user_id', userId)
+            .eq('tmdb_id', title.tmdbId)
+            .eq('media_type', title.mediaType);
+        if (error) throw error;
+        return;
+    }
+
+    const isWatched = status === 'watched';
+    const { error } = await supabase.from('items').upsert(
+        {
+            user_id: userId,
+            tmdb_id: title.tmdbId,
+            media_type: title.mediaType,
+            status,
+            // undefined drops the rating key on 'watched' (preserve any
+            // existing); null off 'watched' satisfies the CHECK constraint.
+            rating: isWatched ? undefined : null,
+            watched_at: isWatched ? new Date().toISOString() : null,
+        },
+        { onConflict: 'user_id,tmdb_id,media_type' },
+    );
+    if (error) throw error;
+
+    void ensureTitle({
+        tmdbId: title.tmdbId,
+        mediaType: title.mediaType,
+        title: title.title,
+        posterPath: title.posterPath,
+        backdropPath: title.backdropPath,
+        releaseDate: title.releaseDate,
+        originalLanguage: title.originalLanguage,
+        genreIds: title.genreIds,
+    });
 }
 
 // Shared "complete onboarding now" handler — called only from the

@@ -78,7 +78,7 @@ export default function HandleScreen() {
                 throw error;
             }
 
-            router.push('/(onboarding)/best-watched');
+            router.push('/(onboarding)/currently-watching');
         } catch (err) {
             console.error('handle save failed:', err);
             Alert.alert(
