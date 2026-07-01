@@ -12,9 +12,8 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import {
-    NestableDraggableFlatList,
-    NestableScrollContainer,
+import DraggableFlatList, {
+    type DragEndParams,
     type RenderItemParams,
 } from 'react-native-draggable-flatlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -125,6 +124,44 @@ function nextOpenRank(items: FavoriteItem[]): number {
 // Drives the opportunistic compaction in the initial load effect.
 function hasRankGap(items: FavoriteItem[]): boolean {
     return items.some((f, i) => f.rank !== i + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Combined-list cell model. The editor renders BOTH Top-5 sections through a
+// single DraggableFlatList so a swipe over any row scrolls the page and only a
+// grip long-press starts a reorder (the Nestable variants let each section's
+// inner drag pan swallow scroll swipes over rows). Films + shows are flattened
+// into one stream: each section contributes a header, then its item rows (or
+// an empty-state cell), then an add affordance. Only 'item' cells are
+// draggable; the 'header' markers are what handleDragEnd uses to detect (and
+// reject) cross-section moves.
+// ---------------------------------------------------------------------------
+type FavoriteCell =
+    | { key: string; type: 'header'; mediaType: MediaCategory }
+    | { key: string; type: 'item'; mediaType: MediaCategory; fav: FavoriteItem }
+    | { key: string; type: 'empty'; mediaType: MediaCategory }
+    | { key: string; type: 'add'; mediaType: MediaCategory };
+
+function buildCells(favorites: UserFavorites): FavoriteCell[] {
+    const cells: FavoriteCell[] = [];
+    for (const mediaType of ['movie', 'tv'] as const) {
+        const list = mediaType === 'movie' ? favorites.movies : favorites.tv;
+        cells.push({ key: `header:${mediaType}`, type: 'header', mediaType });
+        if (list.length === 0) {
+            cells.push({ key: `empty:${mediaType}`, type: 'empty', mediaType });
+        } else {
+            for (const fav of list) {
+                cells.push({
+                    key: `item:${mediaType}:${fav.id}`,
+                    type: 'item',
+                    mediaType,
+                    fav,
+                });
+            }
+        }
+        cells.push({ key: `add:${mediaType}`, type: 'add', mediaType });
+    }
+    return cells;
 }
 
 function categoryLabel(mediaType: MediaCategory): string {
@@ -561,6 +598,48 @@ export default function EditFavoritesScreen() {
         }
     }
 
+    // onDragEnd for the combined list. Only item cells are draggable, but a
+    // drag can still DROP an item across the section divider (a film dragged
+    // down into the shows block, or vice versa). Films and shows are two
+    // separate Top-5 lists, so a cross-section move is invalid. We detect it
+    // by walking the reordered cells IN ORDER, tracking the section of the
+    // most recent header marker: any item whose mediaType doesn't match the
+    // current header's section (or that appears before any header) means the
+    // drag crossed the divider → reject and snap back to the server order.
+    // On a valid within-section reorder only the one section that actually
+    // changed is persisted (a single drag moves one item within one section);
+    // handleReorderEnd no-ops the unchanged section and skips the round-trip.
+    function handleDragEnd({ data }: DragEndParams<FavoriteCell>) {
+        let section: MediaCategory | null = null;
+        const next: Record<MediaCategory, FavoriteItem[]> = {
+            movie: [],
+            tv: [],
+        };
+        for (const cell of data) {
+            if (cell.type === 'header') {
+                section = cell.mediaType;
+            } else if (cell.type === 'item') {
+                if (section === null || cell.mediaType !== section) {
+                    // Cross-section drag — not allowed. Re-fetch to restore
+                    // the row to its original section and order (same rollback
+                    // path handleReorderEnd uses on RPC failure).
+                    void refreshFavorites();
+                    return;
+                }
+                next[cell.mediaType].push(cell.fav);
+            }
+            // 'empty' / 'add' cells don't participate in ordering.
+        }
+        // Exactly one section can change per drag; persist only that one.
+        const changed = (['movie', 'tv'] as const).find((m) => {
+            const before = (m === 'movie' ? favorites.movies : favorites.tv)
+                .map((f) => f.id)
+                .join(',');
+            return before !== next[m].map((f) => f.id).join(',');
+        });
+        if (changed) void handleReorderEnd(changed, next[changed]);
+    }
+
     // ------------------------------------------------------------------
     // Remove flow
     // ------------------------------------------------------------------
@@ -644,14 +723,15 @@ export default function EditFavoritesScreen() {
     // while THIS row is being dragged — we dim its opacity so the
     // user sees clearly which row is in motion.
     function renderDraggableRow(
-        params: RenderItemParams<FavoriteItem>,
-        mediaType: MediaCategory,
+        fav: FavoriteItem,
+        drag: () => void,
+        isActive: boolean,
     ) {
-        const { item: fav, drag, isActive } = params;
         return (
             <View
                 style={[
                     styles.row,
+                    styles.cellRow,
                     { borderColor: palette.border },
                     isActive && { opacity: 0.7 },
                 ]}
@@ -731,95 +811,91 @@ export default function EditFavoritesScreen() {
         );
     }
 
-    function renderSection(mediaType: MediaCategory) {
+    // The combined list renders four cell kinds. Only 'item' cells wire
+    // `drag` (to the grip, inside renderDraggableRow); headers, the
+    // empty-state and the add button are inert markers.
+    function renderCell({
+        item,
+        drag,
+        isActive,
+    }: RenderItemParams<FavoriteCell>) {
+        switch (item.type) {
+            case 'header':
+                return renderSectionHeader(item.mediaType);
+            case 'empty':
+                return renderSectionEmpty(item.mediaType);
+            case 'add':
+                return renderSectionAdd(item.mediaType);
+            case 'item':
+                return renderDraggableRow(item.fav, drag, isActive);
+        }
+    }
+
+    function renderSectionHeader(mediaType: MediaCategory) {
+        const list = mediaType === 'movie' ? favorites.movies : favorites.tv;
+        return (
+            <View style={[styles.sectionHeading, styles.cellHeader]}>
+                <Text style={[typography.bodyEmphasis, { color: palette.text }]}>
+                    Top {MAX_RANK} {categoryLabel(mediaType)}
+                </Text>
+                <Text style={[typography.caption, { color: palette.textMuted }]}>
+                    {list.length}/{MAX_RANK}
+                </Text>
+            </View>
+        );
+    }
+
+    function renderSectionEmpty(mediaType: MediaCategory) {
+        return (
+            <Text
+                style={[
+                    typography.caption,
+                    styles.sectionEmpty,
+                    styles.cellEmpty,
+                    { color: palette.textMuted },
+                ]}
+            >
+                No {singularLabel(mediaType)}s yet — add up to {MAX_RANK}.
+            </Text>
+        );
+    }
+
+    // Single "+ Add" affordance per section. When full, triggers the
+    // replace picker; when not full, opens search directly. Both paths
+    // land in handleSearchPick via setSearchOpen.
+    function renderSectionAdd(mediaType: MediaCategory) {
         const list = mediaType === 'movie' ? favorites.movies : favorites.tv;
         const isFull = list.length >= MAX_RANK;
         return (
-            <View style={styles.section}>
-                <View style={styles.sectionHeading}>
-                    <Text
-                        style={[typography.bodyEmphasis, { color: palette.text }]}
-                    >
-                        Top {MAX_RANK} {categoryLabel(mediaType)}
-                    </Text>
-                    <Text
-                        style={[typography.caption, { color: palette.textMuted }]}
-                    >
-                        {list.length}/{MAX_RANK}
-                    </Text>
-                </View>
-
-                {list.length === 0 ? (
-                    <Text
-                        style={[
-                            typography.caption,
-                            styles.sectionEmpty,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        No {singularLabel(mediaType)}s yet — add up to {MAX_RANK}.
-                    </Text>
-                ) : (
-                    // NestableDraggableFlatList per section — the
-                    // library's variant designed for lists nested inside
-                    // a parent scroll container (we use NestableScrollContainer
-                    // instead of plain ScrollView in the outer render
-                    // for exactly this reason). Without these variants,
-                    // the inner FlatList's pan-responder would conflict
-                    // with the outer ScrollView. Long-press the grip
-                    // handle on a row to start dragging; drop fires
-                    // handleReorderEnd which calls the reorder_favorites
-                    // RPC (atomic renumber on the server, optimistic
-                    // ranks rewritten locally before the round-trip).
-                    <NestableDraggableFlatList
-                        data={list}
-                        keyExtractor={(item) => item.id}
-                        onDragEnd={({ data }) =>
-                            handleReorderEnd(mediaType, data)
-                        }
-                        activationDistance={10}
-                        containerStyle={styles.rows}
-                        renderItem={(params) =>
-                            renderDraggableRow(params, mediaType)
-                        }
-                    />
-                )}
-
-                {/* Single "+ Add" affordance per section. When full,
-                    triggers the replace picker; when not full, opens
-                    search directly. Both paths land in handleSearchPick
-                    via setSearchOpen. */}
-                <Pressable
-                    onPress={() => handleAddTapped(mediaType)}
-                    disabled={busy}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                        isFull
-                            ? `Replace a ${singularLabel(mediaType)} in your top 5`
-                            : `Add a ${singularLabel(mediaType)} to your top 5`
-                    }
-                    style={({ pressed }) => [
-                        styles.addButton,
-                        {
-                            borderColor: palette.border,
-                            opacity: pressed || busy ? 0.6 : 1,
-                        },
-                    ]}
-                >
-                    <Plus
-                        color={palette.accent}
-                        size={18}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text
-                        style={[typography.bodyEmphasis, { color: palette.accent }]}
-                    >
-                        {isFull
-                            ? `Replace a ${singularLabel(mediaType)}`
-                            : `Add ${singularLabel(mediaType)}`}
-                    </Text>
-                </Pressable>
-            </View>
+            <Pressable
+                onPress={() => handleAddTapped(mediaType)}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel={
+                    isFull
+                        ? `Replace a ${singularLabel(mediaType)} in your top 5`
+                        : `Add a ${singularLabel(mediaType)} to your top 5`
+                }
+                style={({ pressed }) => [
+                    styles.addButton,
+                    styles.cellAdd,
+                    {
+                        borderColor: palette.border,
+                        opacity: pressed || busy ? 0.6 : 1,
+                    },
+                ]}
+            >
+                <Plus
+                    color={palette.accent}
+                    size={18}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+                <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
+                    {isFull
+                        ? `Replace a ${singularLabel(mediaType)}`
+                        : `Add ${singularLabel(mediaType)}`}
+                </Text>
+            </Pressable>
         );
     }
 
@@ -840,23 +916,42 @@ export default function EditFavoritesScreen() {
         );
     }
 
+    const cells = buildCells(favorites);
+
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScreenHeader title="Edit Top 5" showBackButton />
             {showLoader ? (
                 <FullScreenLoader />
             ) : (
-                // NestableScrollContainer instead of plain ScrollView so
-                // the per-section NestableDraggableFlatList can host
-                // its drag gestures without pan-responder conflict with
-                // the parent scroll surface. Inherits ScrollView props
-                // (contentContainerStyle works the same way).
-                <NestableScrollContainer
-                    contentContainerStyle={styles.scrollContent}
-                >
-                    {renderSection('movie')}
-                    {renderSection('tv')}
-                </NestableScrollContainer>
+                // One combined DraggableFlatList (not the Nestable variants).
+                // The Nestable pair put each section's drag pan INSIDE an
+                // outer scroll container; that inner pan claimed vertical
+                // swipes over rows (activeOffsetY) and blocked the outer
+                // scroll, so only the gap between sections scrolled. A single
+                // self-scrolling DraggableFlatList owns both the scroll and
+                // the drag in one gesture tree, so a swipe over a row scrolls
+                // and only a grip long-press starts a reorder. Films + shows
+                // are flattened into one cell stream (buildCells); handleDragEnd
+                // re-segments by header marker and rejects cross-section moves.
+                <DraggableFlatList
+                    data={cells}
+                    keyExtractor={(cell) => cell.key}
+                    onDragEnd={handleDragEnd}
+                    activationDistance={10}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        // scrollContent's static paddingBottom doesn't clear the
+                        // home-indicator safe area: the root View is flex:1 with
+                        // no bottom inset, so the list runs to the physical screen
+                        // edge and the last cell (the Shows add/replace button)
+                        // sits partly under the safe area. Fold insets.bottom in
+                        // on top of the xxl breathing room so it scrolls fully
+                        // into view. (Overrides scrollContent.paddingBottom.)
+                        { paddingBottom: insets.bottom + spacing.xxl + spacing.lg },
+                    ]}
+                    renderItem={renderCell}
+                />
             )}
 
             {/* Search modal — full-screen overlay containing the
@@ -1099,11 +1194,14 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         paddingTop: spacing.md,
         paddingBottom: spacing.xxl,
-        gap: spacing.xl,
     },
-    section: {
-        gap: spacing.md,
-    },
+    // Per-cell vertical rhythm for the combined DraggableFlatList — the
+    // library doesn't apply contentContainerStyle `gap` cleanly between
+    // its cells, so each cell carries its own trailing margin instead.
+    cellHeader: { marginBottom: spacing.md }, // header → first row
+    cellRow: { marginBottom: spacing.sm }, // row → row
+    cellEmpty: { marginBottom: spacing.md }, // empty-state → add
+    cellAdd: { marginBottom: spacing.xl }, // add → next section header
     sectionHeading: {
         flexDirection: 'row',
         alignItems: 'baseline',
@@ -1111,9 +1209,6 @@ const styles = StyleSheet.create({
     },
     sectionEmpty: {
         paddingVertical: spacing.sm,
-    },
-    rows: {
-        gap: spacing.sm,
     },
     row: {
         flexDirection: 'row',
