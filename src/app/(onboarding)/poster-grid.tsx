@@ -48,20 +48,55 @@ import {
 // ---------------------------------------------------------------------------
 const TILE_COUNT = 120; // total tiles shown
 // Pages pulled per source. One page (20 results) can't fill ~120 tiles after
-// de-dupe + poster-filter, so we fetch several per source and tolerate per-page
-// failures. Tunable; cost is 8 sources × this many proxy calls per load.
-const PAGES_PER_SOURCE = 3;
-const MOVIE_SHARE = 0.6; // 60% movies / 40% TV
-// Per-content-source share of the grid (sums to ~1).
+// de-dupe + poster-filter + the client-side recognisability filters below (which
+// drop a large share of popular/trending), so we fetch several per source and
+// tolerate per-page failures. Tunable; cost is (active sources × 2 media) × this
+// many proxy calls per load — currently 3 sources × 2 × 5 = 30.
+const PAGES_PER_SOURCE = 5;
+// 70% movies / 30% TV — TV skews more obscure across every source (anime,
+// international, telenovelas, docs), so films carry recognisability.
+const MOVIE_SHARE = 0.7;
+// Per-content-source share of the grid (sums to ~1). Recognisability-first:
+// trending + popular carry it; discover adds a filtered genre-spread garnish.
+// top_rated is DISABLED (0) — TMDB's top_rated is a fixed acclaim-ranked list
+// (old / foreign / arthouse / anime / docs) that can't be filtered. The SOURCES
+// builder below only fetches sources whose share is > 0, so a 0 share is
+// dropped from the fetch set AND the backfill pool — set a share back to >0 to
+// re-enable, no other change needed.
 const SOURCE_MIX = {
-    trending: 0.25,
-    popular: 0.3,
-    topRated: 0.25,
-    discover: 0.2,
+    trending: 0.4,
+    popular: 0.45,
+    topRated: 0,
+    discover: 0.15,
 } as const;
-// Discover genres (TMDB ids) for category spread; comma-joined = OR-match.
-// Action, Comedy, Drama, Sci-Fi, Animation.
-const DISCOVER_GENRES = [28, 35, 18, 878, 16];
+// Discover genres (TMDB ids); pipe-joined = OR-match (see discoverByGenre —
+// TMDB treats comma as AND). Action, Adventure, Comedy, Sci-Fi, Animation.
+// Drama (18) dropped — it was the biggest
+// international / K-drama puller. Animation (16) stays: the English-language
+// filter below turns it into Western animation (Pixar/DreamWorks), not anime.
+const DISCOVER_GENRES = [28, 12, 35, 878, 16];
+// Discover-query language bias (server-side, discover slice ONLY — TMDB's fixed
+// trending/popular lists ignore this param). Keeps the genre-spread garnish
+// English-leaning; famous non-English titles (Squid Game, Parasite) still arrive
+// via trending/popular and survive the vote floor below.
+const DISCOVER_LANGUAGE = 'en';
+
+// --- Client-side recognisability filters, applied to EVERY source's results in
+//     composeBlend so they also reach popular/trending, whose fixed TMDB lists
+//     can't be query-filtered. Dial these on the dev build. ---
+// PRIMARY lever: drop titles below this many votes. The obscure long-tail
+// (regional, low-vote, ecchi anime) sits at ~10–70 votes; mainstream sits in
+// the hundreds–thousands — so this is language-agnostic (Squid Game / Parasite
+// survive). Also passed to the discover query as vote_count.gte.
+const MIN_VOTE_COUNT = 400;
+// OPTIONAL hard language gate across all sources. EMPTY = disabled (rely on the
+// vote floor, which keeps recognisable non-English). Populate e.g. ['en'] to
+// hard-restrict.
+const LANGUAGE_ALLOWLIST: readonly string[] = [];
+// TV-only: drop animation that isn't English-language — kills anime while
+// keeping Western animation (Bluey, Rick and Morty). Toggle off to allow anime.
+const EXCLUDE_NON_ENGLISH_TV_ANIME = true;
+const ANIMATION_GENRE_ID = 16; // TMDB genre id for Animation
 // Below this many usable tiles → show the friendly fallback instead of a sad,
 // half-empty grid.
 const MIN_TILES_TO_RENDER = 9;
@@ -121,33 +156,47 @@ function shuffle<T>(arr: T[]): T[] {
     return a;
 }
 
-// The 8 blend sources — each is one (content-source × media) pair, which is
-// exactly what lets us satisfy BOTH the source mix AND the movie/TV split with
-// a single per-task target.
+// Per-source fetchers keyed by SourceKey. The discover fetcher carries the
+// recognisability filters (explicit popularity sort + English language + vote
+// floor); the other three are TMDB's fixed lists and take no filters.
+const SOURCE_FETCHERS: Record<
+    SourceKey,
+    (
+        media: MediaType,
+        page: number,
+    ) => Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>>
+> = {
+    trending: (media, page) => getTrending(media, page),
+    popular: (media, page) => getPopular(media, page),
+    topRated: (media, page) => getTopRated(media, page),
+    discover: (media, page) =>
+        discoverByGenre(media, DISCOVER_GENRES, page, {
+            sort_by: 'popularity.desc',
+            with_original_language: DISCOVER_LANGUAGE,
+            'vote_count.gte': MIN_VOTE_COUNT,
+        }),
+};
+
+// The active blend sources — one (source × media) pair per source whose
+// SOURCE_MIX share is > 0, which is exactly what lets us satisfy BOTH the source
+// mix AND the movie/TV split with a single per-task target. A source at share 0
+// (e.g. topRated) is skipped entirely: never fetched, so it can't leak into the
+// backfill pool either.
 const SOURCES: {
     source: SourceKey;
     media: MediaType;
     fetch: (
         page: number,
     ) => Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>>;
-}[] = [
-    { source: 'trending', media: 'movie', fetch: (p) => getTrending('movie', p) },
-    { source: 'trending', media: 'tv', fetch: (p) => getTrending('tv', p) },
-    { source: 'popular', media: 'movie', fetch: (p) => getPopular('movie', p) },
-    { source: 'popular', media: 'tv', fetch: (p) => getPopular('tv', p) },
-    { source: 'topRated', media: 'movie', fetch: (p) => getTopRated('movie', p) },
-    { source: 'topRated', media: 'tv', fetch: (p) => getTopRated('tv', p) },
-    {
-        source: 'discover',
-        media: 'movie',
-        fetch: (p) => discoverByGenre('movie', DISCOVER_GENRES, p),
-    },
-    {
-        source: 'discover',
-        media: 'tv',
-        fetch: (p) => discoverByGenre('tv', DISCOVER_GENRES, p),
-    },
-];
+}[] = (Object.keys(SOURCE_MIX) as SourceKey[])
+    .filter((source) => SOURCE_MIX[source] > 0)
+    .flatMap((source) =>
+        (['movie', 'tv'] as MediaType[]).map((media) => ({
+            source,
+            media,
+            fetch: (page: number) => SOURCE_FETCHERS[source](media, page),
+        })),
+    );
 
 // Aggregate one source's pages into a flat result list, tolerating per-page
 // failures (a dropped page just contributes fewer titles — graceful
@@ -171,6 +220,38 @@ function targetFor(source: SourceKey, media: MediaType): number {
     return Math.round(TILE_COUNT * SOURCE_MIX[source] * mediaShare);
 }
 
+// Client-side recognisability filter applied to EVERY source's raw results
+// before they become tiles — this is what cleans popular/trending, whose fixed
+// TMDB lists can't be query-filtered. Order: vote floor (primary lever), adult
+// safety gate, optional hard language allowlist, then the TV-anime exclusion.
+function passesRecognisabilityFilter(
+    item: TMDBMovieSummary | TMDBTVSummary,
+    media: MediaType,
+): boolean {
+    // Primary: vote-count floor — drops the obscure/low-vote long-tail across
+    // all sources, language-agnostically. (`?? 0` guards a malformed response.)
+    if ((item.vote_count ?? 0) < MIN_VOTE_COUNT) return false;
+    // Never surface adult-flagged content in onboarding.
+    if (item.adult === true) return false;
+    // Optional hard language gate (empty allowlist = disabled).
+    if (
+        LANGUAGE_ALLOWLIST.length > 0 &&
+        !LANGUAGE_ALLOWLIST.includes(item.original_language)
+    ) {
+        return false;
+    }
+    // TV-only: non-English animation = anime → drop; Western animation stays.
+    if (
+        EXCLUDE_NON_ENGLISH_TV_ANIME &&
+        media === 'tv' &&
+        item.original_language !== 'en' &&
+        item.genre_ids.includes(ANIMATION_GENRE_ID)
+    ) {
+        return false;
+    }
+    return true;
+}
+
 // Build the grid from each source's already-aggregated items (failed pages
 // were dropped upstream in loadSource). Takes each source's per-task target
 // (shuffled), de-dupes by (media, id) across sources, then shuffles, backfills
@@ -190,6 +271,7 @@ function composeBlend(
     for (const { source, media, items } of sources) {
         const tiles = shuffle(
             items
+                .filter((r) => passesRecognisabilityFilter(r, media))
                 .map((r) => summaryToTile(r, media))
                 .filter((t): t is Tile => t !== null),
         );

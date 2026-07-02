@@ -102,7 +102,7 @@ export default function InviteScreen() {
                     Bring the people whose taste you trust
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Add a couple now so your friends can start sending you
+                    Add a couple of friends now and they can start sending you
                     things worth watching.
                 </Text>
             </View>

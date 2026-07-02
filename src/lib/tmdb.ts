@@ -52,6 +52,12 @@ export interface TMDBMovieSummary {
     poster_path: string | null;
     backdrop_path: string | null;
     vote_average: number;
+    // vote_count + adult come back on every /search/*, /discover/*, and list
+    // (/popular, /trending, /top_rated) response. The poster-grid blend filters
+    // on them client-side — the vote-count floor is the primary recognisability
+    // lever; `adult` is a safety gate.
+    vote_count: number;
+    adult?: boolean;
     popularity: number;
     // genre_ids + original_language are present on every /search/* and
     // /discover/* response. Exposed here so insert sites and the
@@ -70,6 +76,11 @@ export interface TMDBTVSummary {
     poster_path: string | null;
     backdrop_path: string | null;
     vote_average: number;
+    // TV list/search responses carry vote_count; `adult` is a movie-only field
+    // (absent on TV → stays undefined), typed here so the shared client filter
+    // reads both media the same way.
+    vote_count: number;
+    adult?: boolean;
     popularity: number;
     genre_ids: number[];
     original_language: string;
@@ -392,21 +403,21 @@ export function searchMulti(
     query: string,
     page = 1,
 ): Promise<TMDBSearchResult<TMDBMediaItem>> {
-    return callProxy('search/multi', { query, page });
+    return callProxy('search/multi', { query, page, include_adult: false });
 }
 
 export function searchMovies(
     query: string,
     page = 1,
 ): Promise<TMDBSearchResult<TMDBMovieSummary>> {
-    return callProxy('search/movie', { query, page });
+    return callProxy('search/movie', { query, page, include_adult: false });
 }
 
 export function searchTV(
     query: string,
     page = 1,
 ): Promise<TMDBSearchResult<TMDBTVSummary>> {
-    return callProxy('search/tv', { query, page });
+    return callProxy('search/tv', { query, page, include_adult: false });
 }
 
 // `appendCredits: true` adds TMDB's `append_to_response=credits` param
@@ -497,16 +508,23 @@ export function getTopRated(
     return callProxy(`${media}/top_rated`, { page });
 }
 
-// `genreIds` are TMDB genre ids; comma-joined = OR-match ("any of these"),
-// which is what the blend wants for category spread. with_genres + page ride
-// as forwarded query params (the allowlist matches the path only).
+// `genreIds` are TMDB genre ids; PIPE-joined = OR-match ("any of these"). TMDB
+// treats a COMMA as AND (title must match ALL genres), which collapses the
+// result set to almost nothing — so we MUST use `|` here. with_genres + page +
+// include_adult + any `extraParams` (sort_by, with_original_language,
+// vote_count.gte) ride as forwarded query params — the proxy allowlist matches
+// the PATH only and passes every body param through to TMDB, so no proxy change
+// is needed to add discover filters.
 export function discoverByGenre(
     media: 'movie' | 'tv',
     genreIds: number[],
     page = 1,
+    extraParams: ProxyParams = {},
 ): Promise<TMDBSearchResult<TMDBMovieSummary | TMDBTVSummary>> {
     return callProxy(`discover/${media}`, {
-        with_genres: genreIds.join(','),
+        with_genres: genreIds.join('|'),
         page,
+        include_adult: false,
+        ...extraParams,
     });
 }
