@@ -19,10 +19,13 @@ import supabase from './supabase';
 
 // Configure Google Sign-In once at module load. The iOS Client ID is the
 // one paired with `com.paultaylor.seen` in Google Cloud. The Web Client ID
-// is NOT needed here — that one lives in the Supabase Google provider
-// config and is used to verify the identity token server-side.
+// serves double duty: Supabase's Google provider verifies idTokens against
+// it server-side, AND Android needs it here as webClientId to mint that
+// idToken in the first place (without it, Android sign-in fails with
+// DEVELOPER_ERROR). Client IDs are public identifiers, safe in the bundle.
 GoogleSignin.configure({
     iosClientId: '555711294328-a8bq6p5ot1nrpinkdr5k99c5u7en7ntn.apps.googleusercontent.com',
+    webClientId: '555711294328-8bn16cvj0bi3htgdqsk0ijgler4u526e.apps.googleusercontent.com',
 });
 
 export async function signInWithApple(): Promise<void> {
