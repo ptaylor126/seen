@@ -952,7 +952,7 @@ export default function LibraryScreen() {
             </View>
 
             {showLoader ? (
-                <FullScreenLoader />
+                <FullScreenLoader style={styles.loaderTop} />
             ) : error && !hasLoaded ? (
                 // Only surface the error when the tab has no cached rows. A
                 // failed background revalidation on an already-loaded tab
@@ -1094,6 +1094,14 @@ const styles = StyleSheet.create({
         // below the controls row, well clear of any keyboard. Same
         // style works portrait/landscape (app is portrait-locked, but
         // robust regardless).
+        justifyContent: 'flex-start',
+        paddingTop: spacing.xl,
+    },
+    // Top-anchor the loading eyes just under the filter row where list content
+    // appears, instead of centring them in the tall content area below the
+    // filter bar (which floated them mid-screen). Overrides FullScreenLoader's
+    // default centring — same fix applied on the search overlay.
+    loaderTop: {
         justifyContent: 'flex-start',
         paddingTop: spacing.xl,
     },
