@@ -37,6 +37,32 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-02 (cont.) — Notification icon badge (app-icon count, matched to the in-app bell)
+
+Wire the iOS **app-icon badge** to the same count as the in-app bell, so the number on the home-screen icon reflects unread/actionable state even with the app closed. Landed as three commits across the stack: **`5f9a626`** (the RPC), **`fe6b4ef`** (edge function / push payload), **`5d66772`** (client sync). Split status at the bottom — one piece is deployed, one is live-on-DB, one is held for the post-1.0.2 OTA batch.
+
+**Single source of truth: `unread_count(uuid)` SECURITY DEFINER RPC (`5f9a626`, migration `20260702120000`).** One Postgres function defines the composite once, so the bell and the badge can't drift. It returns, for the given user:
+- **unread notifications** — `read_at IS NULL`, `kind <> 'rec_received'` (rec_received is excluded because a received rec is counted via the recs branch, not here);
+- **pending friend requests** — count of `friend_requests` rows with `to_user_id = uid` (the table row IS the pending state — there is no `friend_request` notification kind; that producer was dropped in `20260603120000`);
+- **pending recs** — `recommendations` with `to_user_id = uid` and `status = 'pending'`, **minus** any whose `(media_type, tmdb_id)` is already in the user's `items` library.
+
+`SECURITY DEFINER` so it reads `friend_requests` / `items` regardless of the caller's grants (lets `service_role` compute any recipient's count with no new grant, and an authenticated user their own); `search_path` pinned to `public`; an own-user guard limits a JWT caller to their own uid while `service_role` (no `auth.uid()`) may pass any uid. Applied via the dashboard SQL editor and validated against the bell with a reversible seed test (0 baseline → 1 after seeding one unread notification → back to 0 after cleanup).
+
+**Push payload badge (`fe6b4ef`, `send-push-notification`).** Before fanning out, the edge function calls `unread_count(recipient)` and sets the result as `badge` on each push message → iOS updates the app-icon badge on arrival, **even with the app closed**. Computed at send time so it includes the row that triggered the push. Best-effort: on RPC failure it sends without a `badge` field (iOS leaves the current badge untouched) rather than block delivery; `0` clears the badge, absent means "don't change". Deployed to project `xhzrsdgrgimlrdnyzidr` (via `env -u SUPABASE_ACCESS_TOKEN SUPABASE_AUTH_KEYRING=false supabase functions deploy …`, not OTA). **Verified end-to-end:** a closed-app push landed the correct count on the icon.
+
+**Client sync + bell repoint (`5d66772`).** Two JS-only changes: (1) `useUnreadCount` now makes one `supabase.rpc('unread_count', { p_uid })` call instead of its four client queries + set-math, so bell and badge share the one definition (also added the `unread_count` signature to `database.types.ts` by hand — can't run `supabase gen types` without DB access). (2) `(tabs)/_layout.tsx` adds the **single** `Notifications.setBadgeCountAsync(count)` sync point — driven by one `useUnreadCount` instance, NOT inside the hook (which is mounted 4× across the tab screens) — firing on the hook's existing focus / app-foreground / realtime updates. Gated on a new `loaded` flag (true only after the first fetch resolves, never on error) so it can't write the placeholder `0` before the real count lands — **no startup flash to 0 and back**. Verified on dev: badge matches the bell, no flash, both clear together on reading notifications.
+
+**Accepted limitation — a lone friend request doesn't raise the closed-app badge.** Friend requests produce no notification row and no push (the producer was dropped in `20260603120000`), so there's no server event to attach a fresh `badge` to. The badge catches up on the next push of any kind (which recomputes the full composite) or when the app foregrounds and the client sync refetches. Documented, not fixed — reintroducing a friend-request push is the only way to close it, and that's out of scope.
+
+**Lesson worth recording — verify against ground truth, not assertions.** The count logic took several passes because the schema was assumed wrong twice: (1) a non-existent `responded_at` column (the real column is `resolved_at`, and the bell doesn't use it at all — it filters on `status = 'pending'`), and (2) whether friend requests are counted via the `friend_requests` table or via `friend_request` notification rows (it's the table; there are no such notification rows). Both were only settled by going to ground truth — the raw table DDL / `information_schema` and the bell's actual `useUnreadCount` code — rather than trusting a described investigation. When "we reconciled it to X" conflicts with what the schema and the code literally say, the schema and the code win; check them directly before writing SQL against inferred column names.
+
+**Split status (as of this entry):**
+- **RPC** — live on the DB (dashboard-applied) and committed (`5f9a626`, migration file records the deployed schema).
+- **Edge function** — deployed to the remote project and committed (`fe6b4ef`).
+- **Client sync** — committed (`5d66772`) but **held**, joining the post-1.0.2 OTA batch; not pushed as an `eas update` yet. (It's the one commit currently ahead of `origin/main`.)
+
+---
+
 ## 2026-07-02 — Onboarding rebuild (1.0.2 binary, in review) + post-binary OTA batch
 
 Catch-up entry spanning **2026-06-29 → 07-02**. Two arcs, and the split between them is the whole point of this entry: (1) an **onboarding rebuild** that had to ship as a **new native binary** — 1.0.2, now in App Store review — because onboarding changes can't reach new users any other way; and (2) a batch of JS-only polish deliberately **held as an OTA for after 1.0.2 goes live**.
