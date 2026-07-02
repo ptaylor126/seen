@@ -212,13 +212,14 @@ export async function promptPushAtHighIntent(userId: string): Promise<void> {
 }
 
 // Module-level flag: prevents re-attempt within a single JS session.
-// Resets on cold launch, hot reload, or fresh bundle — the right
-// scope (one attempt per JS lifetime). Re-mounts of TabsLayout inside
-// a session (sign out + sign in, deep link from a push) get skipped.
-// Limitation: if user A signs out and user B signs in within one JS
-// lifetime, B's launch-registration is skipped. Rare for the alpha
-// (single user per device); revisit if multi-account on one device
-// becomes common.
+// Resets on cold launch, hot reload, fresh bundle, or sign-out (via
+// cleanupPushOnSignOut below) — so a different account signing in during
+// the same JS session gets its own registration attempt rather than being
+// skipped. Re-mounts of TabsLayout inside
+// a session (deep link from a push, tab remounts) get skipped. The
+// former limitation — user A signs out, user B signs in within one JS
+// lifetime, and B's registration was skipped — is closed by the
+// sign-out reset in cleanupPushOnSignOut.
 let launchRegistrationAttempted = false;
 
 // Launch-time push registration. Called from (tabs)/_layout.tsx once per JS
@@ -236,5 +237,72 @@ export async function ensurePushRegistrationOnLaunch(userId: string): Promise<vo
         if (token) await savePushToken(token, userId);
     } catch (err) {
         console.warn('push: launch registration failed silently', err);
+    }
+}
+
+// Sign-out hygiene for shared devices. MUST run BEFORE supabase.auth.signOut()
+// — push_tokens RLS is owner-only, so the deletes below are only authorised
+// while the outgoing user's session is still live. Called from
+// src/lib/auth.ts signOut(). Three parts:
+//
+//   1. Delete this DEVICE's push_tokens rows for the outgoing user, so their
+//      pushes stop being delivered to hardware the next account will hold.
+//      Two delete keys: (user_id, device_id) for the current install's row,
+//      and (user_id, expo_push_token) for rows accumulated by previous
+//      installs of this same physical device — reinstall cycles create new
+//      device_ids but Expo reissues the SAME token value (see DEVICE_ID_KEY
+//      comment), and those old rows would still deliver. Deliberately two
+//      separate .eq() deletes, not one .or() — the token value contains
+//      brackets that would need escaping in PostgREST filter syntax. Rows for
+//      the user's OTHER devices are intentionally left alone.
+//   2. Reset the module-level launch flag so the next account to sign in
+//      during this JS session gets its own registration attempt.
+//   3. Zero the OS app-icon badge so the outgoing user's unread count doesn't
+//      linger on the icon for whoever holds the device next.
+//
+// Best-effort throughout: sign-out is a user intent that must never be
+// blocked by cleanup, so every step swallows its own failure. Known residual
+// risk: offline sign-out can't reach the DB, so the token row survives until
+// the reap path or the next authenticated cleanup.
+export async function cleanupPushOnSignOut(userId: string): Promise<void> {
+    // (2) Local flag first — cannot fail, and must happen even if the
+    // network parts below do.
+    launchRegistrationAttempted = false;
+
+    // (3) Badge. Local OS call, independent of the session.
+    try {
+        await Notifications.setBadgeCountAsync(0);
+    } catch (err) {
+        console.warn('push: badge clear on sign-out failed', err);
+    }
+
+    // (1) Token rows — while still authenticated.
+    try {
+        const deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
+        if (deviceId) {
+            const { error } = await supabase
+                .from('push_tokens')
+                .delete()
+                .eq('user_id', userId)
+                .eq('device_id', deviceId);
+            if (error) throw error;
+        }
+    } catch (err) {
+        console.warn('push: device-id token delete on sign-out failed', err);
+    }
+    try {
+        // Permission-gated: returns null unless already granted, in which
+        // case there's no live token to have delivered anything anyway.
+        const token = await registerForPushNotifications();
+        if (token) {
+            const { error } = await supabase
+                .from('push_tokens')
+                .delete()
+                .eq('user_id', userId)
+                .eq('expo_push_token', token);
+            if (error) throw error;
+        }
+    } catch (err) {
+        console.warn('push: token-value delete on sign-out failed', err);
     }
 }

@@ -14,6 +14,7 @@
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
 
+import { cleanupPushOnSignOut } from './push';
 import supabase from './supabase';
 
 // Configure Google Sign-In once at module load. The iOS Client ID is the
@@ -63,6 +64,25 @@ export async function signInWithGoogle(): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
+    // Shared-device hygiene BEFORE the session is cleared: delete this
+    // device's push_tokens rows (RLS is owner-only, so this is only
+    // authorised while still signed in), reset the launch-registration
+    // flag, and zero the app-icon badge — so the next account on this
+    // device neither receives the outgoing user's pushes nor sees their
+    // badge count. Best-effort: cleanup failure must never block the
+    // sign-out itself (e.g. post-account-deletion, where the server has
+    // already wiped push_tokens and this delete is a harmless no-op).
+    try {
+        const {
+            data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.user.id) {
+            await cleanupPushOnSignOut(session.user.id);
+        }
+    } catch (err) {
+        console.warn('sign-out cleanup failed (continuing to sign out):', err);
+    }
+
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
 }
