@@ -78,6 +78,11 @@ interface PushMessage {
     body?: string;
     data?: Record<string, unknown>;
     sound?: 'default';
+    // App-icon badge count. Maps to the APNs `badge` on iOS → the OS sets
+    // the icon badge to this absolute number when the push arrives (even
+    // with the app closed). Omitted when we couldn't compute a count, in
+    // which case iOS leaves the existing badge untouched.
+    badge?: number;
 }
 
 const corsHeaders = {
@@ -223,6 +228,32 @@ Deno.serve(async (req: Request) => {
         // a dead token regardless of device_id — which is what we
         // want (if Expo says the token is dead, every row with it is
         // dead too).
+        // ---- 4b. Recipient's current unread count → app-icon badge.
+        //          Calls the SAME public.unread_count SQL the in-app bell
+        //          uses (single source of truth), so the icon badge and the
+        //          bell always agree. Computed at send time, so it reflects
+        //          the state INCLUDING the notification/rec that triggered
+        //          this push. service_role runs with no auth.uid(), so the
+        //          function's own-user guard lets us pass any recipient uid.
+        //
+        //          Best-effort: on any RPC failure we still send the push,
+        //          just without a `badge` field — iOS then leaves the current
+        //          badge untouched, which beats blocking delivery over a
+        //          count we couldn't read.
+        let badge: number | undefined;
+        const { data: badgeCount, error: badgeError } = await supabase.rpc(
+            'unread_count',
+            { p_uid: notif.user_id },
+        );
+        if (badgeError) {
+            console.warn(
+                'send-push: unread_count failed — sending without badge',
+                badgeError,
+            );
+        } else if (typeof badgeCount === 'number') {
+            badge = badgeCount;
+        }
+
         const uniqueExpoTokens = Array.from(
             new Set(tokens.map((t) => t.expo_push_token)),
         );
@@ -230,6 +261,9 @@ Deno.serve(async (req: Request) => {
             ...message,
             to: token,
             sound: 'default',
+            // Only include `badge` when we actually computed one; an absent
+            // field means "don't change the badge", a 0 means "clear it".
+            ...(badge !== undefined ? { badge } : {}),
         }));
 
         const expoAccessToken = Deno.env.get('EXPO_ACCESS_TOKEN');
