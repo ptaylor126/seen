@@ -147,7 +147,9 @@ export default function AddFriendScreen() {
     // Step 2 — send the request to the confirmed match. The INSERT policy
     // enforces no-existing-friendship and no-reverse-pending-request via
     // can_send_friend_request; the unique constraint on (from, to) catches
-    // duplicate sends. Any of those surface as a Postgrest error here.
+    // duplicate sends. A rejected insert is mapped to a specific, plain-English
+    // message by resolveSendError — which may run ONE follow-up query, only on
+    // this failure path (the successful send below never queries).
     async function handleSend() {
         if (!match || sending) return;
         setSending(true);
@@ -161,14 +163,24 @@ export default function AddFriendScreen() {
             const { error: insertError } = await supabase
                 .from('friend_requests')
                 .insert({ from_user_id: userId, to_user_id: match.id });
-            if (insertError) throw insertError;
+            if (insertError) {
+                console.warn('friend request insert rejected:', insertError);
+                const { title, message } = await resolveSendError(
+                    insertError,
+                    userId,
+                    match,
+                );
+                Alert.alert(title, message);
+                return;
+            }
 
             Alert.alert('Sent', 'Friend request sent.', [
                 { text: 'OK', onPress: () => router.back() },
             ]);
         } catch (err) {
+            // Unexpected (network / auth) — never surface the raw error text.
             console.error('send friend request failed:', err);
-            surfaceError(err, "Couldn't send request");
+            Alert.alert("Couldn't send request", 'Please try again.');
         } finally {
             setSending(false);
         }
@@ -374,6 +386,77 @@ export default function AddFriendScreen() {
             </View>
         </SafeAreaView>
     );
+}
+
+// Turn a failed friend_requests INSERT into a specific, plain-English message.
+// The error CODE distinguishes the unique-constraint duplicate (23505) from the
+// RLS rejection (42501). 42501 alone can't say WHY can_send_friend_request()
+// returned false, so we probe the pair — both the friendship and the reverse
+// request are visible under the caller's OWN RLS — to pick the right message.
+// IMPORTANT: this follow-up query runs ONLY here, on a rejected insert, never on
+// a successful send. A block where WE were blocked is intentionally invisible to
+// us (blocks_select_own), so it falls through to the soft generic — we must not
+// reveal a block.
+async function resolveSendError(
+    err: unknown,
+    myId: string,
+    target: { id: string; handle: string },
+): Promise<{ title: string; message: string }> {
+    const code =
+        err && typeof err === 'object' && 'code' in err
+            ? (err as { code?: string }).code
+            : undefined;
+
+    // Duplicate (from_user_id, to_user_id) — we already sent this person one.
+    if (code === '23505') {
+        return {
+            title: 'Already sent',
+            message: `You've already sent @${target.handle} a request.`,
+        };
+    }
+
+    // RLS rejection — probe the pair to explain why can_send returned false.
+    if (code === '42501') {
+        // friendships are keyed lexicographically (user_a_id < user_b_id).
+        const [a, b] =
+            myId < target.id ? [myId, target.id] : [target.id, myId];
+        const { data: friendship } = await supabase
+            .from('friendships')
+            .select('user_a_id')
+            .eq('user_a_id', a)
+            .eq('user_b_id', b)
+            .maybeSingle();
+        if (friendship) {
+            return {
+                title: 'Already friends',
+                message: `You're already friends with @${target.handle}.`,
+            };
+        }
+        // Did THEY already send US a request? (visible: to_user_id = me)
+        const { data: reverse } = await supabase
+            .from('friend_requests')
+            .select('id')
+            .eq('from_user_id', target.id)
+            .eq('to_user_id', myId)
+            .maybeSingle();
+        if (reverse) {
+            return {
+                title: 'Request pending',
+                message: `@${target.handle} already sent you a request. Check your Requests to accept it.`,
+            };
+        }
+        // Otherwise a block (invisible to us) or an edge case — soft generic.
+        return {
+            title: "Couldn't send request",
+            message: `You can't send @${target.handle} a request right now.`,
+        };
+    }
+
+    // Network / unexpected — never surface the raw Postgres error text.
+    return {
+        title: "Couldn't send request",
+        message: 'Please try again.',
+    };
 }
 
 function surfaceError(err: unknown, title: string) {
