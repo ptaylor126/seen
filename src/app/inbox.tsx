@@ -19,7 +19,7 @@ import { SegmentedControl } from '@/components/segmented-control';
 import { UserLink } from '@/components/user-link';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { goToProfile } from '@/lib/profile-nav';
-import { maybeEnablePushAfterAccept } from '@/lib/push';
+import { promptPushAtHighIntent } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
@@ -754,7 +754,7 @@ export default function InboxScreen() {
                 data: { session },
             } = await supabase.auth.getSession();
             if (session?.user.id) {
-                await maybeEnablePushAfterAccept(session.user.id);
+                await promptPushAtHighIntent(session.user.id);
             }
         } catch (err) {
             console.error('accept failed:', err);

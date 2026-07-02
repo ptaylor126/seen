@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
-import { maybeEnablePushAfterAccept } from '@/lib/push';
+import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
@@ -152,7 +152,7 @@ export default function FriendRequestsScreen() {
                 data: { session },
             } = await supabase.auth.getSession();
             if (session?.user.id) {
-                await maybeEnablePushAfterAccept(session.user.id);
+                await promptPushAtHighIntent(session.user.id);
             }
         } catch (err) {
             console.error('accept failed:', err);

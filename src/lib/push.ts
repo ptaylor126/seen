@@ -9,7 +9,7 @@
 
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
-import { Alert, Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import supabase from '@/lib/supabase';
@@ -29,6 +29,12 @@ import supabase from '@/lib/supabase';
 // approach avoids the privacy / cross-platform headaches of
 // expo-device's hardware IDs.
 const DEVICE_ID_KEY = 'seen.push.device_id';
+
+// One-time gate for the "notifications are off" nudge shown at a high-intent
+// moment when permission is already denied (iOS won't re-show the system
+// dialog once denied). Persisted so we point the user to Settings exactly
+// once, never repeatedly — the nudge must not nag.
+const DENIED_NUDGE_KEY = 'seen.push.denied_nudge_shown';
 
 async function getOrCreateDeviceId(): Promise<string> {
     const existing = await AsyncStorage.getItem(DEVICE_ID_KEY);
@@ -121,7 +127,7 @@ function askPushExplainer(): Promise<boolean> {
     return new Promise((resolve) => {
         Alert.alert(
             'Turn on notifications?',
-            'Get notified when friends recommend something or accept your invite. You can turn this off anytime in Settings.',
+            'Turn on notifications so you know when friends send you recommendations, or watch something you recommended to them.',
             [
                 {
                     text: 'Not now',
@@ -160,6 +166,51 @@ export async function maybeEnablePushAfterAccept(userId: string): Promise<void> 
     }
 }
 
+// Gentle, once-ever nudge for the DENIED case. iOS won't re-show the system
+// dialog after a denial, so at a high-intent moment we point the user to
+// Settings instead — but only the first time, so it never nags. Persisted in
+// AsyncStorage; silent on any failure (push isn't critical to the caller).
+async function showPushDeniedNudgeOnce(): Promise<void> {
+    try {
+        const shown = await AsyncStorage.getItem(DENIED_NUDGE_KEY);
+        if (shown) return;
+        await AsyncStorage.setItem(DENIED_NUDGE_KEY, '1');
+        Alert.alert(
+            'Notifications are off',
+            'Turn on notifications in Settings to hear when friends recommend you things.',
+            [
+                { text: 'Not now', style: 'cancel' },
+                {
+                    text: 'Open Settings',
+                    onPress: () => {
+                        void Linking.openSettings();
+                    },
+                },
+            ],
+            { cancelable: true },
+        );
+    } catch (err) {
+        console.warn('push: denied-nudge failed silently', err);
+    }
+}
+
+// High-intent entry point — call after a deliberate social moment (sending a
+// rec, accepting a friend). GRANTED → silently refresh + save the token;
+// UNDETERMINED → soft explainer + system prompt (via maybeEnablePushAfterAccept);
+// DENIED → the once-ever Settings nudge above. Silent on failure.
+export async function promptPushAtHighIntent(userId: string): Promise<void> {
+    try {
+        const settings = await Notifications.getPermissionsAsync();
+        if (settings.status === 'denied') {
+            await showPushDeniedNudgeOnce();
+            return;
+        }
+        await maybeEnablePushAfterAccept(userId);
+    } catch (err) {
+        console.warn('push: high-intent prompt failed silently', err);
+    }
+}
+
 // Module-level flag: prevents re-attempt within a single JS session.
 // Resets on cold launch, hot reload, or fresh bundle — the right
 // scope (one attempt per JS lifetime). Re-mounts of TabsLayout inside
@@ -170,17 +221,20 @@ export async function maybeEnablePushAfterAccept(userId: string): Promise<void> 
 // becomes common.
 let launchRegistrationAttempted = false;
 
-// Launch-time push registration. Called from (tabs)/_layout.tsx once
-// per JS session for the authenticated user. Reuses
-// maybeEnablePushAfterAccept's state machine — same shape for both
-// triggers: GRANTED → silently register + save (no prompt);
-// UNDETERMINED → askPushExplainer + requestPushPermission, save if
-// granted; DENIED → no-op (iOS won't re-show the system prompt
-// anyway). The "AfterAccept" name on the underlying helper reflects
-// the original sole caller; it is now shared infrastructure behind
-// two trigger points (friend-accept + launch).
+// Launch-time push registration. Called from (tabs)/_layout.tsx once per JS
+// session for the authenticated user. Deliberately NEVER prompts: it only
+// refreshes + saves the token for users who have ALREADY granted permission
+// (registerForPushNotifications returns null otherwise). This preserves the
+// one-time iOS system prompt for a high-intent moment (sending a rec,
+// accepting a friend — see promptPushAtHighIntent) instead of burning it on
+// launch. Undetermined/denied users are left untouched here.
 export async function ensurePushRegistrationOnLaunch(userId: string): Promise<void> {
     if (launchRegistrationAttempted) return;
     launchRegistrationAttempted = true;
-    await maybeEnablePushAfterAccept(userId);
+    try {
+        const token = await registerForPushNotifications();
+        if (token) await savePushToken(token, userId);
+    } catch (err) {
+        console.warn('push: launch registration failed silently', err);
+    }
 }
