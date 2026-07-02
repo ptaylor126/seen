@@ -5,41 +5,21 @@ import { AppState } from 'react-native';
 import supabase from '@/lib/supabase';
 
 /**
- * Inbox-badge count = (informational unread notifications)
- *                    + (pending friend requests)
- *                    + (pending received recs).
+ * Inbox-badge count — a single call to the `public.unread_count` RPC, which is
+ * the ONE definition of the composite, shared by this bell and the push-payload
+ * app-icon badge (migration 20260702120000_create_unread_count_rpc). The RPC
+ * returns, for the calling user:
+ *     (unread notifications, excluding rec_received)
+ *   + (pending friend requests — friend_requests rows to me)
+ *   + (pending recs to me, status='pending', NOT already in my library).
  *
- * Two distinct kinds of contributor:
+ * The arithmetic lives server-side ON PURPOSE — that's what guarantees the bell
+ * and the icon badge can never drift. Do NOT reintroduce a client-side
+ * composition here; change the definition in the SQL function instead. The RPC
+ * is SECURITY DEFINER with an own-user guard, so we pass our own uid.
  *
- *   INFORMATIONAL — clears when SEEN. Notifications for events to *see*
- *   (rec_watched, rec_reacted, rec_commented, friend_accepted,
- *   rec_declined). Counted while read_at IS NULL; the inbox-focus sweep
- *   marks them read and the badge drops.
- *
- *   ACTIONABLE — clears only when the action is COMPLETED, never on view:
- *     - friend_requests: the row exists iff the request is pending;
- *       accept/decline both delete it. Opening the inbox changes nothing.
- *     - recommendations: a received rec with status='pending' AND no
- *       items row yet for its (tmdb_id, media_type). The items row — not
- *       rec.status — is the "has the user acted" signal: saving to
- *       watchlist/watching upserts an items row but leaves rec.status
- *       'pending', and a rec can arrive for a title the user already
- *       tracks (nothing to action). So we count pending recs MINUS those
- *       whose title is already in the library. "Not for me" (status ->
- *       dismissed) and watched-with-rating also drop it. Viewing the
- *       inbox changes neither status nor library, so the contribution
- *       persists until the rec is actioned — mirroring friend_requests.
- *
- * No double-counting: the friend_request notification kind was dropped in
- * 20260603120000, and we exclude the 'rec_received' kind from the
- * notifications count here (`.neq('kind','rec_received')`). A received rec
- * is counted ONCE, via the actionable pending-recs query — not also via
- * its rec_received notification (that row still drives push + the inbox
- * list, it just no longer feeds the badge, which is what stops it being
- * view-cleared). Tables are the sole source of truth for the two
- * actionable kinds.
- *
- * Two refresh paths feed `count`:
+ * This hook's remaining job is purely WHEN to refetch. Two refresh paths feed
+ * `count`:
  *   1. `useFocusEffect` — refetches on tab/screen focus so a quick
  *      backgrounding round-trip can't leave a stale count.
  *   2. Realtime subscription — notifications + friend_requests (via
@@ -61,8 +41,18 @@ import supabase from '@/lib/supabase';
  *      subscription here if instant library-driven updates are ever
  *      needed.)
  */
-export function useUnreadCount(): { count: number; refresh: () => Promise<void> } {
+export function useUnreadCount(): {
+    count: number;
+    loaded: boolean;
+    refresh: () => Promise<void>;
+} {
     const [count, setCount] = useState(0);
+    // False until the first refresh actually resolves a value. Consumers that
+    // drive the OS app-icon badge gate on this so they never write the initial
+    // placeholder 0 before the real count lands (which would flash the badge to
+    // 0 and back on launch). Stays false on a fetch error, so a failed first
+    // load can't clobber a badge the push payload already set.
+    const [loaded, setLoaded] = useState(false);
 
     const refresh = useCallback(async () => {
         try {
@@ -72,63 +62,18 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
             const userId = session?.user.id;
             if (!userId) {
                 setCount(0);
+                setLoaded(true); // signed out is a determined state → 0 is real
                 return;
             }
 
-            const [notificationsRes, friendRequestsRes, pendingRecsRes, libraryRes] =
-                await Promise.all([
-                    // Informational only: exclude rec_received — a received
-                    // rec is counted as an actionable pending rec below, not
-                    // here (where the inbox-view sweep would clear it).
-                    supabase
-                        .from('notifications')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('user_id', userId)
-                        .is('read_at', null)
-                        .neq('kind', 'rec_received'),
-                    supabase
-                        .from('friend_requests')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('to_user_id', userId),
-                    // Actionable: received recs still awaiting a decision.
-                    // We need the title keys (not a head count) so we can drop
-                    // the ones that are already in the library below — there's
-                    // no action to take on those. Saving a rec to
-                    // watchlist/watching leaves rec.status = 'pending' (only
-                    // the watched path and "Not for me" flip it), so the
-                    // items row — not rec.status — is the source of truth for
-                    // "has the user acted on this title".
-                    supabase
-                        .from('recommendations')
-                        .select('tmdb_id, media_type')
-                        .eq('to_user_id', userId)
-                        .eq('status', 'pending'),
-                    // The user's library, keyed (media_type, tmdb_id). A
-                    // pending rec for a title already here isn't actionable.
-                    supabase
-                        .from('items')
-                        .select('tmdb_id, media_type')
-                        .eq('user_id', userId),
-                ]);
-            if (notificationsRes.error) throw notificationsRes.error;
-            if (friendRequestsRes.error) throw friendRequestsRes.error;
-            if (pendingRecsRes.error) throw pendingRecsRes.error;
-            if (libraryRes.error) throw libraryRes.error;
-
-            const libraryKeys = new Set(
-                (libraryRes.data ?? []).map(
-                    (it) => `${it.media_type}:${it.tmdb_id}`,
-                ),
-            );
-            const actionablePendingRecs = (pendingRecsRes.data ?? []).filter(
-                (r) => !libraryKeys.has(`${r.media_type}:${r.tmdb_id}`),
-            ).length;
-
-            setCount(
-                (notificationsRes.count ?? 0) +
-                    (friendRequestsRes.count ?? 0) +
-                    actionablePendingRecs,
-            );
+            // One round-trip to the canonical composite. Same definition the
+            // push-payload icon badge reads server-side, so bell == badge.
+            const { data, error } = await supabase.rpc('unread_count', {
+                p_uid: userId,
+            });
+            if (error) throw error;
+            setCount(typeof data === 'number' ? data : 0);
+            setLoaded(true);
         } catch (err) {
             console.error('unread count fetch failed:', err);
             // Don't surface to UI — a stale badge is better than a crash.
@@ -239,5 +184,5 @@ export function useUnreadCount(): { count: number; refresh: () => Promise<void> 
         };
     }, [refresh]);
 
-    return { count, refresh };
+    return { count, loaded, refresh };
 }

@@ -739,6 +739,7 @@ export type Database = {
       }
       unblock_user: { Args: { other_user_id: string }; Returns: undefined }
       unfriend: { Args: { other_user_id: string }; Returns: undefined }
+      unread_count: { Args: { p_uid: string }; Returns: number }
     }
     Enums: {
       [_ in never]: never
