@@ -1572,6 +1572,7 @@ export default function HomeScreen() {
                 <SearchBarOverlay
                     state={search}
                     top={insets.top + SEARCH_OVERLAY_TOP_OFFSET}
+                    showDiscover
                 />
             )}
         </View>

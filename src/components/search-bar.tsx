@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { Search, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
+    FlatList,
     Pressable,
     SectionList,
     StyleSheet,
@@ -14,8 +14,11 @@ import {
 } from 'react-native';
 
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
+import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { LoadError } from '@/components/load-error';
 import {
+    getPopular,
+    getTrending,
     imageUrl,
     searchMulti,
     type TMDBMediaItem,
@@ -58,6 +61,19 @@ const SEARCH_RESULT_PROFILE_SIZE = 56;
 // more.
 const PEOPLE_RESULTS_CAP = 5;
 
+// Home-only "discover" grid shown in the overlay's empty state before the user
+// types: straight trending + popular (NOT the onboarding blend), with a light
+// content filter so obscure / suggestive titles don't surface.
+const DISCOVER_VOTE_FLOOR = 150; // drop the low-vote obscure long-tail
+const DISCOVER_COLUMNS = 3;
+const DISCOVER_TILE_CAP = 21; // 3 columns × up to 7 rows
+
+export interface DiscoverTile {
+    id: number;
+    media_type: 'movie' | 'tv';
+    poster_path: string;
+}
+
 // Vertical distance from the safe-area top inset to the bottom of the
 // search bar. Same on Home and Library because both screens use the
 // same header geometry (paddingVertical: spacing.md × 2 = 24 + display
@@ -78,6 +94,14 @@ export interface SearchBarState {
     handleFocus: () => void;
     dismiss: () => void;
     handleResultTap: (item: SearchableItem) => void;
+    // Opens a title's detail screen — the shared "add path" used by both a
+    // tapped search result and a tapped discover tile.
+    openTitle: (media: 'movie' | 'tv', id: number) => void;
+    // Home-only discover grid (trending/popular) for the pre-typing empty
+    // state. Loaded lazily via ensureDiscoverLoaded.
+    discoverItems: DiscoverTile[] | null;
+    discoverLoading: boolean;
+    ensureDiscoverLoaded: () => void;
     // Re-runs the current query's search (used by the friendly error retry).
     retry: () => void;
 }
@@ -96,6 +120,15 @@ export function useSearchBar(): SearchBarState {
     // Bumped by the friendly error's "Try again" to re-run the current
     // query's search (a dependency of the debounced search effect below).
     const [reloadKey, setReloadKey] = useState(0);
+
+    // Home-only discover tiles for the pre-typing empty state. Loaded lazily
+    // on first focus via ensureDiscoverLoaded and cached for the hook's
+    // lifetime; discoverStartedRef guards against a refetch on re-open.
+    const [discoverItems, setDiscoverItems] = useState<DiscoverTile[] | null>(
+        null,
+    );
+    const [discoverLoading, setDiscoverLoading] = useState(false);
+    const discoverStartedRef = useRef(false);
 
     // 300ms debounce + stale-result guard. Cancellation runs on every
     // query change AND on unmount.
@@ -162,26 +195,98 @@ export function useSearchBar(): SearchBarState {
         inputRef.current?.blur();
     }, []);
 
+    // The single "open a title" navigation — the add path. Both a tapped
+    // search result and a tapped discover tile route through this, so
+    // tap-to-add is identical on both.
+    const openTitle = useCallback(
+        (media: 'movie' | 'tv', id: number) => {
+            dismiss();
+            router.push({
+                pathname: '/title/[mediaType]/[tmdbId]',
+                params: { mediaType: media, tmdbId: String(id) },
+            });
+        },
+        [router, dismiss],
+    );
+
     const handleResultTap = useCallback(
         (item: SearchableItem) => {
-            dismiss();
             if (item.media_type === 'person') {
+                dismiss();
                 router.push({
                     pathname: '/person/[personId]',
                     params: { personId: String(item.id) },
                 });
                 return;
             }
-            router.push({
-                pathname: '/title/[mediaType]/[tmdbId]',
-                params: {
-                    mediaType: item.media_type,
-                    tmdbId: String(item.id),
-                },
-            });
+            openTitle(item.media_type, item.id);
         },
-        [router, dismiss],
+        [router, dismiss, openTitle],
     );
+
+    // Lazily fetch straight trending + popular (movie + tv, page 1) for the
+    // Home discover grid — NOT the onboarding blend. Keeps a light content
+    // filter (poster required, adult excluded, vote-count floor) so obscure /
+    // suggestive titles don't surface. Best-effort: on any failure the grid
+    // just stays empty and the overlay falls back to blank. Runs once per
+    // hook lifetime.
+    const ensureDiscoverLoaded = useCallback(async () => {
+        if (discoverStartedRef.current) return;
+        discoverStartedRef.current = true;
+        setDiscoverLoading(true);
+        try {
+            const calls = [
+                { media: 'movie' as const, req: getTrending('movie', 1) },
+                { media: 'tv' as const, req: getTrending('tv', 1) },
+                { media: 'movie' as const, req: getPopular('movie', 1) },
+                { media: 'tv' as const, req: getPopular('tv', 1) },
+            ];
+            const settled = await Promise.allSettled(calls.map((c) => c.req));
+            const seen = new Set<string>();
+            const byMedia: Record<'movie' | 'tv', DiscoverTile[]> = {
+                movie: [],
+                tv: [],
+            };
+            settled.forEach((res, i) => {
+                if (res.status !== 'fulfilled') return;
+                const media = calls[i].media;
+                for (const item of res.value.results) {
+                    if (!item.poster_path) continue; // must have a poster
+                    if (item.adult === true) continue; // adult exclusion
+                    if ((item.vote_count ?? 0) < DISCOVER_VOTE_FLOOR) continue;
+                    const key = `${media}:${item.id}`;
+                    if (seen.has(key)) continue; // de-dupe across sources
+                    seen.add(key);
+                    byMedia[media].push({
+                        id: item.id,
+                        media_type: media,
+                        poster_path: item.poster_path,
+                    });
+                }
+            });
+            // Interleave movie/tv for a varied grid, cap, then trim to whole
+            // rows so the last row isn't a stretched partial.
+            const interleaved: DiscoverTile[] = [];
+            const max = Math.max(byMedia.movie.length, byMedia.tv.length);
+            for (
+                let i = 0;
+                i < max && interleaved.length < DISCOVER_TILE_CAP;
+                i++
+            ) {
+                if (byMedia.movie[i]) interleaved.push(byMedia.movie[i]);
+                if (byMedia.tv[i] && interleaved.length < DISCOVER_TILE_CAP) {
+                    interleaved.push(byMedia.tv[i]);
+                }
+            }
+            const fullRows =
+                interleaved.length - (interleaved.length % DISCOVER_COLUMNS);
+            setDiscoverItems(interleaved.slice(0, fullRows));
+        } catch {
+            setDiscoverItems([]);
+        } finally {
+            setDiscoverLoading(false);
+        }
+    }, []);
 
     return {
         query,
@@ -194,6 +299,10 @@ export function useSearchBar(): SearchBarState {
         handleFocus,
         dismiss,
         handleResultTap,
+        openTitle,
+        discoverItems,
+        discoverLoading,
+        ensureDiscoverLoaded,
         retry: () => setReloadKey((k) => k + 1),
     };
 }
@@ -296,9 +405,15 @@ function friendlyDepartment(value: string | undefined): string {
 export function SearchBarOverlay({
     state,
     top,
+    showDiscover = false,
 }: {
     state: SearchBarState;
     top: number;
+    // Home-only: render the trending/popular discover grid in the pre-typing
+    // empty state (and kick off its lazy fetch). Off on Library, whose search
+    // filters the user's own library — trending titles they may not own would
+    // be confusing there.
+    showDiscover?: boolean;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -308,6 +423,67 @@ export function SearchBarOverlay({
     // plus a small margin so the last row clears the nav pill and stays
     // tappable. Reuses the shared hook so it tracks nav-height changes.
     const tabBarInset = useFloatingTabBarInset();
+    // App-standard eyes loader, gated so quick searches don't flash it.
+    const busy = useDeferredLoading(state.loading);
+
+    // Kick off the Home discover fetch once when discovery is enabled.
+    // ensureDiscoverLoaded is a stable, run-once callback, so the overlay
+    // re-mounting on each search-open doesn't refetch.
+    const { ensureDiscoverLoaded } = state;
+    useEffect(() => {
+        if (showDiscover) ensureDiscoverLoaded();
+    }, [showDiscover, ensureDiscoverLoaded]);
+
+    function renderDiscover() {
+        const tiles = state.discoverItems;
+        // Still loading, or the fetch failed → keep it blank. This is a
+        // best-effort surface shown before the user has even typed; never an
+        // error state.
+        if (!tiles || tiles.length === 0) {
+            return <View style={styles.statusBlock} />;
+        }
+        return (
+            <FlatList
+                data={tiles}
+                keyExtractor={(t) => `${t.media_type}-${t.id}`}
+                numColumns={DISCOVER_COLUMNS}
+                renderItem={({ item }) => (
+                    <Pressable
+                        onPress={() => state.openTitle(item.media_type, item.id)}
+                        style={({ pressed }) => [
+                            styles.discoverTile,
+                            pressed && { opacity: 0.6 },
+                        ]}
+                    >
+                        <Image
+                            source={{ uri: imageUrl(item.poster_path, 'w342') }}
+                            style={styles.discoverPoster}
+                            contentFit="cover"
+                            transition={150}
+                        />
+                    </Pressable>
+                )}
+                ListHeaderComponent={
+                    <Text
+                        style={[
+                            typography.micro,
+                            styles.discoverHeading,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        POPULAR RIGHT NOW
+                    </Text>
+                }
+                columnWrapperStyle={styles.discoverRow}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                contentContainerStyle={[
+                    styles.discoverContent,
+                    { paddingBottom: tabBarInset + spacing.lg },
+                ]}
+            />
+        );
+    }
 
     function renderTitleRow(item: SearchableTitle) {
         const titleText = item.media_type === 'movie' ? item.title : item.name;
@@ -409,20 +585,21 @@ export function SearchBarOverlay({
                 {
                     top,
                     backgroundColor: palette.bg,
-                    borderTopColor: palette.border,
                 },
             ]}
         >
-            {state.loading ? (
-                <View style={styles.statusBlock}>
-                    <ActivityIndicator color={palette.accent} />
-                </View>
+            {busy ? (
+                // App-standard eyes loader, top-anchored under the search bar.
+                <FullScreenLoader style={styles.statusTop} />
             ) : state.results === null ? (
-                // Empty overlay before the user types — the input's
-                // placeholder already states the action, so a "Type to
-                // search" hint here is redundant and gets cut off behind
-                // the keyboard on shorter devices.
-                <View style={styles.statusBlock} />
+                // Before the user types: the Home discover grid, or a blank
+                // space-reserving box elsewhere (the input placeholder already
+                // states the action).
+                showDiscover ? (
+                    renderDiscover()
+                ) : (
+                    <View style={styles.statusBlock} />
+                )
             ) : state.error ? (
                 // Friendly fallback — never show the raw proxy/TMDB error.
                 // Retry re-runs the current query's search.
@@ -534,7 +711,6 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        borderTopWidth: StyleSheet.hairlineWidth,
         // Above body content so taps inside results land on results,
         // not on whatever's behind. The host screen's header + search
         // bar sit above this top edge in normal flow, so the input
@@ -542,10 +718,42 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
     statusBlock: {
+        // Top-anchored (not vertically centred) so "No results" and the
+        // loader sit directly under the search bar where results appear —
+        // centring pushed them into the tall overlay's middle, behind the
+        // keyboard.
         flex: 1,
         alignItems: 'center',
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
+        paddingTop: spacing.xl,
         paddingHorizontal: spacing.xl,
+    },
+    // FullScreenLoader defaults to centring; this override top-anchors the
+    // eyes under the search bar to match statusBlock.
+    statusTop: {
+        justifyContent: 'flex-start',
+        paddingTop: spacing.xl,
+    },
+    discoverContent: {
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.md,
+    },
+    discoverHeading: {
+        letterSpacing: 1.2,
+        paddingHorizontal: spacing.xs,
+        paddingBottom: spacing.sm,
+    },
+    discoverRow: {
+        gap: spacing.sm,
+    },
+    discoverTile: {
+        flex: 1,
+        marginBottom: spacing.sm,
+    },
+    discoverPoster: {
+        width: '100%',
+        aspectRatio: 2 / 3,
+        borderRadius: radius.sm,
     },
     listContent: {
         paddingHorizontal: spacing.base,
