@@ -37,6 +37,14 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-02 (cont. 2) — App icon recolored
+
+Swapped `assets/icon.png` for a recolored mark to match the current palette — **pink background (`#7A3960` family), replacing the old cream**. Same file, same format (1024×1024 square PNG), so no config change: `app.json`'s `"icon": "./assets/icon.png"` already points at it (`0a64ab6`). **Alpha channel left as-is** — `sips` shows `hasAlpha: yes`, but the previous icon carried an alpha channel too and passed App Store validation, so Expo is flattening the iOS icon at build time; not worth pre-flattening. **Binary-embedded — ships in the next native/EAS build, NOT an OTA.**
+
+Caveat for that build: this updates **iOS only**. Android's launcher icon is the separate `android.adaptiveIcon` set (`assets/images/android-icon-{foreground,background,monochrome}.png`, still on the old art) — those need regenerating separately if the recolor should reach Android too.
+
+---
+
 ## 2026-07-02 (cont.) — Notification icon badge (app-icon count, matched to the in-app bell)
 
 Wire the iOS **app-icon badge** to the same count as the in-app bell, so the number on the home-screen icon reflects unread/actionable state even with the app closed. Landed as three commits across the stack: **`5f9a626`** (the RPC), **`fe6b4ef`** (edge function / push payload), **`5d66772`** (client sync). Split status at the bottom — one piece is deployed, one is live-on-DB, one is held for the post-1.0.2 OTA batch.
