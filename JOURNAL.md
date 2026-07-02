@@ -37,6 +37,19 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-02 (cont. 3) — Search overlay: discover grid, positioning + loader fixes
+
+Four changes to the shared search overlay (`src/components/search-bar.tsx`), committed as one OTA-batch commit (`bfdaf18`). Verified on device.
+
+- **Removed the divider line** under the search bar — the overlay's `borderTop` hairline. Shared overlay, so both Home and Library.
+- **"Popular right now" discover grid** as the Home search empty state (before typing). Gated **Home-only** via a new `showDiscover` prop — Library search is left unchanged since it filters the user's *own* library, where trending titles they may not own would confuse. Straight `getTrending` + `getPopular` (movie + tv), **not** the onboarding blend, but kept the content filter (adult excluded, `vote_count >= 150`, poster required); dedupe, interleave, whole-row cap. Lazy fetch on first focus, cached for the hook's lifetime. Tap-to-add routes through the same `openTitle` path as a search result.
+- **Fixed results-area positioning:** "No results" and the loading state were vertically centred in the tall bottom-anchored overlay, so they sat mid/low screen behind the keyboard. Now top-anchored directly under the search bar. Both surfaces.
+- **Swapped the old `ActivityIndicator`** for the app-standard eyes loader (`FullScreenLoader` + `useDeferredLoading`), matching the other screens (no flash on quick searches). Both surfaces.
+
+Pure JS / OTA-able — joins the post-1.0.2 OTA batch, not shipped yet.
+
+---
+
 ## 2026-07-02 (cont. 2) — App icon recolored
 
 Swapped `assets/icon.png` for a recolored mark to match the current palette — **pink background (`#7A3960` family), replacing the old cream**. Same file, same format (1024×1024 square PNG), so no config change: `app.json`'s `"icon": "./assets/icon.png"` already points at it (`0a64ab6`). **Alpha channel left as-is** — `sips` shows `hasAlpha: yes`, but the previous icon carried an alpha channel too and passed App Store validation, so Expo is flattening the iOS icon at build time; not worth pre-flattening. **Binary-embedded — ships in the next native/EAS build, NOT an OTA.**
