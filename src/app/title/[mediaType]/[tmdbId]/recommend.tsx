@@ -649,7 +649,18 @@ export default function RecommendScreen() {
                     style={styles.flex}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
-                    contentContainerStyle={styles.scrollContent}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        // While the friend search is focused the note bar is
+                        // collapsed, so the keyboard-height compensation it
+                        // normally carries moves here: on iOS (no window
+                        // resize) pad the scroll content so every friend row
+                        // can scroll clear of the keyboard. Android's
+                        // adjustResize already shrinks the window — no inset.
+                        localFocused && Platform.OS === 'ios' && keyboard.open
+                            ? { paddingBottom: keyboard.height + spacing.sm }
+                            : null,
+                    ]}
                 >
                     {/* Pressable wraps the scroll contents so taps on the
                         background (title context, "SEND TO" label, gaps
@@ -664,8 +675,10 @@ export default function RecommendScreen() {
                         importantForAccessibility="no-hide-descendants"
                     >
                     {/* Title context — keeps the modal grounded in what's
-                        being recommended without needing to scroll back. */}
-                    {titleCtx && (
+                        being recommended without needing to scroll back.
+                        Collapsed while the friend search is focused so the
+                        recipient list gets the full space above the keyboard. */}
+                    {titleCtx && !localFocused && (
                         <View style={styles.titleContext}>
                             {titleCtx.posterPath ? (
                                 <Image
@@ -832,7 +845,7 @@ export default function RecommendScreen() {
                     note is never below the fold) and its paddingBottom
                     drops the home-indicator inset when the keyboard
                     rises so the bar sits flush against the keyboard. */}
-                {!loading && !error && friends.length > 0 ? (
+                {!loading && !error && friends.length > 0 && !localFocused ? (
                     <View
                         style={[
                             styles.bottomBar,
