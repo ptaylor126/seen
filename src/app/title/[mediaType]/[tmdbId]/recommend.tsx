@@ -19,6 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
+import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
@@ -461,11 +462,28 @@ export default function RecommendScreen() {
             Alert.alert(alertTitle, lines.join('\n\n'), [
                 {
                     text: 'OK',
-                    onPress: () => {
+                    onPress: async () => {
                         // Only pop back if at least one rec actually
                         // landed; if every recipient failed, leave the
                         // modal up so the user can retry.
                         if (anySuccess) router.back();
+
+                        // Sending a genuinely NEW rec is a high-intent
+                        // moment to ask for push — gate strictly on the
+                        // `sent` branch, never alreadySent no-ops or
+                        // failures. Fire only after this "Sent" alert is
+                        // dismissed so the permission explainer doesn't
+                        // stack on top of it. Matches the friend-accept
+                        // sites: inline session lookup, and
+                        // promptPushAtHighIntent swallows its own errors.
+                        if (sent.length > 0) {
+                            const {
+                                data: { session },
+                            } = await supabase.auth.getSession();
+                            if (session?.user.id) {
+                                await promptPushAtHighIntent(session.user.id);
+                            }
+                        }
                     },
                 },
             ]);
