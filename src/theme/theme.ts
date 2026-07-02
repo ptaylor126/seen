@@ -229,6 +229,18 @@ export const radius = {
     full: 9999,
 } as const;
 
+// Chip — the canonical filter / selection pill (Library media filters, genre
+// chips + toggle, Friends sort chips). Geometry only; the active/inactive
+// colours resolve from the palette at render (accentWash fill + accent text
+// when selected; transparent fill + border + textMuted when not). See
+// src/components/chip.tsx and the Chip section in DESIGN.md.
+export const chip = {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+    borderWidth: 1,
+} as const;
+
 export const motion = {
     duration: {
         fast: 150,

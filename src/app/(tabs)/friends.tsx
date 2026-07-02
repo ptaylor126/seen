@@ -20,6 +20,7 @@ import {
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { Chip } from '@/components/chip';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RequestRecSheet } from '@/components/request-rec-sheet';
 import { ScreenHeader } from '@/components/screen-header';
@@ -481,45 +482,15 @@ export default function FriendsScreen() {
                                 chip is accent-filled; the rest read as muted
                                 outlines. */}
                             <View style={styles.sortRow}>
-                                {FRIEND_SORTS.map((opt) => {
-                                    const active = sortBy === opt.value;
-                                    return (
-                                        <Pressable
-                                            key={opt.value}
-                                            onPress={() => setSortBy(opt.value)}
-                                            accessibilityRole="button"
-                                            accessibilityState={{
-                                                selected: active,
-                                            }}
-                                            accessibilityLabel={`Sort by ${opt.label}`}
-                                            style={({ pressed }) => [
-                                                styles.sortChip,
-                                                {
-                                                    backgroundColor: active
-                                                        ? palette.accent
-                                                        : palette.surface,
-                                                    borderColor: active
-                                                        ? palette.accent
-                                                        : palette.border,
-                                                },
-                                                pressed && { opacity: 0.6 },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    typography.caption,
-                                                    {
-                                                        color: active
-                                                            ? palette.textInverse
-                                                            : palette.textMuted,
-                                                    },
-                                                ]}
-                                            >
-                                                {opt.label}
-                                            </Text>
-                                        </Pressable>
-                                    );
-                                })}
+                                {FRIEND_SORTS.map((opt) => (
+                                    <Chip
+                                        key={opt.value}
+                                        label={opt.label}
+                                        active={sortBy === opt.value}
+                                        onPress={() => setSortBy(opt.value)}
+                                        accessibilityLabel={`Sort by ${opt.label}`}
+                                    />
+                                ))}
                             </View>
 
                             {sortedFriends.length > 0 ? (
@@ -603,17 +574,13 @@ const styles = StyleSheet.create({
     },
     sortRow: {
         // Sort chips under the search pill. marginHorizontal matches the
-        // searchRow so the chips align with the pill's left edge.
+        // searchRow so the chips align with the pill's left edge. Inter-chip
+        // gap matches the Library filter row (spacing.xs) now that both use
+        // the shared <Chip>.
         flexDirection: 'row',
-        gap: spacing.sm,
+        gap: spacing.xs,
         marginHorizontal: spacing.base,
         marginBottom: spacing.md,
-    },
-    sortChip: {
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.xs,
-        borderRadius: radius.full,
-        borderWidth: 1,
     },
     searchRow: {
         // Outer row hosting the search pill + the conditional Cancel

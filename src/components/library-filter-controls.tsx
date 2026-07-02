@@ -30,6 +30,7 @@ import {
     View,
 } from 'react-native';
 
+import { Chip } from '@/components/chip';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import {
     MEDIA_FILTERS,
@@ -42,7 +43,6 @@ import {
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
-    radius,
     spacing,
     typography,
 } from '@/theme/theme';
@@ -93,44 +93,14 @@ export function LibraryFilterControls({
         <>
             <View style={styles.controlsRow}>
                 <View style={styles.mediaFilterGroup}>
-                    {MEDIA_FILTERS.map((opt) => {
-                        const isActive = mediaFilter === opt;
-                        return (
-                            <Pressable
-                                key={opt}
-                                onPress={() => setMediaFilter(opt)}
-                                hitSlop={spacing.xs}
-                                style={({ pressed }) => [
-                                    styles.mediaFilterPill,
-                                    {
-                                        backgroundColor: isActive
-                                            ? palette.accentWash
-                                            : 'transparent',
-                                        borderColor: isActive
-                                            ? 'transparent'
-                                            : palette.border,
-                                        opacity: pressed ? 0.6 : 1,
-                                    },
-                                ]}
-                                accessibilityLabel={MEDIA_FILTER_LABELS[opt]}
-                                accessibilityRole="button"
-                                accessibilityState={{ selected: isActive }}
-                            >
-                                <Text
-                                    style={[
-                                        styles.chipText,
-                                        {
-                                            color: isActive
-                                                ? palette.accent
-                                                : palette.textMuted,
-                                        },
-                                    ]}
-                                >
-                                    {MEDIA_FILTER_LABELS[opt]}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
+                    {MEDIA_FILTERS.map((opt) => (
+                        <Chip
+                            key={opt}
+                            label={MEDIA_FILTER_LABELS[opt]}
+                            active={mediaFilter === opt}
+                            onPress={() => setMediaFilter(opt)}
+                        />
+                    ))}
                 </View>
                 <View style={styles.rightControls}>
                     {/* Genre toggle pill — reveals/collapses the chip
@@ -147,49 +117,19 @@ export function LibraryFilterControls({
                               `#${genreFilter}`
                             : null;
                         return (
-                            <Pressable
+                            <Chip
+                                label={activeGenreLabel ?? 'Genre'}
+                                active={isGenreActive}
+                                expanded={genreStripOpen}
                                 onPress={() =>
                                     setGenreStripOpen(!genreStripOpen)
                                 }
-                                hitSlop={spacing.xs}
-                                style={({ pressed }) => [
-                                    styles.mediaFilterPill,
-                                    {
-                                        backgroundColor: isGenreActive
-                                            ? palette.accentWash
-                                            : 'transparent',
-                                        borderColor: isGenreActive
-                                            ? 'transparent'
-                                            : palette.border,
-                                        opacity: pressed ? 0.6 : 1,
-                                    },
-                                ]}
-                                accessibilityRole="button"
                                 accessibilityLabel={
                                     isGenreActive
                                         ? `Genre filter: ${activeGenreLabel}. Tap to ${genreStripOpen ? 'hide' : 'show'} options.`
                                         : `${genreStripOpen ? 'Hide' : 'Show'} genre options`
                                 }
-                                accessibilityState={{
-                                    selected: isGenreActive,
-                                    expanded: genreStripOpen,
-                                }}
-                            >
-                                <Text
-                                    style={[
-                                        styles.chipText,
-                                        {
-                                            color: isGenreActive
-                                                ? palette.accent
-                                                : palette.textMuted,
-                                        },
-                                    ]}
-                                >
-                                    {isGenreActive
-                                        ? activeGenreLabel
-                                        : 'Genre'}
-                                </Text>
-                            </Pressable>
+                            />
                         );
                     })()}
                     <Pressable
@@ -239,93 +179,39 @@ export function LibraryFilterControls({
                     {(() => {
                         const isAllActive = genreFilter === null;
                         return (
-                            <Pressable
+                            <Chip
                                 key="__all_genres"
+                                label="All genres"
+                                active={isAllActive}
                                 onPress={() => {
                                     setGenreFilter(null);
                                     setGenreStripOpen(false);
                                 }}
-                                hitSlop={spacing.xs}
-                                style={({ pressed }) => [
-                                    styles.mediaFilterPill,
-                                    {
-                                        backgroundColor: isAllActive
-                                            ? palette.accentWash
-                                            : 'transparent',
-                                        borderColor: isAllActive
-                                            ? 'transparent'
-                                            : palette.border,
-                                        opacity: pressed ? 0.6 : 1,
-                                    },
-                                ]}
-                                accessibilityRole="button"
                                 accessibilityLabel={
                                     isAllActive
                                         ? 'All genres (current)'
                                         : 'Show all genres'
                                 }
-                                accessibilityState={{
-                                    selected: isAllActive,
-                                }}
-                            >
-                                <Text
-                                    style={[
-                                        styles.chipText,
-                                        {
-                                            color: isAllActive
-                                                ? palette.accent
-                                                : palette.textMuted,
-                                        },
-                                    ]}
-                                >
-                                    All genres
-                                </Text>
-                            </Pressable>
+                            />
                         );
                     })()}
                     {availableGenres.map((g) => {
                         const isActive = genreFilter === g.id;
                         return (
-                            <Pressable
+                            <Chip
                                 key={g.id}
+                                label={g.name}
+                                active={isActive}
                                 onPress={() => {
                                     setGenreFilter(isActive ? null : g.id);
                                     setGenreStripOpen(false);
                                 }}
-                                hitSlop={spacing.xs}
-                                style={({ pressed }) => [
-                                    styles.mediaFilterPill,
-                                    {
-                                        backgroundColor: isActive
-                                            ? palette.accentWash
-                                            : 'transparent',
-                                        borderColor: isActive
-                                            ? 'transparent'
-                                            : palette.border,
-                                        opacity: pressed ? 0.6 : 1,
-                                    },
-                                ]}
-                                accessibilityRole="button"
                                 accessibilityLabel={
                                     isActive
                                         ? `Clear ${g.name} filter`
                                         : `Filter by ${g.name}`
                                 }
-                                accessibilityState={{ selected: isActive }}
-                            >
-                                <Text
-                                    style={[
-                                        styles.chipText,
-                                        {
-                                            color: isActive
-                                                ? palette.accent
-                                                : palette.textMuted,
-                                        },
-                                    ]}
-                                >
-                                    {g.name}
-                                </Text>
-                            </Pressable>
+                            />
                         );
                     })}
                 </ScrollView>
@@ -347,36 +233,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.xs,
-    },
-    mediaFilterPill: {
-        // Grey outline (unselected) → wash fill, no border (selected),
-        // so the chips read as tappable buttons rather than plain labels
-        // AND the selected "fill, no border" state matches the segmented
-        // control + grid selector exactly. Unselected: transparent fill
-        // + palette.border (grey) outline + textMuted text. Selected:
-        // accentWash fill (the shared filter-zone selected fill — also
-        // used by the segmented control + grid selector) + accent text,
-        // border flipped to 'transparent' so the fill alone carries
-        // selection (no outline, matching the other zone controls).
-        // borderWidth stays constant (1) across states — the transparent
-        // border still occupies its 1px box, so there's no layout shift
-        // on select. Deliberately the SOFTER tier: a wash fill here, far
-        // softer than solid plum (reserved for nav/buttons) — chips stay
-        // secondary.
-        paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs,
-        borderRadius: radius.full,
-        borderWidth: 1,
-    },
-    chipText: {
-        // 14/Medium — same treatment as SegmentedControl labels so
-        // the typography across the filter zone is unified. Was
-        // typography.caption + fontWeight: '600' before (semibold
-        // on top of regular Geist) which read inconsistently against
-        // the segmented control's medium weight.
-        ...typography.caption,
-        fontFamily: fontFamily.medium,
-        fontWeight: '500',
     },
     rightControls: {
         // Sub-group on the right of controlsRow holding the Genre
