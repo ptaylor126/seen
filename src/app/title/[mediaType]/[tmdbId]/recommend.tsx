@@ -791,7 +791,7 @@ export default function RecommendScreen() {
                                         }}
                                         hitSlop={spacing.sm}
                                         accessibilityRole="button"
-                                        accessibilityLabel="Cancel search"
+                                        accessibilityLabel="Done searching"
                                         style={({ pressed }) => [
                                             styles.cancelButton,
                                             pressed && { opacity: 0.6 },
@@ -803,7 +803,7 @@ export default function RecommendScreen() {
                                                 { color: palette.accent },
                                             ]}
                                         >
-                                            Cancel
+                                            Done
                                         </Text>
                                     </Pressable>
                                 ) : null}
