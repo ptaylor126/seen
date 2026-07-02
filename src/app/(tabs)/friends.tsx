@@ -39,7 +39,19 @@ interface FriendRow {
     handle: string;
     displayName: string;
     avatarUrl: string | null;
+    // friendships.created_at — for the "Recently added" sort.
+    friendshipCreatedAt: string;
+    // Count of recommendations exchanged with this friend, both directions.
+    recCount: number;
 }
+
+type FriendSort = 'recentlyAdded' | 'name' | 'mostRecs';
+
+const FRIEND_SORTS: { value: FriendSort; label: string }[] = [
+    { value: 'recentlyAdded', label: 'Recently added' },
+    { value: 'name', label: 'Name (A–Z)' },
+    { value: 'mostRecs', label: 'Most recs' },
+];
 
 const AVATAR_SIZE = 44;
 
@@ -56,6 +68,7 @@ export default function FriendsScreen() {
     const [loading, setLoading] = useState(true);
     const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
+    const [sortBy, setSortBy] = useState<FriendSort>('recentlyAdded');
 
     // Local name/handle filter — mirrors the library + friend-library
     // local-search pattern (borderless bar, Cancel-on-focus, inline
@@ -78,26 +91,55 @@ export default function FriendsScreen() {
             // Friendships + count of incoming pending requests in parallel.
             // Friendships are stored as lexicographic pairs (user_a < user_b),
             // so we OR-match either side and pick the other party per row.
-            const [friendshipsResult, pendingResult] = await Promise.all([
-                supabase
-                    .from('friendships')
-                    .select('user_a_id, user_b_id, created_at')
-                    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
-                    .order('created_at', { ascending: false }),
-                supabase
-                    .from('friend_requests')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('to_user_id', userId),
-            ]);
+            const [friendshipsResult, pendingResult, recsResult] =
+                await Promise.all([
+                    supabase
+                        .from('friendships')
+                        .select('user_a_id, user_b_id, created_at')
+                        .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+                        .order('created_at', { ascending: false }),
+                    supabase
+                        .from('friend_requests')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('to_user_id', userId),
+                    // Recs involving me (either direction), for the "Most recs"
+                    // sort. Minimal columns, counted per friend client-side
+                    // below. RLS (recommendations_select_party) scopes this to
+                    // rows where I'm sender or recipient.
+                    supabase
+                        .from('recommendations')
+                        .select('from_user_id, to_user_id')
+                        .or(
+                            `from_user_id.eq.${userId},to_user_id.eq.${userId}`,
+                        ),
+                ]);
             if (friendshipsResult.error) throw friendshipsResult.error;
             if (pendingResult.error) throw pendingResult.error;
+            if (recsResult.error) throw recsResult.error;
 
             setPendingIncoming(pendingResult.count ?? 0);
 
             const rows = friendshipsResult.data ?? [];
-            const otherIds = rows.map((r) =>
-                r.user_a_id === userId ? r.user_b_id : r.user_a_id,
-            );
+            const createdAtById = new Map<string, string>();
+            const otherIds = rows.map((r) => {
+                const other =
+                    r.user_a_id === userId ? r.user_b_id : r.user_a_id;
+                createdAtById.set(other, r.created_at);
+                return other;
+            });
+
+            // Count recs per friend (both directions). from_user_id can be null
+            // (sender deleted — FK ON DELETE SET NULL); those can't be
+            // attributed to a friend, so skip them.
+            const recCountById = new Map<string, number>();
+            for (const rec of recsResult.data ?? []) {
+                const other =
+                    rec.from_user_id === userId
+                        ? rec.to_user_id
+                        : rec.from_user_id;
+                if (!other) continue;
+                recCountById.set(other, (recCountById.get(other) ?? 0) + 1);
+            }
 
             if (otherIds.length === 0) {
                 setFriends([]);
@@ -120,6 +162,8 @@ export default function FriendsScreen() {
                     handle: p.handle,
                     displayName: p.display_name,
                     avatarUrl: p.avatar_url,
+                    friendshipCreatedAt: createdAtById.get(p.id) ?? '',
+                    recCount: recCountById.get(p.id) ?? 0,
                 }));
 
             setFriends(friendRows);
@@ -204,6 +248,33 @@ export default function FriendsScreen() {
                       .toLowerCase()
                       .includes(normalizedQuery),
               );
+
+    // Sort the filtered set by the active option. Cheap for friend-list sizes,
+    // so no memo. "Recently added" mirrors the loader's created_at DESC order.
+    const sortedFriends = filteredFriends.slice().sort((a, b) => {
+        switch (sortBy) {
+            case 'name':
+                return a.displayName.localeCompare(b.displayName, undefined, {
+                    sensitivity: 'base',
+                });
+            case 'mostRecs':
+                // Most first; tie-break by name for a stable, sensible order.
+                return (
+                    b.recCount - a.recCount ||
+                    a.displayName.localeCompare(b.displayName, undefined, {
+                        sensitivity: 'base',
+                    })
+                );
+            case 'recentlyAdded':
+            default:
+                // Newest friendship first (created_at DESC).
+                return a.friendshipCreatedAt < b.friendshipCreatedAt
+                    ? 1
+                    : a.friendshipCreatedAt > b.friendshipCreatedAt
+                      ? -1
+                      : 0;
+        }
+    });
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -406,9 +477,54 @@ export default function FriendsScreen() {
                                 ) : null}
                             </View>
 
-                            {filteredFriends.length > 0 ? (
+                            {/* Sort chips — three feasible options. Active
+                                chip is accent-filled; the rest read as muted
+                                outlines. */}
+                            <View style={styles.sortRow}>
+                                {FRIEND_SORTS.map((opt) => {
+                                    const active = sortBy === opt.value;
+                                    return (
+                                        <Pressable
+                                            key={opt.value}
+                                            onPress={() => setSortBy(opt.value)}
+                                            accessibilityRole="button"
+                                            accessibilityState={{
+                                                selected: active,
+                                            }}
+                                            accessibilityLabel={`Sort by ${opt.label}`}
+                                            style={({ pressed }) => [
+                                                styles.sortChip,
+                                                {
+                                                    backgroundColor: active
+                                                        ? palette.accent
+                                                        : palette.surface,
+                                                    borderColor: active
+                                                        ? palette.accent
+                                                        : palette.border,
+                                                },
+                                                pressed && { opacity: 0.6 },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    typography.caption,
+                                                    {
+                                                        color: active
+                                                            ? palette.textInverse
+                                                            : palette.textMuted,
+                                                    },
+                                                ]}
+                                            >
+                                                {opt.label}
+                                            </Text>
+                                        </Pressable>
+                                    );
+                                })}
+                            </View>
+
+                            {sortedFriends.length > 0 ? (
                                 <FlatList
-                                    data={filteredFriends}
+                                    data={sortedFriends}
                                     keyExtractor={(item) => item.userId}
                                     renderItem={renderFriendRow}
                                     keyboardShouldPersistTaps="handled"
@@ -484,6 +600,20 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
+    },
+    sortRow: {
+        // Sort chips under the search pill. marginHorizontal matches the
+        // searchRow so the chips align with the pill's left edge.
+        flexDirection: 'row',
+        gap: spacing.sm,
+        marginHorizontal: spacing.base,
+        marginBottom: spacing.md,
+    },
+    sortChip: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
+        borderWidth: 1,
     },
     searchRow: {
         // Outer row hosting the search pill + the conditional Cancel

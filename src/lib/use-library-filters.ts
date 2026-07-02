@@ -45,7 +45,13 @@ import type { MediaType } from '@/lib/rating';
 
 export type ItemStatus = 'watchlist' | 'watching' | 'watched';
 export type MediaFilter = 'all' | 'movie' | 'tv';
-export type SortOption = 'dateWatched' | 'dateAdded' | 'rating';
+export type SortOption =
+    | 'dateWatched'
+    | 'dateAdded'
+    | 'rating'
+    | 'title'
+    | 'releaseNewest'
+    | 'releaseOldest';
 
 // Minimal row shape the hook needs. Screen-specific row types
 // (LibraryRow with recAttribution, ItemRow without) extend this via
@@ -58,6 +64,9 @@ export interface FilterableLibraryRow {
     rating: number | null;
     watchedAt: string | null;
     createdAt: string;
+    // release_date from the titles catalogue ('YYYY-MM-DD' or null when
+    // unknown/unreleased). Drives the Release-date sorts; nulls sort last.
+    releaseDate: string | null;
     genreIds: number[] | null;
 }
 
@@ -79,6 +88,9 @@ export const SORT_LABELS: Record<SortOption, string> = {
     dateWatched: 'Date watched',
     dateAdded: 'Date added',
     rating: 'Rating',
+    title: 'Title (A–Z)',
+    releaseNewest: 'Release date (newest)',
+    releaseOldest: 'Release date (oldest)',
 };
 
 // Per-tab sort default — Watchlist / Watching emphasise when added,
@@ -102,9 +114,23 @@ export const DEFAULT_SORT_BY_TAB: Record<ItemStatus, SortOption> = {
 // adding a tab here without updating the default would surface as a
 // silent default-snap to an off-list option.)
 export const SORT_OPTIONS_BY_TAB: Record<ItemStatus, readonly SortOption[]> = {
-    watchlist: ['dateAdded'],
-    watching: ['dateWatched', 'dateAdded', 'rating'],
-    watched: ['dateWatched', 'dateAdded', 'rating'],
+    watchlist: ['dateAdded', 'title', 'releaseNewest', 'releaseOldest'],
+    watching: [
+        'dateWatched',
+        'dateAdded',
+        'rating',
+        'title',
+        'releaseNewest',
+        'releaseOldest',
+    ],
+    watched: [
+        'dateWatched',
+        'dateAdded',
+        'rating',
+        'title',
+        'releaseNewest',
+        'releaseOldest',
+    ],
 };
 
 export interface UseLibraryFiltersResult<T extends FilterableLibraryRow> {
@@ -133,7 +159,7 @@ export interface UseLibraryFiltersResult<T extends FilterableLibraryRow> {
 function compareDescNullsLast<T extends FilterableLibraryRow>(
     a: T,
     b: T,
-    key: 'watchedAt' | 'createdAt' | 'rating',
+    key: 'watchedAt' | 'createdAt' | 'rating' | 'releaseDate',
 ): number {
     const av = a[key];
     const bv = b[key];
@@ -145,11 +171,55 @@ function compareDescNullsLast<T extends FilterableLibraryRow>(
     return 0;
 }
 
-const SORT_KEY: Record<SortOption, 'watchedAt' | 'createdAt' | 'rating'> = {
-    dateWatched: 'watchedAt',
-    dateAdded: 'createdAt',
-    rating: 'rating',
-};
+// ASC counterpart (oldest first), NULLS-LAST — nulls still sink to the bottom,
+// not the top. Used by Release date (oldest).
+function compareAscNullsLast<T extends FilterableLibraryRow>(
+    a: T,
+    b: T,
+    key: 'releaseDate',
+): number {
+    const av = a[key];
+    const bv = b[key];
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    if (av < bv) return -1;
+    if (av > bv) return 1;
+    return 0;
+}
+
+// A→Z title sort, case/accent-insensitive. Empty titles (rare — loaders
+// substitute an "Unable to load title" placeholder) sort last.
+function compareTitleAsc<T extends FilterableLibraryRow>(a: T, b: T): number {
+    const at = a.title.trim();
+    const bt = b.title.trim();
+    if (at === '' && bt === '') return 0;
+    if (at === '') return 1;
+    if (bt === '') return -1;
+    return at.localeCompare(bt, undefined, { sensitivity: 'base' });
+}
+
+// Dispatch the active sort to its comparator.
+function compareRows<T extends FilterableLibraryRow>(
+    a: T,
+    b: T,
+    sortBy: SortOption,
+): number {
+    switch (sortBy) {
+        case 'dateWatched':
+            return compareDescNullsLast(a, b, 'watchedAt');
+        case 'dateAdded':
+            return compareDescNullsLast(a, b, 'createdAt');
+        case 'rating':
+            return compareDescNullsLast(a, b, 'rating');
+        case 'releaseNewest':
+            return compareDescNullsLast(a, b, 'releaseDate');
+        case 'releaseOldest':
+            return compareAscNullsLast(a, b, 'releaseDate');
+        case 'title':
+            return compareTitleAsc(a, b);
+    }
+}
 
 export function useLibraryFilters<T extends FilterableLibraryRow>(
     rows: T[],
@@ -202,10 +272,7 @@ export function useLibraryFilters<T extends FilterableLibraryRow>(
         // `.filter` already returned a new array, but the explicit
         // `.slice()` keeps this safe if a future refactor returns a
         // reference into `rows` — Array.sort is in-place.
-        const sortKey = SORT_KEY[sortBy];
-        return filtered
-            .slice()
-            .sort((a, b) => compareDescNullsLast(a, b, sortKey));
+        return filtered.slice().sort((a, b) => compareRows(a, b, sortBy));
     }, [rows, localQuery, mediaFilter, sortBy, genreFilter]);
 
     // availableGenres derives from the LOADED rows (not visibleRows).

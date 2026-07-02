@@ -78,6 +78,8 @@ interface ItemRow {
     title: string;
     posterPath: string | null;
     year: string;
+    // Full release_date ('YYYY-MM-DD' or null) for the release-date sorts.
+    releaseDate: string | null;
     originalLanguage: string | null;
     genreIds: number[] | null;
 }
@@ -492,6 +494,7 @@ export default function FriendDetailScreen() {
                         year: titleRow?.release_date
                             ? titleRow.release_date.slice(0, 4)
                             : '',
+                        releaseDate: titleRow?.release_date ?? null,
                         originalLanguage: titleRow?.original_language ?? null,
                         genreIds: titleRow?.genre_ids ?? null,
                     };

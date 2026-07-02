@@ -72,6 +72,9 @@ interface LibraryRow {
     title: string;
     posterPath: string | null;
     year: string;
+    // Full release_date ('YYYY-MM-DD' or null) retained for the release-date
+    // sorts; `year` above is the display slice.
+    releaseDate: string | null;
     // Read from the titles row for stage-5 genre / language filters
     // (GIN index on titles.genre_ids exists already). Not rendered by
     // the current library UI; carried on the row so the future filter
@@ -362,6 +365,7 @@ export default function LibraryScreen() {
                             year: titleRow?.release_date
                                 ? titleRow.release_date.slice(0, 4)
                                 : '',
+                            releaseDate: titleRow?.release_date ?? null,
                             originalLanguage: titleRow?.original_language ?? null,
                             genreIds: titleRow?.genre_ids ?? null,
                             recAttribution:
