@@ -1059,8 +1059,10 @@ const styles = StyleSheet.create({
         // No fill and no divider — the controls sit on the page bg, with
         // no separator between them and the poster grid below. Vertical
         // padding only — see the children's own paddingHorizontal for
-        // inset behaviour.
-        paddingTop: spacing.md,
+        // inset behaviour. paddingTop is tight (spacing.xs) so the gap from
+        // the search bar to the segmented row = searchRow.marginBottom (12)
+        // + this (4) = 16pt, not the previous 24.
+        paddingTop: spacing.xs,
         paddingBottom: spacing.sm,
         gap: spacing.md,
     },
