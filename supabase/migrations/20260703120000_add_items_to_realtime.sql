@@ -1,0 +1,40 @@
+-- Add public.items to the supabase_realtime publication so library writes
+-- push realtime events.
+--
+-- Why: the unread bell/badge count (public.unread_count, mirrored by
+-- use-unread-count.ts) treats an items row as "the user acted on this rec" —
+-- adding a recommended title to the library removes that rec from the count.
+-- But items was not a publication member, so the add-to-library action emitted
+-- NO recompute signal: the bell stayed stale until the next tab focus, and the
+-- app-icon badge until the NEXT app foreground (the AppState refresh fires on
+-- 'active', not on backgrounding) — i.e. the icon was permanently one session
+-- behind for add-actioned recs. The hook's own comment reserved this fix
+-- ("add items to the publication + a fourth subscription"); this migration is
+-- that first half. The client half is the items subscription in
+-- use-unread-count.ts, filtered to user_id=eq.me.
+--
+-- Notes:
+--   - Realtime respects RLS for authenticated subscriptions, and the client
+--     filter is user_id=eq.me, so only the user's OWN items events drive the
+--     recompute (friends' visible rows are RLS-readable but filtered out).
+--   - INSERT/UPDATE events carry user_id, so the filter matches. DELETE
+--     events under the default replica identity (PK only) may not match the
+--     filter — acceptable: the delete-shaped path that affects the count
+--     (un-watching a title) also flips the linked rec back to 'pending' via
+--     the reopen_recs_on_unwatch trigger, and recommendations is already a
+--     publication member, so that path signals through the existing
+--     subscription.
+--
+-- Applied as a PLAIN ALTER, unlike the earlier publication migrations
+-- (20260603120000, 20260620130000) which used a pg_publication_tables-guarded
+-- DO block. The guarded form was tried first here and the dashboard SQL
+-- editor reported "Success" while pg_publication_tables showed NO row — the
+-- inner ALTER silently didn't take. The bare statement below is what actually
+-- ran and verified (one row in pg_publication_tables afterwards). Trade-off:
+-- this is NOT idempotent — re-running against a database where items is
+-- already a member errors with SQLSTATE 42710. Check
+--   select 1 from pg_publication_tables
+--   where pubname='supabase_realtime' and tablename='items';
+-- before re-applying elsewhere.
+
+alter publication supabase_realtime add table public.items;

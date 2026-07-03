@@ -23,23 +23,26 @@ import supabase from '@/lib/supabase';
  *   1. `useFocusEffect` — refetches on tab/screen focus so a quick
  *      backgrounding round-trip can't leave a stale count.
  *   2. Realtime subscription — notifications + friend_requests (via
- *      20260603120000) and recommendations (via 20260620130000) are
- *      publication members. Any INSERT / UPDATE / DELETE matching the
- *      user filter triggers a re-fetch, so new recs, reads, and
- *      accept/decline/dismiss drops land live. We refetch the whole count
- *      rather than maintain a delta because the sources need summing
- *      (incl. the recs-minus-library set difference) and RLS-gated
- *      deliveries can drop events on auth edges; a full re-count is
- *      cheaper than chasing those bugs.
+ *      20260603120000), recommendations (via 20260620130000), and items
+ *      (via 20260703120000) are publication members. Any INSERT / UPDATE /
+ *      DELETE matching the user filter triggers a re-fetch, so new recs,
+ *      reads, accept/decline/dismiss drops, AND add-to-library actions land
+ *      live. We refetch the whole count rather than maintain a delta because
+ *      the sources need summing server-side and RLS-gated deliveries can
+ *      drop events on auth edges; a full re-count is cheaper than chasing
+ *      those bugs.
  *
- *      `items` is NOT a publication member, so a library add/remove does
- *      not push a realtime event — its effect on the count lands on the
- *      next focus / app-foreground refetch instead. That's consistent in
- *      practice: a library change is made from a screen the user then
- *      navigates away from (rec view, title screen), and useFocusEffect
- *      re-runs on the way back. (Add items to the publication + a fourth
- *      subscription here if instant library-driven updates are ever
- *      needed.)
+ *      The items subscription exists because adding a recommended title to
+ *      the library is what removes that rec from the count (the RPC's
+ *      NOT EXISTS items check) — without it, the bell lagged until the next
+ *      tab focus and the APP-ICON BADGE until the next app foreground (the
+ *      AppState refresh fires on 'active', not on backgrounding), leaving
+ *      the icon a full session stale for add-actioned recs. Caveat: items
+ *      DELETE events may not match the user_id filter under the default
+ *      replica identity (PK-only), but the delete path that affects the
+ *      count (un-watch) also flips the linked rec back to 'pending' via the
+ *      reopen trigger, which signals through the recommendations
+ *      subscription.
  */
 export function useUnreadCount(): {
     count: number;
@@ -162,6 +165,18 @@ export function useUnreadCount(): {
                         schema: 'public',
                         table: 'recommendations',
                         filter: `to_user_id=eq.${userId}`,
+                    },
+                    () => {
+                        void refresh();
+                    },
+                )
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'items',
+                        filter: `user_id=eq.${userId}`,
                     },
                     () => {
                         void refresh();
