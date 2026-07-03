@@ -21,8 +21,8 @@
  */
 
 import { ArrowDownUp } from 'lucide-react-native';
+import { useState } from 'react';
 import {
-    Alert,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -31,6 +31,7 @@ import {
 } from 'react-native';
 
 import { Chip } from '@/components/chip';
+import { SortSheet } from '@/components/sort-sheet';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import {
     MEDIA_FILTERS,
@@ -79,15 +80,13 @@ export function LibraryFilterControls({
     setGenreStripOpen,
     availableGenres,
 }: LibraryFilterControlsProps) {
-    function openSortMenu() {
-        Alert.alert('Sort by', undefined, [
-            ...availableSortOptions.map((opt) => ({
-                text: SORT_LABELS[opt] + (sortBy === opt ? '  ✓' : ''),
-                onPress: () => setSortBy(opt),
-            })),
-            { text: 'Cancel', style: 'cancel' as const },
-        ]);
-    }
+    // Sort picker: the app's own bottom sheet (SortSheet), same pattern as
+    // WatchersSheet/RatingSheet, on BOTH platforms. Replaces two failed
+    // native attempts: Alert.alert (Cancel indistinguishable from the
+    // options) and ActionSheetIOS (presented as a centered popover with NO
+    // Cancel on a plain iPhone). One cross-platform code path, and the
+    // custom sheet is what the A16/Android build will get too.
+    const [sortSheetOpen, setSortSheetOpen] = useState(false);
 
     return (
         <>
@@ -133,7 +132,7 @@ export function LibraryFilterControls({
                         );
                     })()}
                     <Pressable
-                        onPress={openSortMenu}
+                        onPress={() => setSortSheetOpen(true)}
                         hitSlop={spacing.xs}
                         style={({ pressed }) => [
                             styles.sortButton,
@@ -216,6 +215,20 @@ export function LibraryFilterControls({
                     })}
                 </ScrollView>
             ) : null}
+
+            <SortSheet
+                visible={sortSheetOpen}
+                options={availableSortOptions.map((opt) => ({
+                    value: opt,
+                    label: SORT_LABELS[opt],
+                }))}
+                selectedValue={sortBy}
+                onSelect={(value) => {
+                    setSortBy(value);
+                    setSortSheetOpen(false);
+                }}
+                onClose={() => setSortSheetOpen(false)}
+            />
         </>
     );
 }
