@@ -144,6 +144,17 @@ interface RecRequestedItem {
     note: string | null;
 }
 
+// Lightweight section label row ("NEEDS ATTENTION" / "ACTIVITY") inserted at
+// compose time when the actionable group is non-empty — an inbox with nothing
+// pending renders header-free, exactly as before the split. createdAt is ''
+// and unused: headers are inserted AFTER the per-group sorts, never sorted.
+interface SectionHeaderItem {
+    kind: 'section_header';
+    id: string;
+    createdAt: string;
+    label: string;
+}
+
 type InboxItem =
     | IncomingRecItem
     | FriendRequestItem
@@ -152,7 +163,8 @@ type InboxItem =
     | RecReactedItem
     | RecCommentedItem
     | RecDeclinedItem
-    | RecRequestedItem;
+    | RecRequestedItem
+    | SectionHeaderItem;
 
 // Sent recs are NOT unioned into InboxItem — different render path, no
 // notification semantics, no badge effects. Multi-recipient sends create
@@ -276,7 +288,7 @@ export default function InboxScreen() {
                 (unreadSnapshotRes.data ?? []).map((r) => r.id),
             );
 
-            // Four read sources + one notifications-read sweep, in
+            // Five read sources + one notifications-read sweep, in
             // parallel. The Sent query is unconditional even when the
             // toggle is on Received so flipping to Sent is instant; the
             // network cost is one extra small query + any new title /
@@ -285,27 +297,48 @@ export default function InboxScreen() {
             // drops the moment the user opens this screen (tabs refetch
             // on focus and pick up the change).
             const [
+                pendingRecsResult,
                 recsResult,
                 requestsResult,
                 notificationsResult,
                 sentRecsResult,
                 _markReadResult,
             ] = await Promise.all([
-                // Received = pending + watched + dismissed recs (NOT
-                // pending-only). The post-watch conversation lives on the
-                // rec, so a watched rec stays in the list shown in its
-                // watched state; a dismissed ("passed") rec also stays,
-                // greyed — declining is an action taken, not a reason to
-                // vanish (mirrors watched). Only the unused 'accepted' is
-                // absent. Badge still counts pending-only, so dismissed
-                // here doesn't re-create an actionable nag.
+                // ACTIONABLE recs: every pending rec, on its own query with
+                // NO limit — deliberately. The bell/badge counts this exact
+                // set (unread_count's pending-recs branch), so any cap here
+                // re-creates a counted-but-unreachable class at cap+1. The
+                // set is self-limiting (acting on a rec removes it from
+                // 'pending'), unlike the ever-growing handled history below.
+                // Before this split, pending was mixed into the recency-
+                // limited query below, so every rec the user HANDLED pushed
+                // older UNhandled ones out of the 50-window — badge said N,
+                // inbox showed nothing actionable (the "buried pending recs"
+                // bug).
                 supabase
                     .from('recommendations')
                     .select(
                         'id, from_user_id, tmdb_id, media_type, note, sent_at, status',
                     )
                     .eq('to_user_id', userId)
-                    .in('status', ['pending', 'watched', 'dismissed'])
+                    .eq('status', 'pending')
+                    .order('sent_at', { ascending: false }),
+                // ACTIVITY recs = watched + dismissed only (pending now
+                // comes solely from the uncapped query above — no overlap
+                // by construction). The post-watch conversation lives on
+                // the rec, so a watched rec stays in the list shown in its
+                // watched state; a dismissed ("passed") rec also stays,
+                // greyed — declining is an action taken, not a reason to
+                // vanish (mirrors watched). Only the unused 'accepted' is
+                // absent. This history is recency-windowed: it grows
+                // forever and doesn't need to be exhaustively reachable.
+                supabase
+                    .from('recommendations')
+                    .select(
+                        'id, from_user_id, tmdb_id, media_type, note, sent_at, status',
+                    )
+                    .eq('to_user_id', userId)
+                    .in('status', ['watched', 'dismissed'])
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
                 supabase
@@ -345,12 +378,19 @@ export default function InboxScreen() {
                     .is('read_at', null),
             ]);
 
+            if (pendingRecsResult.error) throw pendingRecsResult.error;
             if (recsResult.error) throw recsResult.error;
             if (requestsResult.error) throw requestsResult.error;
             if (notificationsResult.error) throw notificationsResult.error;
             if (sentRecsResult.error) throw sentRecsResult.error;
 
-            const recs = recsResult.data ?? [];
+            // Combined view of received recs for the shared hydration
+            // batches (profiles, titles, library statuses) — the
+            // actionable/activity split only matters at compose time below.
+            const recs = [
+                ...(pendingRecsResult.data ?? []),
+                ...(recsResult.data ?? []),
+            ];
             const requests = requestsResult.data ?? [];
             const notifications = notificationsResult.data ?? [];
             const sentRecs = sentRecsResult.data ?? [];
@@ -687,8 +727,52 @@ export default function InboxScreen() {
                 }
             }
 
-            inboxItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-            setItems(inboxItems.slice(0, MAX_ITEMS));
+            // Actionable-first compose. Split the badge-counted actionables
+            // (pending recs + friend requests) from the activity feed, sort
+            // each newest-first, and cap ONLY the feed — actionable items
+            // render in full regardless of how much handled history is more
+            // recent. (Previously everything was merged, sorted, and sliced
+            // to 50 together, so handled items crowded old pending recs out
+            // entirely — badge said N, inbox showed nothing actionable.)
+            // Section headers appear only when something needs attention; an
+            // all-clear inbox renders header-free, exactly as before.
+            // NB: a pending rec whose title is already in the library is NOT
+            // badge-counted but still groups here — it's still pending, and
+            // the per-row dot (not the section) is what mirrors the badge.
+            const isActionable = (it: InboxItem) =>
+                it.kind === 'friend_request' ||
+                (it.kind === 'incoming_rec' && it.recStatus === 'pending');
+            const actionableItems = inboxItems.filter(isActionable);
+            const activityItems = inboxItems.filter((it) => !isActionable(it));
+            actionableItems.sort((a, b) =>
+                b.createdAt.localeCompare(a.createdAt),
+            );
+            activityItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+            const activityCapped = activityItems.slice(0, MAX_ITEMS);
+            setItems(
+                actionableItems.length > 0
+                    ? [
+                          {
+                              kind: 'section_header',
+                              id: 'header:needs-attention',
+                              createdAt: '',
+                              label: 'NEEDS ATTENTION',
+                          },
+                          ...actionableItems,
+                          ...(activityCapped.length > 0
+                              ? ([
+                                    {
+                                        kind: 'section_header',
+                                        id: 'header:activity',
+                                        createdAt: '',
+                                        label: 'ACTIVITY',
+                                    },
+                                ] satisfies InboxItem[])
+                              : []),
+                          ...activityCapped,
+                      ]
+                    : activityCapped,
+            );
             // Apply the open-time snapshot alongside the rows so the dots
             // appear with this visit's data.
             setUnreadIds(unreadSnapshot);
@@ -1310,6 +1394,18 @@ export default function InboxScreen() {
 
     function renderRowContent(item: InboxItem) {
         switch (item.kind) {
+            case 'section_header':
+                return (
+                    <Text
+                        style={[
+                            typography.micro,
+                            styles.sectionHeader,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        {item.label}
+                    </Text>
+                );
             case 'incoming_rec':
                 return renderIncomingRec(item);
             case 'friend_request':
@@ -1472,14 +1568,23 @@ export default function InboxScreen() {
                         keyExtractor={(item) => item.id}
                         renderItem={renderRow}
                         contentContainerStyle={styles.listContent}
-                        ItemSeparatorComponent={() => (
-                            <View
-                                style={[
-                                    styles.separator,
-                                    { backgroundColor: palette.border },
-                                ]}
-                            />
-                        )}
+                        // No hairline directly under a section header — the
+                        // label IS the divider there. RN passes the item
+                        // above the gap as leadingItem.
+                        ItemSeparatorComponent={({
+                            leadingItem,
+                        }: {
+                            leadingItem: InboxItem;
+                        }) =>
+                            leadingItem.kind === 'section_header' ? null : (
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            )
+                        }
                     />
                 )
             ) : sentItems.length === 0 ? (
@@ -1523,6 +1628,15 @@ const styles = StyleSheet.create({
     listContent: {
         paddingHorizontal: spacing.base,
         paddingBottom: spacing.lg,
+    },
+    // Section label rows (NEEDS ATTENTION / ACTIVITY) in the actionable-
+    // first compose — same micro + letter-spacing voice as the app's other
+    // section labels. Extra top padding separates ACTIVITY from the last
+    // actionable row above it.
+    sectionHeader: {
+        letterSpacing: 1.2,
+        paddingTop: spacing.md,
+        paddingBottom: spacing.sm,
     },
     row: {
         flexDirection: 'row',
