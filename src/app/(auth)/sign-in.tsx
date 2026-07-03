@@ -1,6 +1,7 @@
 import { isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Image } from 'expo-image';
+import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import {
     ActivityIndicator,
@@ -23,6 +24,11 @@ import { getPalette, radius, spacing, typography } from '@/theme/theme';
 const LOGO_ASPECT = 1998 / 587;
 const LOGO_WIDTH = Math.min(240, Dimensions.get('window').width * 0.6);
 const LOGO_HEIGHT = LOGO_WIDTH / LOGO_ASPECT;
+
+// Legal docs, served from the repo's docs/ folder via GitHub Pages (same
+// pages App Store Connect points at).
+const TERMS_URL = 'https://ptaylor126.github.io/seen/terms.html';
+const PRIVACY_URL = 'https://ptaylor126.github.io/seen/privacy.html';
 
 export default function SignInScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -119,7 +125,7 @@ export default function SignInScreen() {
                         { color: palette.textMuted },
                     ]}
                 >
-                    See what your friends are actually watching
+                    What to watch, from the people who{'\n'}actually know you.
                 </Text>
             </View>
 
@@ -130,7 +136,33 @@ export default function SignInScreen() {
                     { color: palette.textMuted },
                 ]}
             >
-                By continuing, you agree to our Terms and Privacy Policy.
+                By continuing, you agree to our{' '}
+                {/* Nested Text spans (not Pressables) keep the links inline
+                    and tappable. The line break is EXPLICIT ({'\n'} after
+                    Terms) so the second line always reads "and Privacy
+                    Policy." regardless of font scaling. openBrowserAsync
+                    shows the in-app browser sheet instead of bouncing the
+                    user out to Safari mid-sign-in. */}
+                <Text
+                    style={{ color: palette.accent }}
+                    accessibilityRole="link"
+                    onPress={() => {
+                        void WebBrowser.openBrowserAsync(TERMS_URL);
+                    }}
+                >
+                    Terms
+                </Text>
+                {'\n'}and{' '}
+                <Text
+                    style={{ color: palette.accent }}
+                    accessibilityRole="link"
+                    onPress={() => {
+                        void WebBrowser.openBrowserAsync(PRIVACY_URL);
+                    }}
+                >
+                    Privacy Policy
+                </Text>
+                .
             </Text>
         </SafeAreaView>
     );
@@ -172,9 +204,9 @@ const styles = StyleSheet.create({
     },
     disclosure: {
         textAlign: 'center',
-        // Constrain to the button width and centre so the sentence wraps into
-        // two balanced lines ("…Terms" / "and Privacy Policy.") instead of
-        // orphaning "Policy." alone on the last line at full screen width.
+        // The two-line split ("…Terms" / "and Privacy Policy.") is now an
+        // explicit {'\n'} in the JSX, not a wrap effect; the width cap stays
+        // as a guard so huge font scaling can't push a third wrap point.
         alignSelf: 'center',
         maxWidth: BUTTON_WIDTH,
         paddingBottom: spacing.lg,
