@@ -39,6 +39,11 @@ interface WatchersSheetProps {
     // Tapping a watcher row → open their profile. The screen owns the
     // actual router.push (keeps routing out of this presentational sheet).
     onSelectWatcher: (handle: string) => void;
+    // Sheet heading. Defaults to the original "Watched by"; the title
+    // screen's Friends-watching card reuses this same sheet with
+    // "Watching" (its rows simply have no rating — `rating: null` rows
+    // already render name-only).
+    title?: string;
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -56,6 +61,7 @@ export function WatchersSheet({
     watchers,
     onClose,
     onSelectWatcher,
+    title = 'Watched by',
 }: WatchersSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -139,7 +145,7 @@ export function WatchersSheet({
                             { color: palette.text },
                         ]}
                     >
-                        Watched by
+                        {title}
                     </Text>
                     <ScrollView
                         style={{ maxHeight: listMaxHeight }}

@@ -253,6 +253,18 @@ export default function TitleDetailScreen() {
     );
     // Watchers bottom sheet (full list behind the friends-watched card).
     const [showWatchersSheet, setShowWatchersSheet] = useState(false);
+    // Friends currently WATCHING this title (status='watching',
+    // visibility='friends', excludes me) — the parallel signal to
+    // friendActivity's watched set. Same WatcherSheetItem shape; `rating`
+    // is always null here (the items check constraint forbids a rating
+    // unless status='watched'). `null` = not yet loaded; [] = loaded,
+    // nobody watching (renderer hides the card).
+    const [friendsWatching, setFriendsWatching] = useState<
+        WatcherSheetItem[] | null
+    >(null);
+    // Sheet behind the friends-watching card (same WatchersSheet component,
+    // title="Watching").
+    const [showWatchingSheet, setShowWatchingSheet] = useState(false);
     // Watch providers for the device's region. `null` covers loading +
     // "no data in this region" + "fetch failed" — all three should render
     // identically (hide the section), so collapsing them into one state
@@ -493,6 +505,79 @@ export default function TitleDetailScreen() {
                                 ratingsCount: ratings.length,
                             });
                         }
+                    }
+                }
+
+                // Friends-watching: the parallel query to the watched block
+                // above — IDENTICAL privacy contract (RLS scopes non-self
+                // rows to actual friends AND visibility='friends'; the
+                // explicit filter here is the same defence-in-depth, so a
+                // privately-watching friend never shows), with only the
+                // status value differing. Deliberately self-contained (own
+                // profiles fetch) so the watched path stays byte-identical;
+                // merging the two profile lookups is a later optimisation.
+                // No rating selected — the items check constraint forbids a
+                // rating unless status='watched'. Failure is silent, same
+                // as the watched card.
+                if (userId) {
+                    const { data: watchingRows, error: watchingErr } =
+                        await supabase
+                            .from('items')
+                            .select('user_id, updated_at')
+                            .eq('tmdb_id', tmdbId)
+                            .eq('media_type', mediaType)
+                            .eq('status', 'watching')
+                            .eq('visibility', 'friends')
+                            .neq('user_id', userId)
+                            .order('updated_at', { ascending: false });
+                    if (watchingErr) {
+                        console.warn(
+                            'friends-watching fetch failed:',
+                            watchingErr,
+                        );
+                    } else if (active && watchingRows) {
+                        const watchingIds: string[] = [];
+                        const seenWatching = new Set<string>();
+                        for (const row of watchingRows) {
+                            if (!row.user_id || seenWatching.has(row.user_id)) {
+                                continue;
+                            }
+                            seenWatching.add(row.user_id);
+                            watchingIds.push(row.user_id);
+                        }
+                        let watching: WatcherSheetItem[] = [];
+                        if (watchingIds.length > 0) {
+                            const { data: profileRows } = await supabase
+                                .from('profiles')
+                                .select('id, handle, display_name, avatar_url')
+                                .in('id', watchingIds);
+                            const byId = new Map(
+                                (profileRows ?? []).map((p) => [p.id, p]),
+                            );
+                            // Preserve most-recent-first (.in() promises no
+                            // order) so the lead avatar is the most recent
+                            // watcher, matching the watched card.
+                            watching = watchingIds
+                                .map((id) => byId.get(id))
+                                .filter(
+                                    (
+                                        p,
+                                    ): p is {
+                                        id: string;
+                                        handle: string;
+                                        display_name: string;
+                                        avatar_url: string | null;
+                                    } => !!p,
+                                )
+                                .map((p) => ({
+                                    userId: p.id,
+                                    handle: p.handle,
+                                    displayName: p.display_name,
+                                    avatarUrl: p.avatar_url,
+                                    rating: null,
+                                }));
+                        }
+                        if (active) setFriendsWatching(watching);
                     }
                 }
             } catch (err) {
@@ -1319,6 +1404,15 @@ export default function TitleDetailScreen() {
                     onPress={() => setShowWatchersSheet(true)}
                 />
 
+                {/* Friends currently watching — the live counterpart to the
+                    watched card above. Same card treatment; hides itself
+                    when nobody's watching (friends-visible). */}
+                <FriendsWatchingSection
+                    watching={friendsWatching}
+                    palette={palette}
+                    onPress={() => setShowWatchingSheet(true)}
+                />
+
                 <ReviewsSection
                     reviews={reviews}
                     myUserId={myUserId}
@@ -1369,6 +1463,21 @@ export default function TitleDetailScreen() {
                     // Close the sheet first, then open the friend's profile
                     // (avoids pushing a route underneath the open modal).
                     setShowWatchersSheet(false);
+                    router.push(`/friends/${handle}`);
+                }}
+            />
+
+            {/* Full list behind the friends-watching card — same sheet
+                component, "Watching" heading; rows are starless because
+                watching rows can't carry a rating. Fed the same
+                privacy-filtered set as the card. */}
+            <WatchersSheet
+                visible={showWatchingSheet}
+                watchers={friendsWatching ?? []}
+                title="Watching"
+                onClose={() => setShowWatchingSheet(false)}
+                onSelectWatcher={(handle) => {
+                    setShowWatchingSheet(false);
                     router.push(`/friends/${handle}`);
                 }}
             />
@@ -1986,6 +2095,67 @@ function FriendActivitySection({
                         {ratingsLabel}
                     </Text>
                 )}
+            </View>
+        </Pressable>
+    );
+}
+
+// Friends currently WATCHING this title — the live counterpart to
+// FriendActivitySection above. Same card treatment (styles are shared,
+// referenced not forked), same AvatarStack params, no ratings line (a
+// watching row can't carry a rating). Data-gated: hides itself until at
+// least one friend is watching friends-visibly.
+function FriendsWatchingSection({
+    watching,
+    palette,
+    onPress,
+}: {
+    watching: WatcherSheetItem[] | null;
+    palette: Palette;
+    onPress: () => void;
+}) {
+    if (!watching || watching.length === 0) return null;
+
+    // Caption grammar mirrors the watched card, present tense:
+    // "Jane is watching this", "Jane and Bob are watching this",
+    // "Jane and N others are watching this".
+    const names = watching.map((w) => firstName(w.displayName));
+    let caption: string;
+    if (names.length === 1) {
+        caption = `${names[0]} is watching this`;
+    } else if (names.length === 2) {
+        caption = `${names[0]} and ${names[1]} are watching this`;
+    } else {
+        const others = names.length - 1;
+        caption = `${names[0]} and ${others} others are watching this`;
+    }
+
+    return (
+        <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel={`${caption}. Tap to see everyone.`}
+            style={({ pressed }) => [
+                styles.friendsWatchedCard,
+                { backgroundColor: palette.surfaceElevated },
+                pressed && { opacity: 0.6 },
+            ]}
+        >
+            <AvatarStack
+                items={watching}
+                limit={5}
+                size={42}
+                overlap={16}
+                borderColor={palette.surfaceElevated}
+                leadFirst
+            />
+            <View style={styles.friendsWatchedText}>
+                <Text
+                    style={[typography.bodyEmphasis, { color: palette.text }]}
+                    numberOfLines={2}
+                >
+                    {caption}
+                </Text>
             </View>
         </Pressable>
     );
