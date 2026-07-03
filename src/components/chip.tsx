@@ -5,8 +5,8 @@
  *
  * One look, defined once here (geometry from the `chip` theme token, colours
  * from the palette), so the two rows read as one visual family and can't drift:
- *   - selected   → accentWash fill, no border (transparent, keeps the 1px box
- *                  so there's no layout shift), accent text.
+ *   - selected   → accentWash fill, no border (transparent, keeps the same
+ *                  hairline box so there's no layout shift), accent text.
  *   - unselected → transparent fill, palette.border outline, textMuted text.
  * The border width is constant across states — only its colour changes.
  *

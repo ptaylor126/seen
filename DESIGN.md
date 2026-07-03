@@ -66,7 +66,7 @@ Image-forward apps don't need heavy shadows. The imagery provides depth.
 
 The canonical filter / selection pill. One component (`src/components/chip.tsx`), one look, used for every selectable filter/sort pill: the Library media filters (All / Movies / TV), the Genre toggle + genre chips, and the Friends sort chips. Geometry lives in the `chip` theme token; colours resolve from the palette.
 
-- **Geometry** (`theme.chip`): `paddingHorizontal spacing.sm`, `paddingVertical spacing.xs`, `borderRadius radius.full`, `borderWidth 1` (constant across states — only the colour changes, so there's no layout shift on select). Rows of chips sit `spacing.xs` apart.
+- **Geometry** (`theme.chip`): `paddingHorizontal spacing.md`, `paddingVertical spacing.xs`, `borderRadius radius.full`, `borderWidth StyleSheet.hairlineWidth` (was 1px, which read heavy; constant across states — only the colour changes, so there's no layout shift on select). Rows of chips sit `spacing.xs` apart.
 - **Selected** — `accentWash` fill, `transparent` border, `accent` text. Deliberately the *soft* tier: a wash, not solid plum (which is reserved for nav/primary buttons), so chips read as secondary.
 - **Unselected** — `transparent` fill, `border` outline, `textMuted` text.
 - **Text** — `typography.caption` + `fontFamily.medium` (14/Medium), matching the SegmentedControl so the filter zone reads with one voice.

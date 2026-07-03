@@ -10,6 +10,8 @@
  * aligned.
  */
 
+import { StyleSheet } from 'react-native';
+
 export const palette = {
     light: {
         // Light surface ramp carries a subtle plum undertone (R>B>G,
@@ -235,10 +237,17 @@ export const radius = {
 // when selected; transparent fill + border + textMuted when not). See
 // src/components/chip.tsx and the Chip section in DESIGN.md.
 export const chip = {
-    paddingHorizontal: spacing.sm,
+    // md (12) rather than the original sm (8) — the labels sat tight against
+    // the pill ends; one spacing step gives them air without ballooning the
+    // chips.
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: radius.full,
-    borderWidth: 1,
+    // Hairline (≈0.33px @3x, 0.5px @2x — was a full 1px, which read heavy).
+    // Light enough to recede, still enough outline for unselected chips to
+    // read as tappable. Constant across states (selected = transparent at
+    // the same width) so there's no layout shift on select.
+    borderWidth: StyleSheet.hairlineWidth,
 } as const;
 
 export const motion = {
