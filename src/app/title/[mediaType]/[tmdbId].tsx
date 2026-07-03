@@ -92,6 +92,17 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
 const BACKDROP_HEIGHT = Math.round(Dimensions.get('window').height * 0.32);
 const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
+// Backdrop fade stops, derived from the same geometry as the hero row: the
+// title block is top-aligned with the poster, whose top edge sits
+// POSTER_HEIGHT/2 above the band's bottom (the straddle offset). END places
+// full page-bg a small cushion ABOVE that line so the title always lands on
+// clean ground on every screen size — not on a half-faded photo. START keeps
+// a ~45%-of-band ramp above it so the fade stays gradual, clamped so tiny
+// screens can't push it negative. expo-linear-gradient fills everything after
+// the last stop with the last colour, so below END is solid bg.
+const HERO_GRADIENT_END =
+    (BACKDROP_HEIGHT - POSTER_HEIGHT / 2 - spacing.sm) / BACKDROP_HEIGHT;
+const HERO_GRADIENT_START = Math.max(0.1, HERO_GRADIENT_END - 0.45);
 
 interface Sender {
     userId: string;
@@ -925,9 +936,11 @@ export default function TitleDetailScreen() {
                 {/* Backdrop band — shorter than the rec hero. The lower
                     portion fades into the page via a pure ALPHA ramp of
                     the bg colour (bgTransparent → bg, same lesson as the
-                    rec view): no grey/pale seam, and the bottom stop is
-                    exactly palette.bg so the poster straddles a clean
-                    image→page transition. */}
+                    rec view): no grey/pale seam. The ramp completes at
+                    HERO_GRADIENT_END — just above the poster's TOP edge —
+                    so the top-aligned title beside the poster always sits
+                    on solid page bg, and the poster's upper half straddles
+                    the fade rather than a hard image edge. */}
                 <View style={styles.backdropContainer}>
                     {detail.data.backdrop_path ? (
                         <Image
@@ -948,7 +961,7 @@ export default function TitleDetailScreen() {
                     )}
                     <LinearGradient
                         colors={[palette.bgTransparent, palette.bg]}
-                        locations={[0.4, 1]}
+                        locations={[HERO_GRADIENT_START, HERO_GRADIENT_END]}
                         style={StyleSheet.absoluteFill}
                     />
                 </View>
@@ -2303,10 +2316,16 @@ const styles = StyleSheet.create({
     titleText: {
         flex: 1,
         gap: spacing.xs,
-        // Vertically centered against the poster so title + meta read as
-        // one unit beside it, rather than dropping to the poster's bottom
-        // edge with a tall empty gap above them.
-        justifyContent: 'center',
+        // Top-aligned with the poster (flex default — no justifyContent, no
+        // paddingTop): the row's top edge IS the poster's top edge, so the
+        // title's first line starts level with it and content flows down.
+        // One consistent anchor for short and long content alike — the
+        // earlier centred layout was designed for title + meta only, and
+        // silently degraded once the status line + genre pills joined the
+        // column. Legibility at this height is guaranteed by the backdrop
+        // gradient reaching full page-bg BY the poster's top edge (see
+        // HERO_GRADIENT_END), so the title lands on clean ground, not on
+        // the half-faded photo.
     },
     // Status chip row — a distinct row on the plum bg, between the genre
     // tags and Cast (NOT overlaid on the image). Left-aligned and content-
