@@ -1,7 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
     ChevronRight,
-    MessageSquarePlus,
     Plus,
     Search as SearchIcon,
     Users,
@@ -22,9 +21,7 @@ import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-l
 import { Avatar } from '@/components/avatar';
 import { Chip } from '@/components/chip';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
-import { RequestRecSheet } from '@/components/request-rec-sheet';
 import { ScreenHeader } from '@/components/screen-header';
-import { useRequestRec } from '@/hooks/use-request-rec';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import supabase from '@/lib/supabase';
 import {
@@ -60,7 +57,6 @@ export default function FriendsScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
-    const requestRec = useRequestRec();
     const tabBarInset = useFloatingTabBarInset();
     const { count: unreadCount } = useUnreadCount();
 
@@ -205,27 +201,9 @@ export default function FriendsScreen() {
                         @{item.handle}
                     </Text>
                 </View>
-                {/* Inline request action. Its own Pressable captures the
-                    tap so the surrounding row-to-profile navigation
-                    doesn't also fire. */}
-                <Pressable
-                    onPress={() =>
-                        requestRec.open(item.userId, item.displayName)
-                    }
-                    hitSlop={spacing.sm}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Request a recommendation from ${item.displayName}`}
-                    style={({ pressed }) => [
-                        styles.requestIconButton,
-                        pressed && { opacity: 0.6 },
-                    ]}
-                >
-                    <MessageSquarePlus
-                        color={palette.textMuted}
-                        size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                </Pressable>
+                {/* No inline per-row actions — requesting a rec lives on
+                    the friend's profile (one tap away), keeping rows to
+                    identity + navigation. */}
                 <ChevronRight
                     color={palette.textMuted}
                     size={20}
@@ -536,27 +514,12 @@ export default function FriendsScreen() {
                     )}
                 </>
             )}
-
-            <RequestRecSheet
-                visible={requestRec.target !== null}
-                friendName={requestRec.target?.name ?? ''}
-                busy={requestRec.busy}
-                onCancel={requestRec.close}
-                onSend={requestRec.send}
-            />
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
-    requestIconButton: {
-        // Inline per-row "request a rec" affordance, sat between the
-        // name block and the chevron. Padding gives a comfortable tap
-        // target without enlarging the row.
-        paddingHorizontal: spacing.xs,
-        paddingVertical: spacing.xs,
-    },
     addAction: {
         // Header-right "+ Add" — icon + label so it reads as a clear
         // action rather than a bare ambiguous "+". Accent-coloured to
