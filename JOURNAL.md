@@ -37,6 +37,26 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-03 (cont.) — Controls polish batch + two "deliberately not built" decisions
+
+Four UI commits (all device-verified, committed + pushed, **held as the next OTA batch** — publish gates on the 1.0.3 runtime `cd73e576…` as usual), plus two product decisions recorded so they don't get re-proposed.
+
+**Sort menu → custom bottom sheet (`2329eab`).** The Library/friend-library "Sort by" picker is now the app's own `SortSheet` (`src/components/sort-sheet.tsx`, same motion as WatchersSheet/RatingSheet: backdrop fades stationary, panel slides up): option rows with a plum Check on the active sort, and Cancel clearly DETACHED below the list (spacing.lg gap + centred + semibold). **Do not retry native menus here — both failed:** `Alert.alert` stacks Cancel indistinguishably among the options and can't be styled, and `ActionSheetIOS` — documented as a bottom sheet with a detached bold Cancel — **rendered as a centered popover with NO Cancel button at all on a plain iPhone**. (That ActionSheetIOS attempt also produced a debugging detour worth remembering: restarting Metro does NOT push code to the device — the app keeps executing its in-memory bundle until an explicit reload (`r` in the terminal / shake → Reload / force-quit), so "the change didn't take" was twice just an unreloaded bundle.) One cross-platform code path now — the future Android build gets this sheet too, never RN's 3-button-capped Android Alert.
+
+**Segmented control: container hairline dropped (`1f2f2a6`).** The shared SegmentedControl (Library + friend-library Watchlist/Watching/Watched, inbox Received/Sent) loses its hairline border — the surface fill against the zone behind it is the separation, matching the borderless-pill posture. The selected pill never had a stroke (its accentWash fill IS the distinction — noted in the style comment so nobody hunts for a pill outline).
+
+**Chip refinements (`f8f3757`).** Shared `theme.chip` token, so every chip surface follows: `borderWidth` 1 → `StyleSheet.hairlineWidth` (the 1px outline read heavy; colour unchanged, constant-width-across-states preserved so no layout shift on select), and `paddingHorizontal` sm (8) → md (12) (labels sat tight against the pill ends). DESIGN.md geometry updated.
+
+**Friend profile: overview divider dropped, Top-5 gap widened (`6e322ab`).** The full-bleed hairline between the overview sections (Top 5 / recs between / reviews) and the search + browse zone is gone — whitespace does the separation, matching the Library filter-zone divider removal. `topFiveBlock.marginBottom` md → lg, so the gap after Top 5 shows reads as a clean break (48pt against the search bar when Top 5 is the last section) and breathes more above "Recs between you" when that follows.
+
+**Decision — watched recs stay one-way to "Not for me" (no direct dismiss).** Once a received rec is marked watched, the "Not for me" action is gone by design, and we're keeping it that way: (1) the escape hatch exists — change the library status OFF Watched via the Save/status button and the `reopen_recs_on_unwatch` trigger flips the rec back to 'pending', where "Not for me" reappears; (2) a LOW RATING is the designed "watched but not for me" expression — it derives `rating_thumb: down`, the pair-credibility signal; (3) a direct watched→dismissed jump would create data incoherence (the `rating_thumb`-only-when-watched CHECK, a watched items row on a "passed" rec, and it fights the reopen trigger) plus an odd watched-then-passed sender notification sequence.
+
+**Decision — nothing goes on the Library grid tiles.** The grid visibility-badge idea (mirroring the list view's Lock/Users privacy toggle as a poster-corner chip) is rejected: grid tiles stay clean beyond the existing rating/sender corner chips. The list view remains the per-item privacy control surface.
+
+**Still open (carried forward):** S1 `ensure_title` validation migration · S3 rate limiting · F1/F2/F3 scale batch · Android — the A16 is arriving; still to do: the Google Cloud Android OAuth client (package + keystore SHA-1) and the first `eas build` (adaptive icons also still on the old cream art).
+
+---
+
 ## 2026-07-03 — Catch-up: 1.0.3, code review + sign-out hygiene, Android auth prep, UI polish wave, and the bigron badge arc
 
 Big span (2026-07-02 pm → 07-03): the security/code review and its first fix, the 1.0.3 binary + two OTA rounds, Android groundwork, a wave of UI polish, and a three-stage debugging arc on one user's badge that ended in a structural fix. Newest state at the bottom of each thread.
