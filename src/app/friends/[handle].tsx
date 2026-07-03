@@ -1788,14 +1788,16 @@ const styles = StyleSheet.create({
         // sibling. Margins live here (not on the pill) so the pill
         // can flex to fill available width when Cancel appears /
         // disappears. Mirrors Home's SearchBarInput row layout. Generous
-        // top/bottom margin gives the bar breathing room between the
-        // hairline above and the filter zone below (it read as cramped).
+        // TOP margin keeps the breathing room under the hairline above;
+        // the bottom margin is tighter (md) so the search-to-filter gap
+        // matches the main Library screen (marginBottom 12 + filterZone
+        // paddingTop 4 = 16pt).
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         marginHorizontal: spacing.base,
         marginTop: spacing.lg,
-        marginBottom: spacing.lg,
+        marginBottom: spacing.md,
     },
     searchBar: {
         // Local title-filter input. Mirrors the own library's
@@ -1891,9 +1893,11 @@ const styles = StyleSheet.create({
         // No shaded band — the controls sit on the page background (fill
         // applied inline as palette.bg, kept opaque so rows don't show
         // through when this sticky zone is stuck). Matches the Library
-        // screen's filter zone. The overview/browse separation is the
-        // hairline above the search bar (headerDivider).
-        paddingTop: spacing.md,
+        // screen's filter zone, including its tight paddingTop (xs): the
+        // search-to-filter gap = searchRow.marginBottom (12) + this (4)
+        // = 16pt, same as the main Library. The overview/browse
+        // separation is the hairline above the search bar (headerDivider).
+        paddingTop: spacing.xs,
         paddingBottom: spacing.sm,
         gap: spacing.md,
     },
