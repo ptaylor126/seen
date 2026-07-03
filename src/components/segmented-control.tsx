@@ -53,10 +53,7 @@ export function SegmentedControl<T extends string>({
         <View
             style={[
                 styles.container,
-                {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                },
+                { backgroundColor: palette.surface },
             ]}
         >
             {options.map((option) => {
@@ -106,10 +103,13 @@ export function SegmentedControl<T extends string>({
 
 const styles = StyleSheet.create({
     container: {
+        // Borderless — the surface fill against the zone behind it is the
+        // separation (same posture as the borderless search pills). The
+        // selected segment needs no outline either: its accentWash fill on
+        // the white container carries the distinction on its own.
         flexDirection: 'row',
         padding: spacing.xs,
         borderRadius: radius.md,
-        borderWidth: StyleSheet.hairlineWidth,
         // gap so the selected segment's fill doesn't touch its siblings;
         // combined with the container padding, the segment sits as a
         // distinct pill inside the rounded container.
