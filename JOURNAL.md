@@ -37,6 +37,16 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-03 (cont. 2) — Polish batch shipped + Friends-list row slimmed
+
+**Controls polish batch → LIVE.** The four-commit batch from the previous entry (sort bottom sheet, segmented-control hairline, chip refinements, friend-profile divider/gap) published to production via the gated OTA flow — fingerprint verified against the live 1.0.3 runtime (`cd73e576…`) before publish, iOS update group `e9ebe6bc…`.
+
+**Friends list: per-row request-a-rec icon removed (`f2fd171`).** The friend's profile already carries the "Request a recommendation" button, so the per-row `MessageSquarePlus` was a duplicate entry point crowding each row. Rows are now identity + navigation only (avatar, name/@handle, chevron; tap → profile). Everything that existed in `friends.tsx` solely for the inline action went with it — the `useRequestRec` call, the `RequestRecSheet` mount, imports, and the row-icon style; the sheet + hook remain live on the friend profile. Device-verified. Starts the next OTA batch.
+
+**Still open (carried forward):** S1 `ensure_title` validation · S3 rate limiting · F1/F2/F3 scale batch · Android — A16 arriving; Google Cloud Android OAuth client + first `eas build` still to do (adaptive icons on old art).
+
+---
+
 ## 2026-07-03 (cont.) — Controls polish batch + two "deliberately not built" decisions
 
 Four UI commits (all device-verified, committed + pushed, **held as the next OTA batch** — publish gates on the 1.0.3 runtime `cd73e576…` as usual), plus two product decisions recorded so they don't get re-proposed.
