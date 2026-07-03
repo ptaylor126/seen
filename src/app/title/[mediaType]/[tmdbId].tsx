@@ -11,7 +11,7 @@ import {
     Send,
     X,
 } from 'lucide-react-native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
     Alert,
     Dimensions,
@@ -2008,10 +2008,69 @@ function RecommendedBySection({
     );
 }
 
-// "Friends watched this" card — overlapping avatars of friends who've
+// Shared caption grammar for the two friend-activity cards ("Watched by" /
+// "Watching"). Plain-string version for accessibility labels; the JSX
+// FriendNamesCaption below must mirror it exactly:
+//   1 → "A"; 2 → "A and B"; 3+ → "A, B and N others" ("1 other" singular).
+function friendNamesPlain(names: string[]): string {
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    const others = names.length - 2;
+    return `${names[0]}, ${names[1]} and ${others} ${
+        others === 1 ? 'other' : 'others'
+    }`;
+}
+
+// The visual caption: names BOLD, connectors and any suffix (e.g. the
+// " · 4.5★ avg" tail on the watched card) regular weight — the heading
+// above the card carries the verb, so the caption doesn't repeat it.
+// Grammar mirrors friendNamesPlain; keep the two in step.
+function FriendNamesCaption({
+    items,
+    suffix,
+    palette,
+}: {
+    items: WatcherSheetItem[];
+    suffix?: string;
+    palette: Palette;
+}) {
+    const names = items.map((w) => firstName(w.displayName));
+    // Nested spans inherit the parent's colour; bodyEmphasis only flips
+    // the weight.
+    const bold = (text: string, key: string) => (
+        <Text key={key} style={typography.bodyEmphasis}>
+            {text}
+        </Text>
+    );
+    const parts: ReactNode[] = [];
+    if (names.length === 1) {
+        parts.push(bold(names[0], 'first'));
+    } else if (names.length === 2) {
+        parts.push(bold(names[0], 'first'), ' and ', bold(names[1], 'second'));
+    } else {
+        const others = names.length - 2;
+        parts.push(
+            bold(names[0], 'first'),
+            ', ',
+            bold(names[1], 'second'),
+            ` and ${others} ${others === 1 ? 'other' : 'others'}`,
+        );
+    }
+    return (
+        <Text
+            style={[typography.body, { color: palette.text }]}
+            numberOfLines={2}
+        >
+            {parts}
+            {suffix ?? null}
+        </Text>
+    );
+}
+
+// "Watched by" card — heading + overlapping avatars of friends who've
 // watched the title (privacy-filtered to visibility='friends' upstream),
-// a "[Name] and N others watched this" caption, and a small average of
-// those same friends' ratings. Renders NOTHING when no non-private
+// a bold-names caption with those same friends' rating average as a
+// regular-weight tail. Renders NOTHING when no non-private
 // friend has watched it (no empty card). Tapping opens the watchers sheet
 // (onPress) — the card only shows the first few avatars, so the sheet
 // lists everyone.
@@ -2028,75 +2087,69 @@ function FriendActivitySection({
     const { watchedFriends, ratingsAverage, ratingsCount } = activity;
     if (watchedFriends.length === 0) return null;
 
-    // Caption: "Jane watched this", "Jane and Bob watched this",
-    // "Jane and N others watched this". Sentence case, "and" throughout.
-    const names = watchedFriends.map((w) => firstName(w.displayName));
-    let caption: string;
-    if (names.length === 1) {
-        caption = `${names[0]} watched this`;
-    } else if (names.length === 2) {
-        caption = `${names[0]} and ${names[1]} watched this`;
-    } else {
-        const others = names.length - 1;
-        caption = `${names[0]} and ${others} others watched this`;
-    }
+    // Plain names for the accessibility label; the visual caption is
+    // FriendNamesCaption (bold names, regular connectors + avg tail).
+    const namesText = friendNamesPlain(
+        watchedFriends.map((w) => firstName(w.displayName)),
+    );
 
     // Average over the SAME watched set: mean stored 1-10 → stars (÷2),
-    // trailing .0 suppressed (4★ not 4.0★), space before the star. Only
-    // when ≥1 of them rated.
+    // trailing .0 suppressed (4★ not 4.0★). Only when ≥1 of them rated.
     let ratingsLabel = '';
     if (ratingsAverage !== null && ratingsCount > 0) {
         const stars = ratingsAverage / 2;
         ratingsLabel = `${
             Number.isInteger(stars) ? stars : stars.toFixed(1)
-        } ★ avg`;
+        }★ avg`;
     }
 
     return (
-        <Pressable
-            onPress={onPress}
-            accessibilityRole="button"
-            accessibilityLabel={`${caption}. Tap to see everyone.`}
-            style={({ pressed }) => [
-                styles.friendsWatchedCard,
-                { backgroundColor: palette.surfaceElevated },
-                pressed && { opacity: 0.6 },
-            ]}
-        >
-            {/* Avatars on the LEFT, vertically centred against the text
-                block. Big enough (42) to feel present. leadFirst so the
-                lead avatar is the named friend (watchedFriends[0]);
-                borderColor = card fill so chips read cleanly cut-out. */}
-            <AvatarStack
-                items={watchedFriends}
-                limit={5}
-                size={42}
-                overlap={16}
-                borderColor={palette.surfaceElevated}
-                leadFirst
-            />
-            {/* Text block to the RIGHT: caption (up to 2 lines) with the
-                avg directly beneath it. flex:1 so it takes the remaining
-                width beside the avatars. */}
-            <View style={styles.friendsWatchedText}>
-                <Text
-                    style={[typography.bodyEmphasis, { color: palette.text }]}
-                    numberOfLines={2}
-                >
-                    {caption}
-                </Text>
-                {ratingsLabel !== '' && (
-                    <Text
-                        style={[
-                            typography.caption,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        {ratingsLabel}
-                    </Text>
-                )}
-            </View>
-        </Pressable>
+        <View style={styles.friendsSection}>
+            {/* Section heading — same voice as Recommended by / Cast /
+                Reviews, so the caption below doesn't repeat "watched". */}
+            <Text style={[typography.bodyEmphasis, { color: palette.text }]}>
+                Watched by
+            </Text>
+            <Pressable
+                onPress={onPress}
+                accessibilityRole="button"
+                accessibilityLabel={`Watched by ${namesText}${
+                    ratingsLabel !== '' ? `, ${ratingsLabel}` : ''
+                }. Tap to see everyone.`}
+                style={({ pressed }) => [
+                    styles.friendsWatchedCard,
+                    { backgroundColor: palette.surfaceElevated },
+                    pressed && { opacity: 0.6 },
+                ]}
+            >
+                {/* Avatars on the LEFT, vertically centred against the
+                    caption. Big enough (42) to feel present. leadFirst so
+                    the lead avatar is the first named friend; borderColor
+                    = card fill so chips read cleanly cut-out. */}
+                <AvatarStack
+                    items={watchedFriends}
+                    limit={5}
+                    size={42}
+                    overlap={16}
+                    borderColor={palette.surfaceElevated}
+                    leadFirst
+                />
+                {/* Caption to the RIGHT: "Jennyg and 5 others · 4.5★ avg"
+                    — names bold, the rest regular. flex:1 so it takes the
+                    remaining width beside the avatars. */}
+                <View style={styles.friendsWatchedText}>
+                    <FriendNamesCaption
+                        items={watchedFriends}
+                        suffix={
+                            ratingsLabel !== ''
+                                ? ` · ${ratingsLabel}`
+                                : undefined
+                        }
+                        palette={palette}
+                    />
+                </View>
+            </Pressable>
+        </View>
     );
 }
 
@@ -2116,48 +2169,42 @@ function FriendsWatchingSection({
 }) {
     if (!watching || watching.length === 0) return null;
 
-    // Caption grammar mirrors the watched card, present tense:
-    // "Jane is watching this", "Jane and Bob are watching this",
-    // "Jane and N others are watching this".
-    const names = watching.map((w) => firstName(w.displayName));
-    let caption: string;
-    if (names.length === 1) {
-        caption = `${names[0]} is watching this`;
-    } else if (names.length === 2) {
-        caption = `${names[0]} and ${names[1]} are watching this`;
-    } else {
-        const others = names.length - 1;
-        caption = `${names[0]} and ${others} others are watching this`;
-    }
+    // Plain names for the accessibility label; the heading carries
+    // "Watching", so the caption is just the names (bold via
+    // FriendNamesCaption — e.g. "Seanos and Buster", "Seanos, Buster and
+    // 4 others").
+    const namesText = friendNamesPlain(
+        watching.map((w) => firstName(w.displayName)),
+    );
 
     return (
-        <Pressable
-            onPress={onPress}
-            accessibilityRole="button"
-            accessibilityLabel={`${caption}. Tap to see everyone.`}
-            style={({ pressed }) => [
-                styles.friendsWatchedCard,
-                { backgroundColor: palette.surfaceElevated },
-                pressed && { opacity: 0.6 },
-            ]}
-        >
-            <AvatarStack
-                items={watching}
-                limit={5}
-                size={42}
-                overlap={16}
-                borderColor={palette.surfaceElevated}
-                leadFirst
-            />
-            <View style={styles.friendsWatchedText}>
-                <Text
-                    style={[typography.bodyEmphasis, { color: palette.text }]}
-                    numberOfLines={2}
-                >
-                    {caption}
-                </Text>
-            </View>
-        </Pressable>
+        <View style={styles.friendsSection}>
+            <Text style={[typography.bodyEmphasis, { color: palette.text }]}>
+                Watching
+            </Text>
+            <Pressable
+                onPress={onPress}
+                accessibilityRole="button"
+                accessibilityLabel={`Watching: ${namesText}. Tap to see everyone.`}
+                style={({ pressed }) => [
+                    styles.friendsWatchedCard,
+                    { backgroundColor: palette.surfaceElevated },
+                    pressed && { opacity: 0.6 },
+                ]}
+            >
+                <AvatarStack
+                    items={watching}
+                    limit={5}
+                    size={42}
+                    overlap={16}
+                    borderColor={palette.surfaceElevated}
+                    leadFirst
+                />
+                <View style={styles.friendsWatchedText}>
+                    <FriendNamesCaption items={watching} palette={palette} />
+                </View>
+            </Pressable>
+        </View>
     );
 }
 
@@ -2701,12 +2748,21 @@ const styles = StyleSheet.create({
     // page edges. Row: avatars on the left, text block on the right,
     // vertically centred against each other. Even `padding` inside the
     // card; `gap` separates the avatars from the text.
+    // Shared frame for the two friend-activity sections (Watched by /
+    // Watching): mirrors recBySection — base inset, lg top gap, md gap
+    // between the heading and the card — so Recommended by / Watched by /
+    // Watching stack with one rhythm.
+    friendsSection: {
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        gap: spacing.md,
+    },
+    // The card itself carries no outer margins — friendsSection above owns
+    // inset + top gap for both cards.
     friendsWatchedCard: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.md,
-        marginHorizontal: spacing.base,
-        marginTop: spacing.lg,
         padding: spacing.md,
         borderRadius: radius.md,
     },
