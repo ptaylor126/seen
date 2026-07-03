@@ -1408,13 +1408,11 @@ export default function FriendDetailScreen() {
                 </View>
             )}
 
-            {/* Hairline separating the overview/header sections (Top 5,
-                recs, reviews) from the search + library-browse zone below.
-                Full-bleed, low-contrast (palette.border) — same quiet
-                divider idiom as the Library filter zone. */}
-            <View
-                style={[styles.headerDivider, { backgroundColor: palette.border }]}
-            />
+            {/* No divider between the overview sections (Top 5, recs,
+                reviews) and the search + browse zone — whitespace does the
+                separation (the last overview section's marginBottom +
+                searchRow's marginTop), matching the Library filter zone's
+                divider removal. */}
 
             {/* Local title search — mirrors the library tab's local-filter
                 bar (X = clear-but-stay, Cancel = exit + dismiss). Wired to
@@ -1703,7 +1701,9 @@ const styles = StyleSheet.create({
         // Vertical breathing room below the top-5 sections; zero-
         // height when both arrays are empty (the component returns
         // null), so no stray padding appears in the no-favorites case.
-        marginBottom: spacing.md,
+        // lg (was md): with the overview/browse hairline removed,
+        // whitespace alone separates Top 5 from whatever follows.
+        marginBottom: spacing.lg,
     },
     recsBetweenSection: {
         // Heading + strip block, base inset, spaced below Top 5 and above
@@ -1776,19 +1776,13 @@ const styles = StyleSheet.create({
     reviewSpoiler: {
         fontStyle: 'italic',
     },
-    headerDivider: {
-        // Full-bleed hairline between the overview sections and the search
-        // + browse zone. Colour applied inline (palette.border). The space
-        // above comes from the preceding section's marginBottom; the space
-        // below comes from searchRow's marginTop.
-        height: StyleSheet.hairlineWidth,
-    },
     searchRow: {
         // Outer row hosting the search pill + the conditional Cancel
         // sibling. Margins live here (not on the pill) so the pill
         // can flex to fill available width when Cancel appears /
         // disappears. Mirrors Home's SearchBarInput row layout. Generous
-        // TOP margin keeps the breathing room under the hairline above;
+        // TOP margin keeps the breathing room under the overview sections
+        // above (no divider — whitespace is the separation);
         // the bottom margin is tighter (md) so the search-to-filter gap
         // matches the main Library screen (marginBottom 12 + filterZone
         // paddingTop 4 = 16pt).
@@ -1896,7 +1890,7 @@ const styles = StyleSheet.create({
         // screen's filter zone, including its tight paddingTop (xs): the
         // search-to-filter gap = searchRow.marginBottom (12) + this (4)
         // = 16pt, same as the main Library. The overview/browse
-        // separation is the hairline above the search bar (headerDivider).
+        // separation is whitespace above the search bar (no divider).
         paddingTop: spacing.xs,
         paddingBottom: spacing.sm,
         gap: spacing.md,
