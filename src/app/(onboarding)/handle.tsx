@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
 import { useKeyboard } from '@/hooks/use-keyboard-open';
+import { useProfile } from '@/hooks/use-profile';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import {
@@ -33,6 +34,11 @@ export default function HandleScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
+    // Root ProfileProvider refresh — called after the handle save so the
+    // cached profile (still the signup-default user_<hex> row fetched at
+    // sign-in) is fresh before any later screen reads it (the invite step
+    // builds its share message from profile.handle).
+    const { refresh: refreshProfile } = useProfile();
 
     const [handle, setHandle] = useState('');
     const [busy, setBusy] = useState(false);
@@ -76,6 +82,21 @@ export default function HandleScreen() {
                     return;
                 }
                 throw error;
+            }
+
+            // The write succeeded — refresh the ProfileProvider so the
+            // context carries the chosen handle (not the signup default)
+            // before the next screen mounts. Best-effort: a failed re-read
+            // must NOT trap the user here; the save is the part that
+            // matters, and downstream fallbacks (invite's handle-less
+            // pitch) degrade gracefully.
+            try {
+                await refreshProfile();
+            } catch (err) {
+                console.warn(
+                    'handle saved but profile refresh failed (continuing):',
+                    err,
+                );
             }
 
             router.push('/(onboarding)/currently-watching');
