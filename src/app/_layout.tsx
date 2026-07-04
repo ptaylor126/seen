@@ -9,6 +9,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { LaunchSequence } from '@/components/launch-sequence';
@@ -79,12 +80,23 @@ export default function RootLayout() {
     // view controller — same reason SafeAreaView doesn't work inside
     // Modal); any draggable list rendered inside a Modal would need
     // its own GestureHandlerRootView inside the Modal.
+    // KeyboardProvider (react-native-keyboard-controller) sits between the
+    // infra providers and the domain providers: inside GestureHandlerRootView
+    // (which must stay OUTERMOST per gesture-handler's strict requirement)
+    // and SafeAreaProvider, but outside ProfileProvider and the entire
+    // navigation tree, so every screen — including modally-presented routes —
+    // renders under it. It enables the library's native keyboard module;
+    // by itself it changes no behavior (screens opt in via the library's
+    // KeyboardAvoidingView / KeyboardStickyView / hooks in the migration
+    // commits that follow).
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
-                <ProfileProvider>
-                    <RootLayoutInner />
-                </ProfileProvider>
+                <KeyboardProvider>
+                    <ProfileProvider>
+                        <RootLayoutInner />
+                    </ProfileProvider>
+                </KeyboardProvider>
             </SafeAreaProvider>
         </GestureHandlerRootView>
     );
