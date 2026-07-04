@@ -269,3 +269,19 @@ npx supabase gen types typescript --linked --log-level error 2>/dev/null > src/l
 The `--log-level error 2>/dev/null` is needed because the CLI writes status messages to stdout by default, which would pollute the generated TypeScript file.
 
 This is non-negotiable - TypeScript correctness throughout the app depends on it.
+
+## 7. OTA publishing
+
+An `eas update` only applies if its runtime fingerprint exactly matches the installed build's — a mismatched update publishes "successfully" and then silently never reaches anyone.
+
+Before any publish, run the gate:
+
+```bash
+bash scripts/check-ota-gate.sh
+```
+
+It compares the working tree's fingerprint against the latest finished production build's runtime, per platform. Only publish when every platform you're targeting reports OK.
+
+- Default `eas update --channel production` publishes to BOTH platforms. Scope with `--platform ios` / `--platform android` when only one needs it — a scoped publish creates nothing for the other platform.
+- `package.json`'s `scripts` block is a fingerprint input: adding even an npm alias shifts both runtimes off the live builds. That's why the gate is invoked as a bash script, not `npm run` — add an alias only at a binary bump, when the runtimes rotate anyway. Treat any app.json / dependency / asset / package.json change the same way: re-run the gate, and expect binary-affecting changes to close the OTA window until the next build.
+- Onboarding / first-launch fixes cannot reach new users via OTA — a new user runs onboarding before any update is fetched. Those ship in the next binary.
