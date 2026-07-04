@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Tabs } from 'expo-router';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 
 import FriendsIcon from '../../../assets/images/navbar/icon-friends.svg';
 import HomeIcon from '../../../assets/images/navbar/icon-home.svg';
@@ -33,6 +34,20 @@ function IconBadgeSync() {
     useEffect(() => {
         if (!loaded) return;
         void Notifications.setBadgeCountAsync(count);
+    }, [loaded, count]);
+    // Re-assert on foreground: the on-change effect above only fires when
+    // `count` changes, so a badge altered behind the app's back (iOS zeroing
+    // it on a newly-granted permission, a push setting an absolute number)
+    // stays wrong until the count happens to move. Rewriting the current
+    // count on every AppState 'active' corrects it on return. Gated on
+    // `loaded` so we never assert the placeholder 0.
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'active' && loaded) {
+                void Notifications.setBadgeCountAsync(count);
+            }
+        });
+        return () => sub.remove();
     }, [loaded, count]);
     return null;
 }

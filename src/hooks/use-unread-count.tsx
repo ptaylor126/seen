@@ -82,8 +82,14 @@ export function UnreadCountProvider({ children }: { children: ReactNode }) {
             } = await supabase.auth.getSession();
             const userId = session?.user.id;
             if (!userId) {
-                setCount(0);
-                setLoaded(true); // signed out is a determined state → 0 is real
+                // NO setCount(0) here: getSession() can transiently return null
+                // during a token refresh, and writing 0 would flash the badge
+                // to 0 (IconBadgeSync mirrors count) and strand it there. Keep
+                // the last-known count; a real sign-out clears the badge
+                // explicitly via cleanupPushOnSignOut, and the provider
+                // unmounts as routing leaves (tabs). setLoaded(true) so a
+                // genuinely signed-out cold start doesn't hang.
+                setLoaded(true);
                 return;
             }
 

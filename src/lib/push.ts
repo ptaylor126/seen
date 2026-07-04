@@ -208,6 +208,40 @@ export async function promptPushAtHighIntent(userId: string): Promise<void> {
         await maybeEnablePushAfterAccept(userId);
     } catch (err) {
         console.warn('push: high-intent prompt failed silently', err);
+    } finally {
+        // Re-assert the true count after the permission flow settles — on
+        // EVERY branch (granted / denied / prompt-shown / error). iOS zeroes
+        // the app-icon badge when badge authorisation is newly granted, and
+        // IconBadgeSync only writes on a count *change*, so an unchanged
+        // count leaves the icon stranded at 0. This re-asserts the real
+        // number. push.ts can't read the (tabs)-scoped UnreadCountProvider,
+        // so it fetches the same value from the same RPC (see helper).
+        await reassertBadgeFromServer();
+    }
+}
+
+// Fetch the current unread count from the server and write it to the OS
+// app-icon badge. GUARDED against the known trap: if there is no signed-in
+// user, or the RPC errors / returns a non-number, it writes NOTHING — never a
+// spurious 0. Uses the exact same invocation the bell provider uses
+// (unread_count, param p_uid), so the value can't diverge from the bell.
+async function reassertBadgeFromServer(): Promise<void> {
+    try {
+        const {
+            data: { session },
+        } = await supabase.auth.getSession();
+        const userId = session?.user.id;
+        if (!userId) return; // no real count to assert → leave the badge alone
+
+        const { data, error } = await supabase.rpc('unread_count', {
+            p_uid: userId,
+        });
+        if (error) throw error;
+        if (typeof data === 'number') {
+            await Notifications.setBadgeCountAsync(data);
+        }
+    } catch (err) {
+        console.warn('push: badge re-assert failed silently', err);
     }
 }
 
