@@ -6,7 +6,6 @@ import {
     ActivityIndicator,
     Alert,
     Keyboard,
-    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -15,10 +14,18 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import {
+    KeyboardStickyView,
+    useKeyboardState,
+    useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, {
+    interpolate,
+    useAnimatedStyle,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
@@ -66,7 +73,29 @@ export default function RecommendScreen() {
     // but we still toggle its own paddingBottom on open/close so the
     // home-indicator inset doesn't leave a 34px gap above the keyboard
     // when it rises.
-    const keyboard = useKeyboard();
+    const keyboardState = useKeyboardState();
+    // Closed-state home-indicator clearance, animated in LOCKSTEP with the
+    // KeyboardStickyView lift: both read the same keyboard progress (0 closed
+    // → 1 open), so the bar moves once, smoothly, to its resting spot. This
+    // replaces the discrete paddingBottom swap (keyed on keyboardState.height,
+    // which flips only at keyboardDidShow — a step landing mid-animation that
+    // rode the bar too high then jolted it down). paddingBottom is now the
+    // constant internal content room (spacing.sm); the clearance is a cheap
+    // transform (no per-frame relayout). translateY -insets.bottom when closed
+    // (lift clear of the home indicator) → 0 when open (bar sits tight on the
+    // keyboard top via KeyboardStickyView).
+    const keyboardProgress = useReanimatedKeyboardAnimation().progress;
+    const barClearanceStyle = useAnimatedStyle(() => ({
+        transform: [
+            {
+                translateY: interpolate(
+                    keyboardProgress.value,
+                    [0, 1],
+                    [-insets.bottom, 0],
+                ),
+            },
+        ],
+    }));
 
     const mediaType: MediaType | null =
         params.mediaType === 'movie' || params.mediaType === 'tv'
@@ -629,21 +658,9 @@ export default function RecommendScreen() {
                 </Pressable>
             </View>
 
-            {/* No KeyboardAvoidingView. KAV's 'padding' behavior was
-                only partially lifting the note field above the
-                keyboard — the multiline TextInput could grow as the
-                user typed, and KAV's indirect padding calculation
-                didn't always land the bar fully above the keyboard.
-                Now that Send moved to the header (the part that has
-                to be reachable while typing), we only need to lift
-                the note field + char counter, which we do directly:
-                the bar's marginBottom = keyboard.height on iOS when
-                the keyboard is open, so the bar's outer bottom sits
-                exactly at the keyboard's top. On Android the
-                manifest's windowSoftInputMode=adjustResize shrinks
-                the window when the keyboard rises, which keeps the
-                bar at the (now-shorter) screen bottom — no manual
-                marginBottom needed. */}
+            {/* No KeyboardAvoidingView on this column — Send is in the
+                header (reachable while typing) and the note bar is lifted by
+                its own KeyboardStickyView below. */}
             <View style={styles.flex}>
                 <ScrollView
                     style={styles.flex}
@@ -653,12 +670,12 @@ export default function RecommendScreen() {
                         styles.scrollContent,
                         // While the friend search is focused the note bar is
                         // collapsed, so the keyboard-height compensation it
-                        // normally carries moves here: on iOS (no window
-                        // resize) pad the scroll content so every friend row
-                        // can scroll clear of the keyboard. Android's
-                        // adjustResize already shrinks the window — no inset.
-                        localFocused && Platform.OS === 'ios' && keyboard.open
-                            ? { paddingBottom: keyboard.height + spacing.sm }
+                        // normally carries moves here: pad the scroll content
+                        // so every friend row can scroll clear of the
+                        // keyboard. keyboard-controller reports the real IME
+                        // inset on BOTH platforms, so no Platform fork.
+                        localFocused && keyboardState.height > 0
+                            ? { paddingBottom: keyboardState.height + spacing.sm }
                             : null,
                     ]}
                 >
@@ -838,31 +855,25 @@ export default function RecommendScreen() {
                     </Pressable>
                 </ScrollView>
 
-                {/* Pinned bottom bar: note input + char count. Send
-                    moved to the header so it stays reachable above the
-                    keyboard. The bar still pins to the bottom (visible
-                    regardless of friend-list scroll position so the
-                    note is never below the fold) and its paddingBottom
-                    drops the home-indicator inset when the keyboard
-                    rises so the bar sits flush against the keyboard. */}
+                {/* Pinned bottom bar: note input + char count. Send moved to
+                    the header so it stays reachable above the keyboard. The
+                    bar pins to the bottom (visible regardless of friend-list
+                    scroll position so the note is never below the fold).
+                    KeyboardStickyView lifts it onto the keyboard's top edge
+                    when open; barClearanceStyle animates the closed-state
+                    home-indicator lift on the SAME keyboard progress, so the
+                    two move together (no overshoot). paddingBottom is the
+                    constant internal content room. */}
                 {!loading && !error && friends.length > 0 && !localFocused ? (
-                    <View
+                    <KeyboardStickyView>
+                    <Animated.View
                         style={[
                             styles.bottomBar,
+                            barClearanceStyle,
                             {
                                 backgroundColor: palette.bg,
                                 borderTopColor: palette.border,
-                                paddingBottom: keyboard.open
-                                    ? spacing.sm
-                                    : insets.bottom + spacing.sm,
-                                // iOS-only direct lift via useKeyboard.
-                                // Android relies on adjustResize from the
-                                // manifest; double-lifting would push the
-                                // bar above the now-shorter window.
-                                marginBottom:
-                                    Platform.OS === 'ios' && keyboard.open
-                                        ? keyboard.height
-                                        : 0,
+                                paddingBottom: spacing.sm,
                             },
                         ]}
                     >
@@ -910,7 +921,8 @@ export default function RecommendScreen() {
                         >
                             {note.length}/{NOTE_MAX_LENGTH}
                         </Text>
-                    </View>
+                    </Animated.View>
+                    </KeyboardStickyView>
                 ) : null}
             </View>
         </SafeAreaView>
