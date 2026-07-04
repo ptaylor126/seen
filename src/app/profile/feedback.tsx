@@ -7,7 +7,6 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
     Platform,
     Pressable,
     StyleSheet,
@@ -16,6 +15,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { pickFeedbackImage, uploadFeedbackScreenshot } from '@/lib/feedback-upload';
@@ -263,7 +263,7 @@ export default function FeedbackScreen() {
         <View style={{ flex: 1, backgroundColor: palette.bg }}>
             <KeyboardAvoidingView
                 style={{ flex: 1 }}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                behavior="padding"
             >
                 <SafeAreaView style={styles.root} edges={['top']}>
                     {renderHeader()}

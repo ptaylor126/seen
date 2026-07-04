@@ -5,8 +5,6 @@ import { useRef, useState } from 'react';
 import {
     Alert,
     Keyboard,
-    KeyboardAvoidingView,
-    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -14,6 +12,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
@@ -126,7 +125,7 @@ export default function CurrentlyWatchingScreen() {
         <View style={{ flex: 1, backgroundColor: palette.bg }}>
         <KeyboardAvoidingView
             style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior="padding"
         >
         <SafeAreaView
             style={[

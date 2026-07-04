@@ -4,9 +4,7 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
     Modal,
-    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -14,6 +12,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { signOut } from '@/lib/auth';
@@ -218,7 +217,7 @@ export default function AccountScreen() {
                     relies on the manifest's adjustResize. */}
                 <KeyboardAvoidingView
                     style={styles.modalFlex}
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    behavior="padding"
                 >
                     <View style={styles.modalContainer}>
                         <Pressable
