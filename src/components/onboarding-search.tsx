@@ -2,7 +2,6 @@ import { Image } from 'expo-image';
 import { Search } from 'lucide-react-native';
 import { Fragment, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Keyboard,
     Pressable,
     StyleSheet,
@@ -12,6 +11,7 @@ import {
     View,
 } from 'react-native';
 
+import { AnimatedLogo } from '@/components/animated-logo';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
     getPalette,
@@ -31,6 +31,9 @@ export type SearchableItem =
 const DEBOUNCE_MS = 300;
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
+// Inline eyes loader width for the search loading state (vs FullScreenLoader's
+// 120). Tweak to taste — judged on device.
+const SEARCH_LOADER_WIDTH = 64;
 
 interface OnboardingSearchProps {
     placeholder: string;
@@ -56,11 +59,12 @@ interface OnboardingSearchProps {
     // ScrollView contentContainer). The owning screen stores this
     // and scrolls to it on onResultsRendered.
     onContainerLayout?: (y: number) => void;
-    // Extra bottom clearance for the short status states (loading /
-    // no-results / failure) so their centred content isn't hidden behind
-    // a pinned footer on the owning screen. currently-watching passes its
-    // footer clearance; favorites leaves it 0.
-    statusBottomInset?: number;
+    // Fires when a search STARTS (loading flips true). The owning screen
+    // scrolls the search container to the top of the visible area so the
+    // loading indicator lands above a pinned footer — the results path
+    // already does this via onResultsRendered; this covers the interval
+    // before results arrive.
+    onLoadingStart?: () => void;
 }
 
 // Shared TMDB search input + results list used by the search-based
@@ -80,12 +84,9 @@ export function OnboardingSearch({
     mediaType,
     onResultsRendered,
     onContainerLayout,
-    statusBottomInset = 0,
+    onLoadingStart,
 }: OnboardingSearchProps) {
     const scheme = useColorScheme() ?? 'light';
-    // Existing statusBlock bottom padding (spacing.xl) + the owner's footer
-    // clearance, so the loading/no-results/failure content clears the footer.
-    const statusBlockInset = { paddingBottom: spacing.xl + statusBottomInset };
     const palette = getPalette(scheme);
 
     const [query, setQuery] = useState('');
@@ -127,6 +128,10 @@ export function OnboardingSearch({
         }
         let active = true;
         setLoading(true);
+        // Bring the search (and the loading indicator below it) into view now,
+        // before results arrive — otherwise the indicator renders below the
+        // focused input, at the keyboard's top edge, behind the pinned footer.
+        onLoadingStart?.();
         const handle = setTimeout(async () => {
             try {
                 const response = await searchMulti(trimmed, 1);
@@ -266,8 +271,8 @@ export function OnboardingSearch({
                 />
             </View>
             {loading ? (
-                <View style={[styles.statusBlock, statusBlockInset]}>
-                    <ActivityIndicator color={palette.accent} />
+                <View style={styles.statusBlock}>
+                    <AnimatedLogo eyesOnly width={SEARCH_LOADER_WIDTH} />
                 </View>
             ) : results === null ? null : searchFailed ? (
                 // Friendly failure block. callProxy already retried
@@ -275,7 +280,7 @@ export function OnboardingSearch({
                 // attempts failed — almost always a connectivity
                 // issue from the device side. Tap-to-retry re-fires
                 // the search effect without making the user re-type.
-                <View style={[styles.statusBlock, statusBlockInset]}>
+                <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={2}
@@ -300,7 +305,7 @@ export function OnboardingSearch({
                     </Pressable>
                 </View>
             ) : results.length === 0 ? (
-                <View style={[styles.statusBlock, statusBlockInset]}>
+                <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={2}

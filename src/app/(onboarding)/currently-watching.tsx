@@ -230,10 +230,10 @@ export default function CurrentlyWatchingScreen() {
                         onPick={handlePick}
                         onResultsRendered={handleResultsRendered}
                         onContainerLayout={handleSearchLayout}
-                        // Same footer clearance the results list gets, so the
-                        // loading indicator isn't hidden behind the opaque
-                        // footer while results load.
-                        statusBottomInset={insets.bottom + FOOTER_CLEARANCE}
+                        // Scroll the search to the top when a search starts, so
+                        // the loading indicator lands above the opaque footer
+                        // (results already do this via onResultsRendered).
+                        onLoadingStart={handleResultsRendered}
                     />
                 )}
             </ScrollView>
