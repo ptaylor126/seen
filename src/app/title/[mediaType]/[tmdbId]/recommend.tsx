@@ -69,10 +69,10 @@ export default function RecommendScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
-    // Bottom bar floats above the keyboard via the KeyboardAvoidingView,
-    // but we still toggle its own paddingBottom on open/close so the
-    // home-indicator inset doesn't leave a 34px gap above the keyboard
-    // when it rises.
+    // The pinned note bar floats above the keyboard via its own
+    // KeyboardStickyView (see below); this keyboard state drives only the
+    // collapsed-note search scroll inset (padding the list so friend rows
+    // clear the keyboard while the note bar is collapsed).
     const keyboardState = useKeyboardState();
     // Closed-state home-indicator clearance, animated in LOCKSTEP with the
     // KeyboardStickyView lift: both read the same keyboard progress (0 closed

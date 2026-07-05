@@ -13,9 +13,9 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { useKeyboardState } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
@@ -41,7 +41,9 @@ export default function LibraryAddScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
-    const { open: keyboardOpen } = useKeyboard();
+    // Selector form returns just the boolean, so the component only
+    // re-renders on visibility changes (not on every keyboard-height frame).
+    const keyboardOpen = useKeyboardState((state) => state.isVisible);
     // Optional recommend-flow context. When the user enters this screen
     // from a friend profile's "Recommend something" button, the friend's
     // user id is passed in as `recommendTo`. We forward it as `preselect`
