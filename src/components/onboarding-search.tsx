@@ -56,6 +56,11 @@ interface OnboardingSearchProps {
     // ScrollView contentContainer). The owning screen stores this
     // and scrolls to it on onResultsRendered.
     onContainerLayout?: (y: number) => void;
+    // Extra bottom clearance for the short status states (loading /
+    // no-results / failure) so their centred content isn't hidden behind
+    // a pinned footer on the owning screen. currently-watching passes its
+    // footer clearance; favorites leaves it 0.
+    statusBottomInset?: number;
 }
 
 // Shared TMDB search input + results list used by the search-based
@@ -75,8 +80,12 @@ export function OnboardingSearch({
     mediaType,
     onResultsRendered,
     onContainerLayout,
+    statusBottomInset = 0,
 }: OnboardingSearchProps) {
     const scheme = useColorScheme() ?? 'light';
+    // Existing statusBlock bottom padding (spacing.xl) + the owner's footer
+    // clearance, so the loading/no-results/failure content clears the footer.
+    const statusBlockInset = { paddingBottom: spacing.xl + statusBottomInset };
     const palette = getPalette(scheme);
 
     const [query, setQuery] = useState('');
@@ -257,7 +266,7 @@ export function OnboardingSearch({
                 />
             </View>
             {loading ? (
-                <View style={styles.statusBlock}>
+                <View style={[styles.statusBlock, statusBlockInset]}>
                     <ActivityIndicator color={palette.accent} />
                 </View>
             ) : results === null ? null : searchFailed ? (
@@ -266,7 +275,7 @@ export function OnboardingSearch({
                 // attempts failed — almost always a connectivity
                 // issue from the device side. Tap-to-retry re-fires
                 // the search effect without making the user re-type.
-                <View style={styles.statusBlock}>
+                <View style={[styles.statusBlock, statusBlockInset]}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={2}
@@ -291,7 +300,7 @@ export function OnboardingSearch({
                     </Pressable>
                 </View>
             ) : results.length === 0 ? (
-                <View style={styles.statusBlock}>
+                <View style={[styles.statusBlock, statusBlockInset]}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
                         numberOfLines={2}
