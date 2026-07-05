@@ -467,7 +467,7 @@ export default function ReviewScreen() {
                                             ]}
                                         >
                                             {v === 'friends'
-                                                ? 'Friends can see this'
+                                                ? 'Friends only'
                                                 : 'Private'}
                                         </Text>
                                     </Pressable>
