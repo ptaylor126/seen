@@ -211,10 +211,10 @@ export default function AccountScreen() {
                 onRequestClose={closeConfirm}
             >
                 {/* Lift the centered card above the keyboard so the Delete /
-                    Cancel buttons stay visible + tappable while typing. Same
-                    approach as DeclineSheet: padding on iOS shrinks the
-                    available height (re-centring the card upward); Android
-                    relies on the manifest's adjustResize. */}
+                    Cancel buttons stay visible + tappable while typing.
+                    keyboard-controller KAV, padding on both platforms. Note:
+                    inside an RN Modal, whose Android window the library's inset
+                    handling may not reach — verify on device (commit 5). */}
                 <KeyboardAvoidingView
                     style={styles.modalFlex}
                     behavior="padding"

@@ -3,9 +3,7 @@ import {
     Animated,
     Dimensions,
     Easing,
-    KeyboardAvoidingView,
     Modal,
-    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -13,6 +11,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -95,9 +94,12 @@ export function DeclineSheet({
             animationType="none"
             onRequestClose={onCancel}
         >
+            {/* keyboard-controller KAV: padding on both platforms. Note: this
+                sits inside an RN Modal, whose Android window the library's
+                inset handling may not reach — verify on device (commit 5). */}
             <KeyboardAvoidingView
                 style={styles.fill}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                behavior="padding"
             >
                 <View style={styles.container}>
                     <AnimatedPressable
