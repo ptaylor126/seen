@@ -137,6 +137,31 @@ export default function RecommendScreen() {
     const [localQuery, setLocalQuery] = useState('');
     const [localFocused, setLocalFocused] = useState(false);
     const localSearchInputRef = useRef<TextInput | null>(null);
+    // Auto-scroll the selected recipient into view when the note field
+    // focuses — the pinned note bar rises with the keyboard and would
+    // otherwise clip the bottom rows (incl. the recipient being written
+    // about). scrollRef drives the scroll; friendListYRef is the friend
+    // list's y within the scroll content, and rowOffsetsRef maps each row's
+    // userId → its y within the list, so the absolute target is the sum.
+    const scrollRef = useRef<ScrollView | null>(null);
+    const friendListYRef = useRef(0);
+    const rowOffsetsRef = useRef<Map<string, number>>(new Map());
+
+    // Bring the first selected recipient near the top of the visible list, so
+    // it's clearly above the note bar / keyboard while composing. Deferred a
+    // frame so the keyboard inset is applied before we scroll.
+    function scrollSelectedRecipientIntoView() {
+        const firstSelected = filteredFriends.find((f) =>
+            selectedFriendIds.has(f.userId),
+        );
+        if (!firstSelected) return;
+        const rowY = rowOffsetsRef.current.get(firstSelected.userId);
+        if (rowY == null) return;
+        const target = Math.max(0, friendListYRef.current + rowY - spacing.base);
+        requestAnimationFrame(() => {
+            scrollRef.current?.scrollTo({ y: target, animated: true });
+        });
+    }
 
     useEffect(() => {
         if (!mediaType || !Number.isFinite(tmdbId)) {
@@ -559,6 +584,15 @@ export default function RecommendScreen() {
             <Pressable
                 key={row.userId}
                 onPress={() => toggleFriend(row.userId)}
+                onLayout={(e) => {
+                    // y is relative to the friendList container; combined with
+                    // friendListYRef it gives the absolute scroll offset used
+                    // to bring a selected recipient into view.
+                    rowOffsetsRef.current.set(
+                        row.userId,
+                        e.nativeEvent.layout.y,
+                    );
+                }}
                 style={({ pressed }) => [
                     styles.friendRow,
                     isSelected && { backgroundColor: palette.accentSubtle },
@@ -663,6 +697,7 @@ export default function RecommendScreen() {
                 its own KeyboardStickyView below. */}
             <View style={styles.flex}>
                 <ScrollView
+                    ref={scrollRef}
                     style={styles.flex}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
@@ -841,7 +876,13 @@ export default function RecommendScreen() {
                                 SEND TO
                             </Text>
                             {filteredFriends.length > 0 ? (
-                                <View style={styles.friendList}>
+                                <View
+                                    style={styles.friendList}
+                                    onLayout={(e) => {
+                                        friendListYRef.current =
+                                            e.nativeEvent.layout.y;
+                                    }}
+                                >
                                     {filteredFriends.map(renderFriendRow)}
                                 </View>
                             ) : (
@@ -905,6 +946,7 @@ export default function RecommendScreen() {
                                 onChangeText={(v) =>
                                     setNote(v.slice(0, NOTE_MAX_LENGTH))
                                 }
+                                onFocus={scrollSelectedRecipientIntoView}
                                 placeholder="Why are you recommending this?"
                                 placeholderTextColor={palette.textMuted}
                                 multiline

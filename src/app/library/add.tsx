@@ -13,7 +13,6 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { useKeyboardState } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import supabase from '@/lib/supabase';
@@ -41,9 +40,6 @@ export default function LibraryAddScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
-    // Selector form returns just the boolean, so the component only
-    // re-renders on visibility changes (not on every keyboard-height frame).
-    const keyboardOpen = useKeyboardState((state) => state.isVisible);
     // Optional recommend-flow context. When the user enters this screen
     // from a friend profile's "Recommend something" button, the friend's
     // user id is passed in as `recommendTo`. We forward it as `preselect`
@@ -266,24 +262,12 @@ export default function LibraryAddScreen() {
                         <ActivityIndicator color={palette.accent} />
                     </View>
                 ) : results === null ? (
-                    // Suppress the "Search for…" placeholder while the
-                    // keyboard is up — the user is clearly typing, and
-                    // a centered prompt floating just above the keyboard
-                    // reads as misalignment rather than guidance. When
-                    // the keyboard is dismissed (e.g. by tapping the
-                    // scrim) the placeholder reappears.
-                    keyboardOpen ? null : (
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[
-                                    typography.body,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                Search for a film or TV show
-                            </Text>
-                        </View>
-                    )
+                    // Empty state intentionally blank: the search bar
+                    // placeholder already says "Search films and TV shows", and
+                    // a duplicate centred hint here just sat half-behind the
+                    // keyboard. (A library-suggestions fill for this space is a
+                    // parked post-launch feature.)
+                    null
                 ) : results.length === 0 ? (
                     <View style={styles.statusBlock}>
                         <Text
