@@ -12,7 +12,15 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import {
+    KeyboardAvoidingView,
+    KeyboardStickyView,
+    useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, {
+    interpolate,
+    useAnimatedStyle,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
@@ -20,7 +28,6 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { setOnboardingItemStatus } from '@/lib/onboarding-utils';
 import { imageUrl } from '@/lib/tmdb';
 import {
@@ -38,12 +45,33 @@ interface AddedItem {
     posterPath: string;
 }
 
+// Footer height estimate (Continue ~46 + gap 8 + Skip ~44 + paddingBottom 12).
+// The scroll content reserves this + the bottom inset so the last search
+// result can always scroll clear of the pinned footer, in both keyboard states.
+const FOOTER_CLEARANCE = 120;
+
 export default function CurrentlyWatchingScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
+    // Footer clearance animated in lockstep with the KeyboardStickyView lift
+    // (same keyboard progress, 0 closed → 1 open): closed the footer sits
+    // insets.bottom above the screen edge via this transform, open it sits on
+    // the keyboard's top edge via the sticky view — one smooth movement, no
+    // overshoot. See recommend.tsx for the full rationale.
+    const keyboardProgress = useReanimatedKeyboardAnimation().progress;
+    const footerClearanceStyle = useAnimatedStyle(() => ({
+        transform: [
+            {
+                translateY: interpolate(
+                    keyboardProgress.value,
+                    [0, 1],
+                    [-insets.bottom, 0],
+                ),
+            },
+        ],
+    }));
     const scrollRef = useRef<ScrollView | null>(null);
     // y-offset of the OnboardingSearch container inside the
     // ScrollView's contentContainer — scroll the input + first result to
@@ -127,23 +155,7 @@ export default function CurrentlyWatchingScreen() {
             style={{ flex: 1 }}
             behavior="padding"
         >
-        <SafeAreaView
-            style={[
-                styles.root,
-                {
-                    // Reserves space at the bottom of SAV so the
-                    // ScrollView's visible viewport ends ABOVE the
-                    // absolutely-positioned footer (instead of running
-                    // under it). 120 = approximate footer height
-                    // (Continue 44 + gap 8 + Skip 36 + ~32 breathing
-                    // room) + spacing.md gap to keyboard/inset.
-                    paddingBottom: keyboardOpen
-                        ? 120
-                        : insets.bottom + 120,
-                },
-            ]}
-            edges={['top']}
-        >
+        <SafeAreaView style={styles.root} edges={['top']}>
             <OnboardingProgress currentStep={3} totalSteps={4} />
             <View style={styles.header}>
                 <Pressable
@@ -161,7 +173,14 @@ export default function CurrentlyWatchingScreen() {
             <ScrollView
                 ref={scrollRef}
                 style={styles.body}
-                contentContainerStyle={styles.bodyContent}
+                contentContainerStyle={[
+                    styles.bodyContent,
+                    // Reserve footer + safe-area room so the last result scrolls
+                    // clear of the pinned footer in both keyboard states.
+                    // Constant (generous when open) rather than keyboard-state-
+                    // branched — simpler and robust.
+                    { paddingBottom: insets.bottom + FOOTER_CLEARANCE },
+                ]}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 showsVerticalScrollIndicator={false}
@@ -216,14 +235,12 @@ export default function CurrentlyWatchingScreen() {
             </ScrollView>
         </SafeAreaView>
         </KeyboardAvoidingView>
-        <View
+        <KeyboardStickyView style={styles.footerSticky}>
+        <Animated.View
             style={[
                 styles.footer,
-                {
-                    bottom: keyboardOpen
-                        ? keyboardHeight + spacing.md
-                        : insets.bottom + spacing.md,
-                },
+                footerClearanceStyle,
+                { backgroundColor: palette.bg },
             ]}
         >
             <Pressable
@@ -258,7 +275,8 @@ export default function CurrentlyWatchingScreen() {
                     Skip
                 </Text>
             </Pressable>
-        </View>
+        </Animated.View>
+        </KeyboardStickyView>
         </View>
     );
 }
@@ -272,10 +290,8 @@ const styles = StyleSheet.create({
     bodyContent: {
         gap: spacing.md,
         paddingTop: spacing.lg,
-        // Footer clearance is provided by the SafeAreaView's
-        // paddingBottom — this is just trailing breathing room inside
-        // the scroll content.
-        paddingBottom: spacing.lg,
+        // paddingBottom (footer clearance) is applied inline on the ScrollView
+        // — it needs insets.bottom + FOOTER_CLEARANCE at runtime.
     },
     confirmation: {
         padding: spacing.lg,
@@ -289,12 +305,23 @@ const styles = StyleSheet.create({
         height: 150,
         borderRadius: radius.sm,
     },
-    footer: {
-        // Absolutely positioned so the buttons snap to the keyboard's top
-        // edge the moment it shows, instead of sliding up with it.
+    footerSticky: {
+        // KeyboardStickyView pinned to the screen bottom; lifts the footer
+        // onto the keyboard's top edge when open (both platforms, animated).
         position: 'absolute',
-        left: spacing.base,
-        right: spacing.base,
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
+    footer: {
+        // Content inside the sticky view. OPAQUE (bg set inline to palette.bg)
+        // and full-width so search results scrolling behind it don't bleed
+        // through — a deliberate pinned action bar, not floating buttons. The
+        // scroll inset keeps rows off it; the closed-state home-indicator
+        // clearance is the animated footerClearanceStyle transform.
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.md,
+        paddingBottom: spacing.md,
         gap: spacing.sm,
     },
     primaryButton: {

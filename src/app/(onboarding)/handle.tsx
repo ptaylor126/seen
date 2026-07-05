@@ -11,11 +11,18 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import {
+    KeyboardAvoidingView,
+    KeyboardStickyView,
+    useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, {
+    interpolate,
+    useAnimatedStyle,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { useProfile } from '@/hooks/use-profile';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
@@ -32,7 +39,23 @@ export default function HandleScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { open: keyboardOpen, height: keyboardHeight } = useKeyboard();
+    // Footer clearance animated in lockstep with the KeyboardStickyView lift
+    // (same keyboard progress, 0 closed → 1 open): closed the footer sits
+    // insets.bottom above the screen edge via this transform, open it sits on
+    // the keyboard's top edge via the sticky view — one smooth movement, no
+    // overshoot. spacing.md padding is the constant gap. See recommend.tsx.
+    const keyboardProgress = useReanimatedKeyboardAnimation().progress;
+    const footerClearanceStyle = useAnimatedStyle(() => ({
+        transform: [
+            {
+                translateY: interpolate(
+                    keyboardProgress.value,
+                    [0, 1],
+                    [-insets.bottom, 0],
+                ),
+            },
+        ],
+    }));
     // Root ProfileProvider refresh — called after the handle save so the
     // cached profile (still the signup-default user_<hex> row fetched at
     // sign-in) is fresh before any later screen reads it (the invite step
@@ -203,16 +226,8 @@ export default function HandleScreen() {
             </View>
         </SafeAreaView>
         </KeyboardAvoidingView>
-        <View
-            style={[
-                styles.footer,
-                {
-                    bottom: keyboardOpen
-                        ? keyboardHeight + spacing.md
-                        : insets.bottom + spacing.md,
-                },
-            ]}
-        >
+        <KeyboardStickyView style={styles.footerSticky}>
+        <Animated.View style={[styles.footer, footerClearanceStyle]}>
             <Pressable
                 onPress={handleContinue}
                 disabled={!canSubmit}
@@ -237,7 +252,8 @@ export default function HandleScreen() {
                     </Text>
                 )}
             </Pressable>
-        </View>
+        </Animated.View>
+        </KeyboardStickyView>
         </View>
     );
 }
@@ -292,15 +308,21 @@ const styles = StyleSheet.create({
         // — higher = more upward shift.
         paddingBottom: 4,
     },
-    footer: {
-        // Absolutely positioned so the Continue button snaps to the
-        // top edge of the keyboard the moment keyboardWillShow fires,
-        // instead of sliding up alongside it. `bottom` is set inline:
-        // keyboardHeight + spacing.md when open, insets.bottom + md
-        // when closed.
+    footerSticky: {
+        // KeyboardStickyView pinned to the screen bottom; it lifts the footer
+        // onto the keyboard's top edge when open (both platforms, animated).
         position: 'absolute',
-        left: spacing.base,
-        right: spacing.base,
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
+    footer: {
+        // Content inside the sticky view. Horizontal inset + a constant
+        // spacing.md bottom gap (above the keyboard when open / the base gap
+        // when closed); the closed-state home-indicator clearance is the
+        // animated footerClearanceStyle transform, in lockstep with the lift.
+        paddingHorizontal: spacing.base,
+        paddingBottom: spacing.md,
         gap: spacing.sm,
     },
     primaryButton: {
