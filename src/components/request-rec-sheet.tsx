@@ -236,7 +236,10 @@ const styles = StyleSheet.create({
     confirmButton: {
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: spacing.md,
+        // Tight to the note field (no helper line sits between them, unlike
+        // DeclineSheet) so the Send + Cancel cluster reads as one unit with
+        // the content rather than floating below a gap.
+        marginTop: spacing.xs,
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
     },

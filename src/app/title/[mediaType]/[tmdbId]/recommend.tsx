@@ -668,13 +668,18 @@ export default function RecommendScreen() {
                     keyboardDismissMode="on-drag"
                     contentContainerStyle={[
                         styles.scrollContent,
-                        // While the friend search is focused the note bar is
-                        // collapsed, so the keyboard-height compensation it
-                        // normally carries moves here: pad the scroll content
-                        // so every friend row can scroll clear of the
-                        // keyboard. keyboard-controller reports the real IME
-                        // inset on BOTH platforms, so no Platform fork.
-                        localFocused && keyboardState.height > 0
+                        // Whenever the keyboard is up, pad the list by the IME
+                        // inset so every friend row — including the selected
+                        // recipient — can scroll clear of it. This covers BOTH
+                        // states: the collapsed-note friend search, AND writing
+                        // the note (the note bar rides up on its
+                        // KeyboardStickyView and would otherwise cover the
+                        // bottom rows, hiding the recipient you're writing
+                        // about). The note bar sits in its own flow slot below
+                        // the list, so only the keyboard-height lift needs
+                        // compensating here. keyboard-controller reports the
+                        // real inset on both platforms — no Platform fork.
+                        keyboardState.height > 0
                             ? { paddingBottom: keyboardState.height + spacing.sm }
                             : null,
                     ]}
