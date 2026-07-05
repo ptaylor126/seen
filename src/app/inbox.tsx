@@ -160,15 +160,18 @@ interface RecRequestedItem {
     note: string | null;
 }
 
-// Lightweight section label row ("NEEDS ATTENTION" / "ACTIVITY") inserted at
-// compose time when the actionable group is non-empty — an inbox with nothing
-// pending renders header-free, exactly as before the split. createdAt is ''
-// and unused: headers are inserted AFTER the per-group sorts, never sorted.
-interface SectionHeaderItem {
-    kind: 'section_header';
+// Fallback for a counted notification whose payload can't build its normal
+// row (missing recommendation_id, or a kind with no specific renderer). We
+// render a generic "interacted with your rec" row instead of skipping it, so
+// no bell-counted notification is ever silently dropped from the list. Taps
+// through to the rec when a recommendation_id is present, otherwise inert.
+interface GenericActivityItem {
+    kind: 'notification_generic';
     id: string;
     createdAt: string;
-    label: string;
+    notificationId: string;
+    actor: ProfileSummary;
+    recId: string | null;
 }
 
 type InboxItem =
@@ -181,7 +184,7 @@ type InboxItem =
     | RecCommentedItem
     | RecDeclinedItem
     | RecRequestedItem
-    | SectionHeaderItem;
+    | GenericActivityItem;
 
 // Sent recs are NOT unioned into InboxItem — different render path, no
 // notification semantics, no badge effects. Multi-recipient sends create
@@ -220,6 +223,20 @@ const SENT_POSTER_WIDTH = 56;
 const SENT_POSTER_HEIGHT = 84;
 const NOTE_PREVIEW_CHARS = 120;
 const MAX_ITEMS = 50;
+
+// The notification kinds the inbox renders — used by BOTH the unread
+// (uncapped) and read (capped) notification fetches so they stay in lockstep.
+// unread_count counts every kind except rec_received; each of these has a
+// renderer (or falls back to the generic row), so bell and list agree.
+const RENDER_KINDS = [
+    'rec_watched',
+    'friend_accepted',
+    'rec_reacted',
+    'comment_reacted',
+    'rec_commented',
+    'rec_declined',
+    'rec_requested',
+] as const;
 
 function relativeTimestamp(iso: string): string {
     const date = new Date(iso);
@@ -288,50 +305,26 @@ export default function InboxScreen() {
             const userId = session?.user.id;
             if (!userId) throw new Error('Not authenticated');
 
-            // Snapshot which notification rows are unread RIGHT NOW —
-            // sequentially, BEFORE the read-sweep in the batch below marks
-            // them read (the sweep races the SELECT inside the same batch,
-            // and the notifications SELECT doesn't fetch read_at anyway).
-            // Best-effort: on error the snapshot is empty (no dots), never
-            // a broken inbox. This is the option-C "unread as of when I
-            // opened" source; the sweep still clears read_at so next visit
-            // is clean.
-            const unreadSnapshotRes = await supabase
-                .from('notifications')
-                .select('id')
-                .eq('user_id', userId)
-                .is('read_at', null);
-            const unreadSnapshot = new Set(
-                (unreadSnapshotRes.data ?? []).map((r) => r.id),
-            );
-
-            // Five read sources + one notifications-read sweep, in
-            // parallel. The Sent query is unconditional even when the
-            // toggle is on Received so flipping to Sent is instant; the
-            // network cost is one extra small query + any new title /
-            // recipient lookups, which fold into the existing batches.
-            // Mark notifications read at the same time so the bell badge
-            // drops the moment the user opens this screen (tabs refetch
-            // on focus and pick up the change).
+            // All read sources in one batch. The three the bell counts —
+            // pending recs, friend requests, UNREAD notifications — are fetched
+            // UNCAPPED so nothing counted can fall outside the window. History
+            // (watched/dismissed recs, READ notifications) is windowed to
+            // MAX_ITEMS; it's not countable, so a cap can't strand a counted
+            // item. The Sent query is unconditional so flipping to the Sent tab
+            // is instant. NB: the mark-read sweep does NOT run here — it runs
+            // only AFTER these reads resolve (see below), so the unread fetch
+            // can't race the write that clears read_at.
             const [
                 pendingRecsResult,
-                recsResult,
+                historyRecsResult,
                 requestsResult,
-                notificationsResult,
+                unreadNotifsResult,
+                readNotifsResult,
                 sentRecsResult,
-                _markReadResult,
             ] = await Promise.all([
-                // ACTIONABLE recs: every pending rec, on its own query with
-                // NO limit — deliberately. The bell/badge counts this exact
-                // set (unread_count's pending-recs branch), so any cap here
-                // re-creates a counted-but-unreachable class at cap+1. The
-                // set is self-limiting (acting on a rec removes it from
-                // 'pending'), unlike the ever-growing handled history below.
-                // Before this split, pending was mixed into the recency-
-                // limited query below, so every rec the user HANDLED pushed
-                // older UNhandled ones out of the 50-window — badge said N,
-                // inbox showed nothing actionable (the "buried pending recs"
-                // bug).
+                // Pending recs — UNCAPPED. The bell counts this exact set, so
+                // any cap re-creates a counted-but-unreachable class at cap+1.
+                // Self-limiting (acting on a rec removes it from 'pending').
                 supabase
                     .from('recommendations')
                     .select(
@@ -340,15 +333,10 @@ export default function InboxScreen() {
                     .eq('to_user_id', userId)
                     .eq('status', 'pending')
                     .order('sent_at', { ascending: false }),
-                // ACTIVITY recs = watched + dismissed only (pending now
-                // comes solely from the uncapped query above — no overlap
-                // by construction). The post-watch conversation lives on
-                // the rec, so a watched rec stays in the list shown in its
-                // watched state; a dismissed ("passed") rec also stays,
-                // greyed — declining is an action taken, not a reason to
-                // vanish (mirrors watched). Only the unused 'accepted' is
-                // absent. This history is recency-windowed: it grows
-                // forever and doesn't need to be exhaustively reachable.
+                // History recs = watched + dismissed only. Recency-windowed:
+                // not countable, grows forever, doesn't need to be exhaustively
+                // reachable. A watched rec stays (post-watch conversation lives
+                // on it); a dismissed ("passed") rec stays greyed.
                 supabase
                     .from('recommendations')
                     .select(
@@ -358,59 +346,87 @@ export default function InboxScreen() {
                     .in('status', ['watched', 'dismissed'])
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
+                // Friend requests — UNCAPPED. friend_requests has no status
+                // column: a row exists iff pending (accept/decline deletes it),
+                // and every row is bell-counted, so no limit.
                 supabase
                     .from('friend_requests')
                     .select('id, from_user_id, created_at')
                     .eq('to_user_id', userId)
-                    .order('created_at', { ascending: false })
-                    .limit(MAX_ITEMS),
+                    .order('created_at', { ascending: false }),
+                // Unread notifications — UNCAPPED. Bell-counted (kind <>
+                // rec_received); fetching all of them guarantees the sweep
+                // below can't clear one we never showed. Also the per-visit
+                // unread-dot source.
                 supabase
                     .from('notifications')
                     .select('id, kind, payload, created_at')
                     .eq('user_id', userId)
-                    .in('kind', [
-                        'rec_watched',
-                        'friend_accepted',
-                        'rec_reacted',
-                        'comment_reacted',
-                        'rec_commented',
-                        'rec_declined',
-                        'rec_requested',
-                    ])
+                    .is('read_at', null)
+                    .in('kind', RENDER_KINDS)
+                    .order('created_at', { ascending: false }),
+                // Read notifications — history, capped. Not countable.
+                supabase
+                    .from('notifications')
+                    .select('id, kind, payload, created_at')
+                    .eq('user_id', userId)
+                    .not('read_at', 'is', null)
+                    .in('kind', RENDER_KINDS)
                     .order('created_at', { ascending: false })
                     .limit(MAX_ITEMS),
-                // Sent recs — no status filter; one row per (title, recipient)
-                // by construction, which is the desired "one line per recipient"
-                // semantic. Recipient profile + title meta hydrate via the
-                // existing shared batches below.
+                // Sent recs — one row per (title, recipient) by construction.
                 supabase
                     .from('recommendations')
                     .select('id, to_user_id, tmdb_id, media_type, sent_at')
                     .eq('from_user_id', userId)
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
-                supabase
-                    .from('notifications')
-                    .update({ read_at: new Date().toISOString() })
-                    .eq('user_id', userId)
-                    .is('read_at', null),
             ]);
 
             if (pendingRecsResult.error) throw pendingRecsResult.error;
-            if (recsResult.error) throw recsResult.error;
+            if (historyRecsResult.error) throw historyRecsResult.error;
             if (requestsResult.error) throw requestsResult.error;
-            if (notificationsResult.error) throw notificationsResult.error;
+            if (unreadNotifsResult.error) throw unreadNotifsResult.error;
+            if (readNotifsResult.error) throw readNotifsResult.error;
             if (sentRecsResult.error) throw sentRecsResult.error;
 
-            // Combined view of received recs for the shared hydration
-            // batches (profiles, titles, library statuses) — the
-            // actionable/activity split only matters at compose time below.
+            // Mark-read sweep — runs ONLY after the reads above resolve, so the
+            // unread fetch can't race the write (read-before-sweep). Every
+            // unread notification was just fetched uncapped, so sweeping ALL
+            // unread is consistent with what we're about to show. Best-effort:
+            // a sweep failure leaves read_at intact (dots reappear next visit)
+            // but never breaks the list.
+            const { error: markReadError } = await supabase
+                .from('notifications')
+                .update({ read_at: new Date().toISOString() })
+                .eq('user_id', userId)
+                .is('read_at', null);
+            if (markReadError) {
+                console.warn('inbox mark-read sweep failed:', markReadError);
+            }
+
+            const unreadNotifs = unreadNotifsResult.data ?? [];
+            const readNotifs = readNotifsResult.data ?? [];
+            // Per-visit unread-dot source: the rows unread at load (pre-sweep).
+            const unreadSnapshot = new Set(unreadNotifs.map((n) => n.id));
+            // Combined notification feed: unread (uncapped) + read (capped).
+            // Disjoint by read_at (both read before the sweep), but deduped by
+            // id defensively so a concurrent write can't double a row.
+            const seenNotifIds = new Set<string>();
+            const notifications: typeof unreadNotifs = [];
+            for (const n of [...unreadNotifs, ...readNotifs]) {
+                if (seenNotifIds.has(n.id)) continue;
+                seenNotifIds.add(n.id);
+                notifications.push(n);
+            }
+
+            // Combined received recs for the shared hydration batches
+            // (profiles, titles, library statuses).
             const recs = [
                 ...(pendingRecsResult.data ?? []),
-                ...(recsResult.data ?? []),
+                ...(historyRecsResult.data ?? []),
             ];
             const requests = requestsResult.data ?? [];
-            const notifications = notificationsResult.data ?? [];
             const sentRecs = sentRecsResult.data ?? [];
 
             // Collect every other-party userId across all sources
@@ -429,24 +445,15 @@ export default function InboxScreen() {
             }
             for (const n of notifications) {
                 const payload = asRecord(n.payload);
-                if (n.kind === 'rec_watched') {
-                    const id = pickString(payload, 'to_user_id');
-                    if (id) otherUserIds.add(id);
-                } else if (n.kind === 'friend_accepted') {
-                    const id = pickString(payload, 'from_user_id');
-                    if (id) otherUserIds.add(id);
-                } else if (
-                    n.kind === 'rec_reacted' ||
-                    n.kind === 'comment_reacted' ||
-                    n.kind === 'rec_commented' ||
-                    n.kind === 'rec_declined' ||
-                    n.kind === 'rec_requested'
-                ) {
-                    // Reactor / commenter / decliner / requester is the
-                    // other party — payload.from_user_id per the trigger/RPC.
-                    const id = pickString(payload, 'from_user_id');
-                    if (id) otherUserIds.add(id);
-                }
+                // rec_watched carries the watcher as to_user_id; every other
+                // kind (and the generic fallback) resolves its actor from
+                // from_user_id. Collecting generically means the fallback row
+                // and any future kind still get a resolved profile.
+                const id =
+                    n.kind === 'rec_watched'
+                        ? pickString(payload, 'to_user_id')
+                        : pickString(payload, 'from_user_id');
+                if (id) otherUserIds.add(id);
             }
 
             const profilesById = new Map<string, ProfileSummary>();
@@ -625,6 +632,27 @@ export default function InboxScreen() {
                 });
             }
 
+            // Build a generic activity row from a notification whose normal
+            // renderer can't be satisfied — missing recommendation_id, or an
+            // unhandled kind. Renders instead of skipping so no bell-counted
+            // notification is ever silently dropped (count and list agree).
+            const buildGeneric = (
+                n: (typeof notifications)[number],
+            ): GenericActivityItem => {
+                const p = asRecord(n.payload);
+                const actorId = pickString(p, 'from_user_id');
+                return {
+                    kind: 'notification_generic',
+                    id: `notif:${n.id}`,
+                    createdAt: n.created_at,
+                    notificationId: n.id,
+                    actor: actorId
+                        ? profilesById.get(actorId) ?? placeholderProfile
+                        : placeholderProfile,
+                    recId: pickString(p, 'recommendation_id'),
+                };
+            };
+
             for (const n of notifications) {
                 const payload = asRecord(n.payload);
                 if (n.kind === 'rec_watched') {
@@ -668,7 +696,10 @@ export default function InboxScreen() {
                     const emoji = pickString(payload, 'emoji') ?? '';
                     const mt = pickMediaType(payload, 'media_type');
                     const tid = pickNumber(payload, 'tmdb_id');
-                    if (!recId) continue;
+                    if (!recId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
                     inboxItems.push({
                         kind: 'notification_rec_reacted',
                         id: `notif:${n.id}`,
@@ -696,7 +727,10 @@ export default function InboxScreen() {
                     const emoji = pickString(payload, 'emoji') ?? '';
                     const mt = pickMediaType(payload, 'media_type');
                     const tid = pickNumber(payload, 'tmdb_id');
-                    if (!recId) continue;
+                    if (!recId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
                     inboxItems.push({
                         kind: 'notification_comment_reacted',
                         id: `notif:${n.id}`,
@@ -720,7 +754,10 @@ export default function InboxScreen() {
                     const recId = pickString(payload, 'recommendation_id');
                     const mt = pickMediaType(payload, 'media_type');
                     const tid = pickNumber(payload, 'tmdb_id');
-                    if (!recId) continue;
+                    if (!recId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
                     inboxItems.push({
                         kind: 'notification_rec_commented',
                         id: `notif:${n.id}`,
@@ -743,7 +780,10 @@ export default function InboxScreen() {
                     const recId = pickString(payload, 'recommendation_id');
                     const mt = pickMediaType(payload, 'media_type');
                     const tid = pickNumber(payload, 'tmdb_id');
-                    if (!recId) continue;
+                    if (!recId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
                     inboxItems.push({
                         kind: 'notification_rec_declined',
                         id: `notif:${n.id}`,
@@ -761,7 +801,10 @@ export default function InboxScreen() {
                     });
                 } else if (n.kind === 'rec_requested') {
                     const requesterId = pickString(payload, 'from_user_id');
-                    if (!requesterId) continue;
+                    if (!requesterId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
                     const requester =
                         profilesById.get(requesterId) ?? placeholderProfile;
                     inboxItems.push({
@@ -772,55 +815,52 @@ export default function InboxScreen() {
                         requester,
                         note: pickString(payload, 'note'),
                     });
+                } else {
+                    // Unhandled kind — the query filters to RENDER_KINDS so
+                    // this shouldn't fire, but future-proof: render the
+                    // fallback rather than drop a counted notification.
+                    inboxItems.push(buildGeneric(n));
                 }
             }
 
-            // Actionable-first compose. Split the badge-counted actionables
-            // (pending recs + friend requests) from the activity feed, sort
-            // each newest-first, and cap ONLY the feed — actionable items
-            // render in full regardless of how much handled history is more
-            // recent. (Previously everything was merged, sorted, and sliced
-            // to 50 together, so handled items crowded old pending recs out
-            // entirely — badge said N, inbox showed nothing actionable.)
-            // Section headers appear only when something needs attention; an
-            // all-clear inbox renders header-free, exactly as before.
-            // NB: a pending rec whose title is already in the library is NOT
-            // badge-counted but still groups here — it's still pending, and
-            // the per-row dot (not the section) is what mirrors the badge.
-            const isActionable = (it: InboxItem) =>
-                it.kind === 'friend_request' ||
-                (it.kind === 'incoming_rec' && it.recStatus === 'pending');
-            const actionableItems = inboxItems.filter(isActionable);
-            const activityItems = inboxItems.filter((it) => !isActionable(it));
-            actionableItems.sort((a, b) =>
-                b.createdAt.localeCompare(a.createdAt),
-            );
-            activityItems.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-            const activityCapped = activityItems.slice(0, MAX_ITEMS);
-            setItems(
-                actionableItems.length > 0
-                    ? [
-                          {
-                              kind: 'section_header',
-                              id: 'header:needs-attention',
-                              createdAt: '',
-                              label: 'NEEDS ATTENTION',
-                          },
-                          ...actionableItems,
-                          ...(activityCapped.length > 0
-                              ? ([
-                                    {
-                                        kind: 'section_header',
-                                        id: 'header:activity',
-                                        createdAt: '',
-                                        label: 'ACTIVITY',
-                                    },
-                                ] satisfies InboxItem[])
-                              : []),
-                          ...activityCapped,
-                      ]
-                    : activityCapped,
-            );
+            // Single chronological list. Everything COUNTABLE (pending recs,
+            // friend requests, unread notifications) is already present via its
+            // uncapped fetch and is always shown at its chronological position.
+            // HISTORY (watched/dismissed recs, read notifications, and any
+            // fallback built from a read notif) is merged, sorted, and windowed
+            // to MAX_ITEMS on its own — capping only the non-countable set so
+            // nothing the bell counts can fall out. The two sets are then
+            // combined, deduped by composed id, and sorted newest-first: no
+            // grouping, no headers, no final slice. The per-row dot carries the
+            // "needs attention" signal (a pending rec keeps its dot until
+            // actioned, wherever it sorts).
+            const isHistory = (it: InboxItem): boolean => {
+                if (it.kind === 'incoming_rec') return it.recStatus !== 'pending';
+                if (it.kind === 'friend_request') return false;
+                // Notification-derived rows (incl. the generic fallback):
+                // history iff already read at load (not in the pre-sweep
+                // unread snapshot).
+                if ('notificationId' in it) {
+                    return !unreadSnapshot.has(it.notificationId);
+                }
+                return false;
+            };
+            const byNewest = (a: InboxItem, b: InboxItem) =>
+                b.createdAt.localeCompare(a.createdAt);
+            const countableItems = inboxItems.filter((it) => !isHistory(it));
+            const historyItems = inboxItems
+                .filter(isHistory)
+                .sort(byNewest)
+                .slice(0, MAX_ITEMS);
+            const seenIds = new Set<string>();
+            const merged: InboxItem[] = [];
+            for (const it of [...countableItems, ...historyItems]) {
+                if (seenIds.has(it.id)) continue;
+                seenIds.add(it.id);
+                merged.push(it);
+            }
+            merged.sort(byNewest);
+            setItems(merged);
             // Apply the open-time snapshot alongside the rows so the dots
             // appear with this visit's data.
             setUnreadIds(unreadSnapshot);
@@ -1484,20 +1524,59 @@ export default function InboxScreen() {
         );
     }
 
+    // Fallback row for a counted notification whose normal renderer couldn't
+    // be built (malformed payload / unhandled kind). Reads generically and
+    // taps to the rec when a recommendation_id survived, otherwise inert.
+    function renderGenericActivity(item: GenericActivityItem) {
+        const canNavigate = item.recId !== null;
+        return (
+            <Pressable
+                onPress={() => {
+                    if (canNavigate) router.push(`/rec/${item.recId}`);
+                }}
+                disabled={!canNavigate}
+                style={({ pressed }) => [
+                    styles.row,
+                    pressed && canNavigate && { opacity: 0.6 },
+                ]}
+            >
+                <UserLink
+                    handle={item.actor.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.actor.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.actor.avatarUrl}
+                        displayName={item.actor.displayName}
+                        seedId={item.actor.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.actor.handle })
+                            }
+                        >
+                            {item.actor.displayName}
+                        </Text>{' '}
+                        interacted with your rec
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRowContent(item: InboxItem) {
         switch (item.kind) {
-            case 'section_header':
-                return (
-                    <Text
-                        style={[
-                            typography.micro,
-                            styles.sectionHeader,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        {item.label}
-                    </Text>
-                );
             case 'incoming_rec':
                 return renderIncomingRec(item);
             case 'friend_request':
@@ -1516,6 +1595,8 @@ export default function InboxScreen() {
                 return renderRecDeclined(item);
             case 'notification_rec_requested':
                 return renderRecRequested(item);
+            case 'notification_generic':
+                return renderGenericActivity(item);
         }
     }
 
@@ -1662,23 +1743,14 @@ export default function InboxScreen() {
                         keyExtractor={(item) => item.id}
                         renderItem={renderRow}
                         contentContainerStyle={styles.listContent}
-                        // No hairline directly under a section header — the
-                        // label IS the divider there. RN passes the item
-                        // above the gap as leadingItem.
-                        ItemSeparatorComponent={({
-                            leadingItem,
-                        }: {
-                            leadingItem: InboxItem;
-                        }) =>
-                            leadingItem.kind === 'section_header' ? null : (
-                                <View
-                                    style={[
-                                        styles.separator,
-                                        { backgroundColor: palette.border },
-                                    ]}
-                                />
-                            )
-                        }
+                        ItemSeparatorComponent={() => (
+                            <View
+                                style={[
+                                    styles.separator,
+                                    { backgroundColor: palette.border },
+                                ]}
+                            />
+                        )}
                     />
                 )
             ) : sentItems.length === 0 ? (
@@ -1722,15 +1794,6 @@ const styles = StyleSheet.create({
     listContent: {
         paddingHorizontal: spacing.base,
         paddingBottom: spacing.lg,
-    },
-    // Section label rows (NEEDS ATTENTION / ACTIVITY) in the actionable-
-    // first compose — same micro + letter-spacing voice as the app's other
-    // section labels. Extra top padding separates ACTIVITY from the last
-    // actionable row above it.
-    sectionHeader: {
-        letterSpacing: 1.2,
-        paddingTop: spacing.md,
-        paddingBottom: spacing.sm,
     },
     row: {
         flexDirection: 'row',
