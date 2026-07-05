@@ -105,6 +105,22 @@ interface RecReactedItem {
     titleName: string | null;
 }
 
+// Someone reacted (with an emoji) to a COMMENT the current user left on a
+// rec — distinct from rec_reacted (a reaction on the rec itself). Tapping
+// opens the rec the comment lives on, same as rec_commented.
+interface CommentReactedItem {
+    kind: 'notification_comment_reacted';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    reactor: ProfileSummary;
+    recId: string;
+    emoji: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+}
+
 interface RecCommentedItem {
     kind: 'notification_rec_commented';
     id: string;
@@ -161,6 +177,7 @@ type InboxItem =
     | RecWatchedItem
     | FriendAcceptedItem
     | RecReactedItem
+    | CommentReactedItem
     | RecCommentedItem
     | RecDeclinedItem
     | RecRequestedItem
@@ -355,6 +372,7 @@ export default function InboxScreen() {
                         'rec_watched',
                         'friend_accepted',
                         'rec_reacted',
+                        'comment_reacted',
                         'rec_commented',
                         'rec_declined',
                         'rec_requested',
@@ -419,6 +437,7 @@ export default function InboxScreen() {
                     if (id) otherUserIds.add(id);
                 } else if (
                     n.kind === 'rec_reacted' ||
+                    n.kind === 'comment_reacted' ||
                     n.kind === 'rec_commented' ||
                     n.kind === 'rec_declined' ||
                     n.kind === 'rec_requested'
@@ -471,6 +490,7 @@ export default function InboxScreen() {
                 if (
                     n.kind !== 'rec_watched' &&
                     n.kind !== 'rec_reacted' &&
+                    n.kind !== 'comment_reacted' &&
                     n.kind !== 'rec_commented' &&
                     n.kind !== 'rec_declined'
                 ) {
@@ -651,6 +671,34 @@ export default function InboxScreen() {
                     if (!recId) continue;
                     inboxItems.push({
                         kind: 'notification_rec_reacted',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        reactor,
+                        recId,
+                        emoji,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
+                                : null,
+                    });
+                } else if (n.kind === 'comment_reacted') {
+                    // Reaction on the user's COMMENT (not the rec itself).
+                    // Same payload shape as rec_reacted plus comment_id (unused
+                    // here — we navigate to the rec, not the comment).
+                    const reactorId = pickString(payload, 'from_user_id');
+                    const reactor = reactorId
+                        ? profilesById.get(reactorId) ?? placeholderProfile
+                        : placeholderProfile;
+                    const recId = pickString(payload, 'recommendation_id');
+                    const emoji = pickString(payload, 'emoji') ?? '';
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (!recId) continue;
+                    inboxItems.push({
+                        kind: 'notification_comment_reacted',
                         id: `notif:${n.id}`,
                         createdAt: n.created_at,
                         notificationId: n.id,
@@ -1233,6 +1281,50 @@ export default function InboxScreen() {
         );
     }
 
+    function renderCommentReacted(item: CommentReactedItem) {
+        const title = item.titleName ?? 'your rec';
+        return (
+            <Pressable
+                // Tap → the rec the comment lives on, same as rec_commented.
+                onPress={() => router.push(`/rec/${item.recId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <UserLink
+                    handle={item.reactor.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.reactor.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.reactor.avatarUrl}
+                        displayName={item.reactor.displayName}
+                        seedId={item.reactor.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.reactor.handle })
+                            }
+                        >
+                            {item.reactor.displayName}
+                        </Text>{' '}
+                        reacted {item.emoji} to your comment on{' '}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRecCommented(item: RecCommentedItem) {
         const title = item.titleName ?? 'your rec';
         return (
@@ -1416,6 +1508,8 @@ export default function InboxScreen() {
                 return renderFriendAccepted(item);
             case 'notification_rec_reacted':
                 return renderRecReacted(item);
+            case 'notification_comment_reacted':
+                return renderCommentReacted(item);
             case 'notification_rec_commented':
                 return renderRecCommented(item);
             case 'notification_rec_declined':
