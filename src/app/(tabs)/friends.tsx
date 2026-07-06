@@ -654,6 +654,9 @@ const styles = StyleSheet.create({
     // no gap here; lineHeight gives the small heading↔subline spacing.
     emptyHeadline: {
         alignItems: 'center',
+        // A little breathing room between the heading and its subline (still
+        // well under the xl copy↔buttons gap, so the grouping holds).
+        gap: spacing.sm,
     },
     emptyLine: {
         textAlign: 'center',
