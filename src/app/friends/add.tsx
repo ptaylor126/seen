@@ -4,9 +4,7 @@ import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    Platform,
     Pressable,
-    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -16,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { shareInvite } from '@/lib/invite';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
@@ -28,13 +27,6 @@ import {
 const MIN_HANDLE_LENGTH = 3;
 const MATCH_AVATAR_SIZE = 44;
 
-// "Invite friends" share. Simple version: shares the App Store link with a
-// short pitch via the OS share sheet. It does NOT auto-connect the recipient
-// as a friend — that's the deferred deep-link project (see the invite-link
-// note further down + src/app/friends/invite.tsx).
-const APP_STORE_URL = 'https://apps.apple.com/app/id6775920785';
-const INVITE_PITCH =
-    'Join me on Seen — recommendations from friends you actually trust.';
 
 export default function AddFriendScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -85,22 +77,9 @@ export default function AddFriendScreen() {
         };
     }, []);
 
-    // Open the OS share sheet with the App Store link. On iOS the link is
-    // passed as a separate `url` item so iOS builds a rich LinkPresentation
-    // preview — for an apps.apple.com URL that's the Seen app icon + name
-    // pulled from the listing (the share-sheet thumbnail). Android's Share
-    // ignores `url`, so there the link goes inline in the message text. A
-    // cancel rejects the promise, which we swallow.
-    async function handleInvite() {
-        try {
-            await Share.share(
-                Platform.OS === 'ios'
-                    ? { message: INVITE_PITCH, url: APP_STORE_URL }
-                    : { message: `${INVITE_PITCH} ${APP_STORE_URL}` },
-            );
-        } catch (err) {
-            console.error('invite share failed:', err);
-        }
+    // Open the OS share sheet with the App Store link (shared shareInvite).
+    function handleInvite() {
+        void shareInvite();
     }
 
     // Step 1 — exact-handle lookup. Resolves the single matching profile so

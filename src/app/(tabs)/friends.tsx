@@ -22,6 +22,7 @@ import { Chip } from '@/components/chip';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ScreenHeader } from '@/components/screen-header';
 import { useUnreadCount } from '@/hooks/use-unread-count';
+import { shareInvite } from '@/lib/invite';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
@@ -322,27 +323,50 @@ export default function FriendsScreen() {
                     >
                         Tap invite to get started.
                     </Text>
-                    <Pressable
-                        onPress={() => router.push('/friends/invite')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Invite friends"
-                        style={({ pressed }) => [
-                            styles.primaryButton,
-                            {
-                                backgroundColor: palette.accent,
-                                opacity: pressed ? 0.6 : 1,
-                            },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                typography.bodyEmphasis,
-                                { color: palette.textInverse },
+                    <View style={styles.emptyButtons}>
+                        <Pressable
+                            onPress={() => void shareInvite()}
+                            accessibilityRole="button"
+                            accessibilityLabel="Invite friends"
+                            style={({ pressed }) => [
+                                styles.primaryButton,
+                                {
+                                    backgroundColor: palette.accent,
+                                    opacity: pressed ? 0.6 : 1,
+                                },
                             ]}
                         >
-                            Invite friends
-                        </Text>
-                    </Pressable>
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.textInverse },
+                                ]}
+                            >
+                                Invite friends
+                            </Text>
+                        </Pressable>
+                        <Pressable
+                            onPress={() => router.push('/friends/add')}
+                            accessibilityRole="button"
+                            accessibilityLabel="Add by handle"
+                            style={({ pressed }) => [
+                                styles.secondaryButton,
+                                {
+                                    borderColor: palette.accent,
+                                    opacity: pressed ? 0.6 : 1,
+                                },
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.accent },
+                                ]}
+                            >
+                                Add by handle
+                            </Text>
+                        </Pressable>
+                    </View>
                 </View>
             ) : (
                 <>
@@ -622,11 +646,23 @@ const styles = StyleSheet.create({
     emptyBody: {
         textAlign: 'center',
     },
-    primaryButton: {
+    emptyButtons: {
+        // Primary (Invite friends) on top, secondary (Add by handle) below —
+        // both full-width within the centered empty state, standard gap.
+        alignSelf: 'stretch',
+        gap: spacing.sm,
         marginTop: spacing.sm,
+    },
+    primaryButton: {
         paddingVertical: spacing.md,
-        paddingHorizontal: spacing.xl,
         borderRadius: radius.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    secondaryButton: {
+        paddingVertical: spacing.md,
+        borderRadius: radius.sm,
+        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
     },
