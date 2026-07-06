@@ -5,7 +5,6 @@ import {
     ActivityIndicator,
     Alert,
     Keyboard,
-    Platform,
     Pressable,
     StyleSheet,
     Switch,
@@ -14,10 +13,17 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import {
+    KeyboardStickyView,
+    useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, {
+    interpolate,
+    useAnimatedStyle,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
@@ -48,11 +54,24 @@ export default function ReviewScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
-    // Same pattern as recommend.tsx: bottom-bar paddingBottom flips on
-    // keyboard open/close so the Save button doesn't have a 34px
-    // home-indicator gap above the keyboard when it rises.
-    const keyboard = useKeyboard();
-
+    // Closed-state home-indicator clearance animated in LOCKSTEP with the
+    // KeyboardStickyView lift (same keyboard progress, 0 closed → 1 open), so
+    // the bar moves once, smoothly. Replaces the discrete paddingBottom swap
+    // that flipped at keyboardDidShow and overshot mid-animation. paddingBottom
+    // is now the constant internal content room; the clearance is a cheap
+    // transform. See recommend.tsx for the full rationale.
+    const keyboardProgress = useReanimatedKeyboardAnimation().progress;
+    const barClearanceStyle = useAnimatedStyle(() => ({
+        transform: [
+            {
+                translateY: interpolate(
+                    keyboardProgress.value,
+                    [0, 1],
+                    [-insets.bottom, 0],
+                ),
+            },
+        ],
+    }));
     const mediaType: MediaType | null =
         params.mediaType === 'movie' || params.mediaType === 'tv'
             ? (params.mediaType as MediaType)
@@ -287,17 +306,10 @@ export default function ReviewScreen() {
                 </Pressable>
             </View>
 
-            {/* No KeyboardAvoidingView — same fix the recommend modal
-                uses. KAV's `behavior='padding'` indirection was unreliable
-                about lifting the pinned bottom bar above the keyboard
-                even though Save in the header is always reachable. The
-                bottom bar (visibility toggle + spoilers toggle + char
-                counter) was sitting behind the keyboard. We now lift
-                the bar directly: on iOS, marginBottom = keyboard.height
-                via the existing useKeyboard hook, so the bar's outer
-                bottom edge sits exactly at the keyboard's top. Android
-                relies on the manifest's windowSoftInputMode="adjustResize"
-                — marginBottom: 0 there avoids double-lifting. */}
+            {/* No KeyboardAvoidingView on this column — Save is in the header
+                (always reachable) and the bottom bar (visibility + spoilers
+                toggles + char counter) is lifted by its own KeyboardStickyView
+                below, on both platforms. */}
             <View style={styles.flex}>
                 {/* Flex column wrapped in a Pressable so taps on the
                     background (title context, bodyBox border padding,
@@ -390,24 +402,20 @@ export default function ReviewScreen() {
                 </Pressable>
 
                 {!loading && !error ? (
-                    <View
+                    // KeyboardStickyView lifts the bar onto the keyboard's top
+                    // edge when open; barClearanceStyle animates the
+                    // closed-state home-indicator lift on the SAME keyboard
+                    // progress, so the two move together (no overshoot).
+                    // paddingBottom is the constant internal content room.
+                    <KeyboardStickyView>
+                    <Animated.View
                         style={[
                             styles.bottomBar,
+                            barClearanceStyle,
                             {
                                 backgroundColor: palette.bg,
                                 borderTopColor: palette.border,
-                                paddingBottom: keyboard.open
-                                    ? spacing.sm
-                                    : insets.bottom + spacing.sm,
-                                // iOS-only direct lift via useKeyboard
-                                // — matches the recommend modal pattern.
-                                // Android relies on adjustResize from
-                                // the manifest; lifting here would
-                                // double-stack the displacement.
-                                marginBottom:
-                                    Platform.OS === 'ios' && keyboard.open
-                                        ? keyboard.height
-                                        : 0,
+                                paddingBottom: spacing.sm,
                             },
                         ]}
                     >
@@ -459,7 +467,7 @@ export default function ReviewScreen() {
                                             ]}
                                         >
                                             {v === 'friends'
-                                                ? 'Friends can see this'
+                                                ? 'Friends only'
                                                 : 'Private'}
                                         </Text>
                                     </Pressable>
@@ -500,7 +508,8 @@ export default function ReviewScreen() {
                         >
                             {body.length}/{REVIEW_MAX_LENGTH}
                         </Text>
-                    </View>
+                    </Animated.View>
+                    </KeyboardStickyView>
                 ) : null}
             </View>
         </SafeAreaView>

@@ -8,7 +8,6 @@ import {
     Alert,
     Dimensions,
     Keyboard,
-    KeyboardAvoidingView,
     Modal,
     Platform,
     Pressable,
@@ -19,6 +18,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
@@ -1133,7 +1133,7 @@ export default function RecScreen() {
             {closeButton}
             <KeyboardAvoidingView
                 style={styles.flex}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                behavior="padding"
                 // The rec view is a full-screen card (was a modal sheet),
                 // so this KeyboardAvoidingView starts at the very top of the
                 // screen — offset 0. The old 40pt offset (tuned for the

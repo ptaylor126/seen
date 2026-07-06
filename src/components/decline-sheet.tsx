@@ -1,11 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-    Animated,
     Dimensions,
-    Easing,
-    KeyboardAvoidingView,
     Modal,
-    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -13,6 +9,15 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Reanimated, {
+    Easing,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -29,7 +34,7 @@ interface DeclineSheetProps {
     onConfirm: (note: string) => void;
 }
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const AnimatedPressable = Reanimated.createAnimatedComponent(Pressable);
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
 const NOTE_MAX = 500;
@@ -49,10 +54,23 @@ export function DeclineSheet({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    // Animated keyboard height (negative: 0 → -keyboardHeight) + progress
+    // (0 closed → 1 open) drive the sheet's bottom padding. No KeyboardAvoiding-
+    // View: the sheet stays anchored at the screen bottom and this padding lifts
+    // the CONTENT above the keyboard while the sheet's background fills all the
+    // way down — the keyboard covers the excess, so the sheet docks flush to the
+    // keyboard's top edge with no gap.
+    const { height: keyboardHeight, progress: keyboardProgress } =
+        useReanimatedKeyboardAnimation();
 
     const [mounted, setMounted] = useState(visible);
     const [note, setNote] = useState('');
-    const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
+    const progress = useSharedValue(visible ? 1 : 0);
+    // 1 while the sheet is open/settling, 0 the instant dismissal starts. When
+    // dismissing we FREEZE the keyboard-driven padding (frozenPad) so the
+    // content can't reflow as the sheet slides out.
+    const active = useSharedValue(visible ? 1 : 0);
+    const frozenPad = useSharedValue(insets.bottom + spacing.lg);
     const [sheetHeight, setSheetHeight] = useState(
         Dimensions.get('window').height,
     );
@@ -61,32 +79,56 @@ export function DeclineSheet({
         if (visible) {
             setNote('');
             setMounted(true);
-            Animated.timing(progress, {
-                toValue: 1,
+            active.value = 1;
+            progress.value = withTiming(1, {
                 duration: OPEN_MS,
                 easing: Easing.out(Easing.cubic),
-                useNativeDriver: true,
-            }).start();
-        } else {
-            Animated.timing(progress, {
-                toValue: 0,
-                duration: CLOSE_MS,
-                easing: Easing.in(Easing.cubic),
-                useNativeDriver: true,
-            }).start(({ finished }) => {
-                if (finished) setMounted(false);
             });
+        } else {
+            // Freeze layout inputs before the exit slide so nothing reflows.
+            active.value = 0;
+            progress.value = withTiming(
+                0,
+                { duration: CLOSE_MS, easing: Easing.in(Easing.cubic) },
+                (finished) => {
+                    if (finished) runOnJS(setMounted)(false);
+                },
+            );
         }
-    }, [visible, progress]);
+    }, [visible, progress, active]);
 
-    const translateY = progress.interpolate({
-        inputRange: [0, 1],
-        outputRange: [sheetHeight, 0],
+    const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+    // Panel slide (translateY) always runs — it IS the exit animation. The
+    // keyboard-driven bottom padding lifts content above the keyboard
+    // (-keyboardHeight) plus a constant lg gap, minus the home-indicator inset
+    // as the keyboard rises (only needed when closed). While dismissing (active
+    // === 0) it holds frozenPad — frozen at the last open value — so the exit is
+    // a pure slide with no reflow.
+    const sheetStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [sheetHeight, 0]);
+        let paddingBottom;
+        if (active.value === 1) {
+            paddingBottom =
+                -keyboardHeight.value +
+                spacing.lg +
+                insets.bottom * (1 - keyboardProgress.value);
+            frozenPad.value = paddingBottom;
+        } else {
+            paddingBottom = frozenPad.value;
+        }
+        return { transform: [{ translateY }], paddingBottom };
     });
 
-    const prompt = senderName
-        ? `Add a note to ${senderName}? (optional)`
-        : 'Add a note? (optional)';
+    // Hold the sender name while dismissing so the prompt/helper subtext can't
+    // change mid-exit if the caller clears it on close (parity with
+    // RequestRecSheet — the caller here keeps it stable, but the guard is free).
+    const [heldSenderName, setHeldSenderName] = useState(senderName);
+    useEffect(() => {
+        if (visible) setHeldSenderName(senderName);
+    }, [visible, senderName]);
+    const prompt = heldSenderName
+        ? `Add a note to ${heldSenderName}?`
+        : 'Add a note?';
 
     return (
         <Modal
@@ -95,29 +137,27 @@ export function DeclineSheet({
             animationType="none"
             onRequestClose={onCancel}
         >
-            <KeyboardAvoidingView
-                style={styles.fill}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            >
+            {/* No KeyboardAvoidingView: the sheet is anchored at the bottom and
+                the keyboard-driven paddingBottom (see sheetStyle) lifts the
+                content above the keyboard while the background fills to the
+                screen bottom, so it docks flush to the keyboard. */}
                 <View style={styles.container}>
                     <AnimatedPressable
                         style={[
                             StyleSheet.absoluteFill,
-                            { backgroundColor: palette.overlay, opacity: progress },
+                            { backgroundColor: palette.overlay },
+                            backdropStyle,
                         ]}
                         onPress={onCancel}
                     />
-                    <Animated.View
+                    <Reanimated.View
                         onLayout={(e) =>
                             setSheetHeight(e.nativeEvent.layout.height)
                         }
                         style={[
                             styles.sheet,
-                            {
-                                backgroundColor: palette.surface,
-                                paddingBottom: insets.bottom + spacing.lg,
-                                transform: [{ translateY }],
-                            },
+                            { backgroundColor: palette.surface },
+                            sheetStyle,
                         ]}
                     >
                         <Text
@@ -165,7 +205,7 @@ export function DeclineSheet({
                                 { color: palette.textMuted },
                             ]}
                         >
-                            {senderName || 'They'} won&apos;t be notified
+                            {heldSenderName || 'They'} won&apos;t be notified
                             unless you add a note.
                         </Text>
                         <Pressable
@@ -209,15 +249,13 @@ export function DeclineSheet({
                                 Cancel
                             </Text>
                         </Pressable>
-                    </Animated.View>
+                    </Reanimated.View>
                 </View>
-            </KeyboardAvoidingView>
         </Modal>
     );
 }
 
 const styles = StyleSheet.create({
-    fill: { flex: 1 },
     container: {
         flex: 1,
         justifyContent: 'flex-end',
@@ -244,8 +282,9 @@ const styles = StyleSheet.create({
         minHeight: 80,
         maxHeight: 160,
         borderRadius: radius.md,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
+        // Even internal padding so the note text doesn't sit against the
+        // field's edges.
+        padding: spacing.md,
         textAlignVertical: 'top',
         marginTop: spacing.xs,
     },

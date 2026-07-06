@@ -11,12 +11,14 @@ import {
     Text,
     TextInput,
     useColorScheme,
+    useWindowDimensions,
     View,
 } from 'react-native';
+import { useKeyboardState } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import supabase from '@/lib/supabase';
+import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
     getPalette,
@@ -37,11 +39,33 @@ const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
 const DEBOUNCE_MS = 300;
 
+// "From your library" suggestions (recommend-to-friend flow only).
+const SUGGEST_MIN_RATING = 8; // half-star integer scale — 8 = 4 stars.
+const SUGGEST_LIMIT = 30;
+const SUGGEST_COLS = 3;
+const SUGGEST_GAP = spacing.sm;
+const SUGGEST_POSTER_ASPECT = 1.5; // 2:3 poster
+
+interface Suggestion {
+    tmdbId: number;
+    mediaType: 'movie' | 'tv';
+    posterPath: string;
+    title: string;
+}
+
+function suggestCellWidth(screenWidth: number): number {
+    const usable = screenWidth - 2 * spacing.base;
+    return Math.floor((usable - (SUGGEST_COLS - 1) * SUGGEST_GAP) / SUGGEST_COLS);
+}
+
 export default function LibraryAddScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
-    const { open: keyboardOpen } = useKeyboard();
+    const { width: screenWidth } = useWindowDimensions();
+    // Real IME inset (both platforms) so the suggestion grid can scroll clear
+    // of the auto-focused keyboard — the branch's established pattern.
+    const keyboardHeight = useKeyboardState((state) => state.height);
     // Optional recommend-flow context. When the user enters this screen
     // from a friend profile's "Recommend something" button, the friend's
     // user id is passed in as `recommendTo`. We forward it as `preselect`
@@ -99,6 +123,66 @@ export default function LibraryAddScreen() {
     const [results, setResults] = useState<SearchableItem[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // "From your library" suggestions, loaded once on mount in recommend mode.
+    // null = not loaded / not applicable; [] = loaded but nothing rated 8+.
+    const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
+
+    // Load the user's own highly-rated library titles (rating >= 8), newest
+    // rating first, capped — only in the recommend-to-friend flow. Poster/title
+    // come from the shared titles catalogue. Best-effort: any failure leaves the
+    // area blank (no message), same as having nothing rated 8+.
+    useEffect(() => {
+        if (!recommendToId) return;
+        let active = true;
+        (async () => {
+            try {
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+                const userId = session?.user.id;
+                if (!userId) return;
+                const { data: rows, error: itemsError } = await supabase
+                    .from('items')
+                    .select('tmdb_id, media_type')
+                    .eq('user_id', userId)
+                    .gte('rating', SUGGEST_MIN_RATING)
+                    .order('updated_at', { ascending: false })
+                    .limit(SUGGEST_LIMIT);
+                if (itemsError) throw itemsError;
+                if (!active) return;
+                const items = rows ?? [];
+                if (items.length === 0) {
+                    setSuggestions([]);
+                    return;
+                }
+                const titleByKey = await fetchTitlesByItems(items);
+                if (!active) return;
+                const built = items.flatMap((row): Suggestion[] => {
+                    if (row.media_type !== 'movie' && row.media_type !== 'tv') {
+                        return [];
+                    }
+                    const t = titleByKey.get(`${row.media_type}:${row.tmdb_id}`);
+                    // Skip poster-less titles — the grid is all posters.
+                    if (!t?.poster_path) return [];
+                    return [
+                        {
+                            tmdbId: row.tmdb_id,
+                            mediaType: row.media_type,
+                            posterPath: t.poster_path,
+                            title: t.title ?? '',
+                        },
+                    ];
+                });
+                setSuggestions(built);
+            } catch (err) {
+                console.warn('library/add: suggestions load failed', err);
+                if (active) setSuggestions([]);
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [recommendToId]);
 
     // 300 ms debounce + stale-result guard. Same pattern as the original
     // standalone Search screen — see git history for the trade-offs around
@@ -140,6 +224,85 @@ export default function LibraryAddScreen() {
             clearTimeout(handle);
         };
     }, [query]);
+
+    // Tapping a suggestion goes STRAIGHT into the send flow with the friend
+    // preselected — identical to picking a searched title in recommend mode
+    // (no title-detail screen in between).
+    function handleSuggestionPress(item: Suggestion) {
+        if (!recommendToId) return;
+        router.push({
+            pathname: '/title/[mediaType]/[tmdbId]/recommend',
+            params: {
+                mediaType: item.mediaType,
+                tmdbId: String(item.tmdbId),
+                preselect: recommendToId,
+            },
+        });
+    }
+
+    function renderSuggestionCell({ item }: { item: Suggestion }) {
+        const cellWidth = suggestCellWidth(screenWidth);
+        const cellHeight = Math.floor(cellWidth * SUGGEST_POSTER_ASPECT);
+        return (
+            <Pressable
+                onPress={() => handleSuggestionPress(item)}
+                accessibilityRole="button"
+                accessibilityLabel={`Recommend ${item.title}`}
+                style={({ pressed }) => pressed && { opacity: 0.6 }}
+            >
+                <Image
+                    source={{ uri: imageUrl(item.posterPath, 'w342') }}
+                    style={[
+                        styles.suggestPoster,
+                        { width: cellWidth, height: cellHeight },
+                    ]}
+                    contentFit="cover"
+                    transition={150}
+                />
+            </Pressable>
+        );
+    }
+
+    // Fills the pre-search empty area with the user's highly-rated library
+    // titles. Recommend mode only; blank (as today) when there are none.
+    function renderSuggestions() {
+        if (!recommendToId || !suggestions || suggestions.length === 0) {
+            return null;
+        }
+        return (
+            <View style={styles.flex}>
+                <Text
+                    style={[
+                        typography.micro,
+                        styles.suggestLabel,
+                        { color: palette.textMuted },
+                    ]}
+                >
+                    FROM YOUR LIBRARY
+                </Text>
+                <FlatList
+                    data={suggestions}
+                    key={`suggest-${SUGGEST_COLS}`}
+                    style={styles.flex}
+                    keyExtractor={(item) => `${item.mediaType}-${item.tmdbId}`}
+                    renderItem={renderSuggestionCell}
+                    numColumns={SUGGEST_COLS}
+                    columnWrapperStyle={{ columnGap: SUGGEST_GAP }}
+                    ItemSeparatorComponent={() => (
+                        <View style={{ height: SUGGEST_GAP }} />
+                    )}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    onScrollBeginDrag={() => Keyboard.dismiss()}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={[
+                        styles.suggestGridContent,
+                        { paddingBottom: keyboardHeight + spacing.lg },
+                    ]}
+                />
+            </View>
+        );
+    }
 
     function renderRow({ item }: { item: SearchableItem }) {
         const title = item.media_type === 'movie' ? item.title : item.name;
@@ -264,24 +427,10 @@ export default function LibraryAddScreen() {
                         <ActivityIndicator color={palette.accent} />
                     </View>
                 ) : results === null ? (
-                    // Suppress the "Search for…" placeholder while the
-                    // keyboard is up — the user is clearly typing, and
-                    // a centered prompt floating just above the keyboard
-                    // reads as misalignment rather than guidance. When
-                    // the keyboard is dismissed (e.g. by tapping the
-                    // scrim) the placeholder reappears.
-                    keyboardOpen ? null : (
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[
-                                    typography.body,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                Search for a film or TV show
-                            </Text>
-                        </View>
-                    )
+                    // Pre-search: show "From your library" suggestions in the
+                    // recommend flow; otherwise (or with nothing rated 8+) the
+                    // area stays blank, no message.
+                    renderSuggestions()
                 ) : results.length === 0 ? (
                     <View style={styles.statusBlock}>
                         <Text
@@ -385,5 +534,16 @@ const styles = StyleSheet.create({
     separator: {
         height: StyleSheet.hairlineWidth,
         marginLeft: POSTER_WIDTH + spacing.md,
+    },
+    suggestLabel: {
+        paddingHorizontal: spacing.base,
+        paddingBottom: spacing.sm,
+        letterSpacing: 0.5,
+    },
+    suggestGridContent: {
+        paddingHorizontal: spacing.base,
+    },
+    suggestPoster: {
+        borderRadius: radius.sm,
     },
 });

@@ -6,7 +6,6 @@ import {
     ActivityIndicator,
     Alert,
     Keyboard,
-    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -15,10 +14,19 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import {
+    KeyboardStickyView,
+    useKeyboardState,
+    useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, {
+    interpolate,
+    useAnimatedStyle,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
-import { useKeyboard } from '@/hooks/use-keyboard-open';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
@@ -47,6 +55,9 @@ interface TitleContext {
 
 const NOTE_MAX_LENGTH = 500;
 const FRIEND_AVATAR_SIZE = 44;
+// Recipient chips in the note bar are deliberately smaller/quieter than the
+// friend-list rows above.
+const RECIPIENT_AVATAR_SIZE = 24;
 const POSTER_W = 40;
 const POSTER_H = 60;
 
@@ -62,11 +73,33 @@ export default function RecommendScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
-    // Bottom bar floats above the keyboard via the KeyboardAvoidingView,
-    // but we still toggle its own paddingBottom on open/close so the
-    // home-indicator inset doesn't leave a 34px gap above the keyboard
-    // when it rises.
-    const keyboard = useKeyboard();
+    // The pinned note bar floats above the keyboard via its own
+    // KeyboardStickyView (see below); this keyboard state drives only the
+    // collapsed-note search scroll inset (padding the list so friend rows
+    // clear the keyboard while the note bar is collapsed).
+    const keyboardState = useKeyboardState();
+    // Closed-state home-indicator clearance, animated in LOCKSTEP with the
+    // KeyboardStickyView lift: both read the same keyboard progress (0 closed
+    // → 1 open), so the bar moves once, smoothly, to its resting spot. This
+    // replaces the discrete paddingBottom swap (keyed on keyboardState.height,
+    // which flips only at keyboardDidShow — a step landing mid-animation that
+    // rode the bar too high then jolted it down). paddingBottom is now the
+    // constant internal content room (spacing.sm); the clearance is a cheap
+    // transform (no per-frame relayout). translateY -insets.bottom when closed
+    // (lift clear of the home indicator) → 0 when open (bar sits tight on the
+    // keyboard top via KeyboardStickyView).
+    const keyboardProgress = useReanimatedKeyboardAnimation().progress;
+    const barClearanceStyle = useAnimatedStyle(() => ({
+        transform: [
+            {
+                translateY: interpolate(
+                    keyboardProgress.value,
+                    [0, 1],
+                    [-insets.bottom, 0],
+                ),
+            },
+        ],
+    }));
 
     const mediaType: MediaType | null =
         params.mediaType === 'movie' || params.mediaType === 'tv'
@@ -256,6 +289,15 @@ export default function RecommendScreen() {
     const selectedCount = selectedFriendIds.size;
     const canSend =
         !sending && selectedCount > 0 && mediaType !== null && !loading;
+
+    // Recipients shown in the note bar (avatar + name, one row each) so the
+    // user sees exactly who they're sending to while the note field is focused
+    // and the friend list is hidden behind the keyboard. Order + data come from
+    // the loaded friends list; selection is independent of the search filter, so
+    // a filtered-out pick still appears here.
+    const selectedRecipients = friends.filter((f) =>
+        selectedFriendIds.has(f.userId),
+    );
 
     // Case-insensitive match against display name AND @handle (haystack
     // includes "@" so typing it or omitting it both work). Filtering
@@ -629,21 +671,9 @@ export default function RecommendScreen() {
                 </Pressable>
             </View>
 
-            {/* No KeyboardAvoidingView. KAV's 'padding' behavior was
-                only partially lifting the note field above the
-                keyboard — the multiline TextInput could grow as the
-                user typed, and KAV's indirect padding calculation
-                didn't always land the bar fully above the keyboard.
-                Now that Send moved to the header (the part that has
-                to be reachable while typing), we only need to lift
-                the note field + char counter, which we do directly:
-                the bar's marginBottom = keyboard.height on iOS when
-                the keyboard is open, so the bar's outer bottom sits
-                exactly at the keyboard's top. On Android the
-                manifest's windowSoftInputMode=adjustResize shrinks
-                the window when the keyboard rises, which keeps the
-                bar at the (now-shorter) screen bottom — no manual
-                marginBottom needed. */}
+            {/* No KeyboardAvoidingView on this column — Send is in the
+                header (reachable while typing) and the note bar is lifted by
+                its own KeyboardStickyView below. */}
             <View style={styles.flex}>
                 <ScrollView
                     style={styles.flex}
@@ -651,14 +681,19 @@ export default function RecommendScreen() {
                     keyboardDismissMode="on-drag"
                     contentContainerStyle={[
                         styles.scrollContent,
-                        // While the friend search is focused the note bar is
-                        // collapsed, so the keyboard-height compensation it
-                        // normally carries moves here: on iOS (no window
-                        // resize) pad the scroll content so every friend row
-                        // can scroll clear of the keyboard. Android's
-                        // adjustResize already shrinks the window — no inset.
-                        localFocused && Platform.OS === 'ios' && keyboard.open
-                            ? { paddingBottom: keyboard.height + spacing.sm }
+                        // Whenever the keyboard is up, pad the list by the IME
+                        // inset so every friend row — including the selected
+                        // recipient — can scroll clear of it. This covers BOTH
+                        // states: the collapsed-note friend search, AND writing
+                        // the note (the note bar rides up on its
+                        // KeyboardStickyView and would otherwise cover the
+                        // bottom rows, hiding the recipient you're writing
+                        // about). The note bar sits in its own flow slot below
+                        // the list, so only the keyboard-height lift needs
+                        // compensating here. keyboard-controller reports the
+                        // real inset on both platforms — no Platform fork.
+                        keyboardState.height > 0
+                            ? { paddingBottom: keyboardState.height + spacing.sm }
                             : null,
                     ]}
                 >
@@ -819,7 +854,9 @@ export default function RecommendScreen() {
                                 SEND TO
                             </Text>
                             {filteredFriends.length > 0 ? (
-                                <View style={styles.friendList}>
+                                <View
+                                    style={styles.friendList}
+                                >
                                     {filteredFriends.map(renderFriendRow)}
                                 </View>
                             ) : (
@@ -838,34 +875,69 @@ export default function RecommendScreen() {
                     </Pressable>
                 </ScrollView>
 
-                {/* Pinned bottom bar: note input + char count. Send
-                    moved to the header so it stays reachable above the
-                    keyboard. The bar still pins to the bottom (visible
-                    regardless of friend-list scroll position so the
-                    note is never below the fold) and its paddingBottom
-                    drops the home-indicator inset when the keyboard
-                    rises so the bar sits flush against the keyboard. */}
+                {/* Pinned bottom bar: note input + char count. Send moved to
+                    the header so it stays reachable above the keyboard. The
+                    bar pins to the bottom (visible regardless of friend-list
+                    scroll position so the note is never below the fold).
+                    KeyboardStickyView lifts it onto the keyboard's top edge
+                    when open; barClearanceStyle animates the closed-state
+                    home-indicator lift on the SAME keyboard progress, so the
+                    two move together (no overshoot). paddingBottom is the
+                    constant internal content room. */}
                 {!loading && !error && friends.length > 0 && !localFocused ? (
-                    <View
+                    <KeyboardStickyView>
+                    <Animated.View
                         style={[
                             styles.bottomBar,
+                            barClearanceStyle,
                             {
                                 backgroundColor: palette.bg,
                                 borderTopColor: palette.border,
-                                paddingBottom: keyboard.open
-                                    ? spacing.sm
-                                    : insets.bottom + spacing.sm,
-                                // iOS-only direct lift via useKeyboard.
-                                // Android relies on adjustResize from the
-                                // manifest; double-lifting would push the
-                                // bar above the now-shorter window.
-                                marginBottom:
-                                    Platform.OS === 'ios' && keyboard.open
-                                        ? keyboard.height
-                                        : 0,
+                                paddingBottom: spacing.sm,
                             },
                         ]}
                     >
+                        {/* Who this rec is going to — one quiet avatar + name
+                            row per recipient, so they stay visible while the
+                            note field is focused and the friend list is hidden
+                            behind the keyboard. One fixed-height row; past what
+                            fits it scrolls horizontally, so it never crowds out
+                            the note input. */}
+                        {selectedRecipients.length > 0 ? (
+                            <ScrollView
+                                horizontal
+                                style={styles.recipientScroll}
+                                contentContainerStyle={
+                                    styles.recipientScrollContent
+                                }
+                                showsHorizontalScrollIndicator={false}
+                                keyboardShouldPersistTaps="handled"
+                            >
+                                {selectedRecipients.map((r) => (
+                                    <View
+                                        key={r.userId}
+                                        style={styles.recipientChip}
+                                    >
+                                        <Avatar
+                                            avatarUrl={r.avatarUrl}
+                                            displayName={r.displayName}
+                                            seedId={r.userId}
+                                            size={RECIPIENT_AVATAR_SIZE}
+                                        />
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                styles.recipientName,
+                                                { color: palette.textMuted },
+                                            ]}
+                                            numberOfLines={1}
+                                        >
+                                            {r.displayName}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </ScrollView>
+                        ) : null}
                         <Text
                             style={[
                                 typography.micro,
@@ -910,7 +982,8 @@ export default function RecommendScreen() {
                         >
                             {note.length}/{NOTE_MAX_LENGTH}
                         </Text>
-                    </View>
+                    </Animated.View>
+                    </KeyboardStickyView>
                 ) : null}
             </View>
         </SafeAreaView>
@@ -1081,5 +1154,35 @@ const styles = StyleSheet.create({
     bottomBarLabel: {
         marginBottom: spacing.sm,
         letterSpacing: 0.5,
+    },
+    recipientScroll: {
+        // A single fixed-height row of recipient chips. Flow horizontally;
+        // past what fits, it scrolls sideways so many recipients never push the
+        // note input off-screen. flexGrow:0 keeps it from stretching tall.
+        flexGrow: 0,
+        marginBottom: spacing.sm,
+        // Bleed to the bar's edges (cancel its paddingHorizontal) so an
+        // overflowing row is clipped right at the visual edge — the last chip
+        // straddles it (peek affordance) instead of ending flush inside the
+        // inset. The content padding below restores the first chip's alignment
+        // and adds trailing room. When everything fits there's no overflow, so
+        // no clip and no visible change.
+        marginHorizontal: -spacing.lg,
+    },
+    recipientScrollContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        paddingVertical: spacing.xs,
+        paddingHorizontal: spacing.lg,
+    },
+    recipientChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    recipientName: {
+        // Truncate long names (numberOfLines={1}) so several chips fit across.
+        maxWidth: 120,
     },
 });

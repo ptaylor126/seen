@@ -4,9 +4,7 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
     Modal,
-    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -14,7 +12,8 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
@@ -34,6 +33,7 @@ export default function AccountScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     const [confirmVisible, setConfirmVisible] = useState(false);
     const [confirmText, setConfirmText] = useState('');
@@ -128,7 +128,23 @@ export default function AccountScreen() {
                 </Text>
             </View>
 
-            <View style={styles.body}>
+            <View
+                style={[
+                    styles.body,
+                    // edges={['top']} doesn't reserve the bottom inset, so base
+                    // the bottom padding on the real one. Android: insets.bottom
+                    // + md clears the nav bar. iOS: xl (32) was actually below
+                    // the home-indicator inset (~46), so this also nudges the
+                    // button up to clear it; non-home-indicator iOS (inset 0)
+                    // stays at xl.
+                    {
+                        paddingBottom: Math.max(
+                            spacing.xl,
+                            insets.bottom + spacing.md,
+                        ),
+                    },
+                ]}
+            >
                 {/* Non-destructive settings, kept clearly separate from the
                     destructive Delete block at the bottom. */}
                 <Pressable
@@ -212,13 +228,13 @@ export default function AccountScreen() {
                 onRequestClose={closeConfirm}
             >
                 {/* Lift the centered card above the keyboard so the Delete /
-                    Cancel buttons stay visible + tappable while typing. Same
-                    approach as DeclineSheet: padding on iOS shrinks the
-                    available height (re-centring the card upward); Android
-                    relies on the manifest's adjustResize. */}
+                    Cancel buttons stay visible + tappable while typing.
+                    keyboard-controller KAV, padding on both platforms. Note:
+                    inside an RN Modal, whose Android window the library's inset
+                    handling may not reach — verify on device (commit 5). */}
                 <KeyboardAvoidingView
                     style={styles.modalFlex}
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    behavior="padding"
                 >
                     <View style={styles.modalContainer}>
                         <Pressable

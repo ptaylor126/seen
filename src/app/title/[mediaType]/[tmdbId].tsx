@@ -1017,7 +1017,23 @@ export default function TitleDetailScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    // Bottom clearance for the last element (the "More details
+                    // on JustWatch" button). The static xxl was fixed, so on
+                    // Android edge-to-edge it sat under the nav bar. Use the
+                    // real inset; Math.max keeps iOS at exactly xxl (insets.
+                    // bottom + md is always <= xxl there) while Android gets
+                    // nav-bar clearance.
+                    {
+                        paddingBottom: Math.max(
+                            spacing.xxl,
+                            insets.bottom + spacing.md,
+                        ),
+                    },
+                ]}
+            >
                 {/* Backdrop band — shorter than the rec hero. The lower
                     portion fades into the page via a pure ALPHA ramp of
                     the bg colour (bgTransparent → bg, same lesson as the
