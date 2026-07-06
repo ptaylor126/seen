@@ -9,10 +9,7 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import {
-    KeyboardAvoidingView,
-    useReanimatedKeyboardAnimation,
-} from 'react-native-keyboard-controller';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, {
     Easing,
     interpolate,
@@ -57,14 +54,23 @@ export function DeclineSheet({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
-    // Keyboard progress (0 closed → 1 open) drives the sheet's bottom clearance
-    // on the SAME clock as the KeyboardAvoidingView lift, so padding and lift
-    // move together — no snap. Mirrors the commit-3 bar fix.
-    const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
+    // Animated keyboard height (negative: 0 → -keyboardHeight) + progress
+    // (0 closed → 1 open) drive the sheet's bottom padding. No KeyboardAvoiding-
+    // View: the sheet stays anchored at the screen bottom and this padding lifts
+    // the CONTENT above the keyboard while the sheet's background fills all the
+    // way down — the keyboard covers the excess, so the sheet docks flush to the
+    // keyboard's top edge with no gap.
+    const { height: keyboardHeight, progress: keyboardProgress } =
+        useReanimatedKeyboardAnimation();
 
     const [mounted, setMounted] = useState(visible);
     const [note, setNote] = useState('');
     const progress = useSharedValue(visible ? 1 : 0);
+    // 1 while the sheet is open/settling, 0 the instant dismissal starts. When
+    // dismissing we FREEZE the keyboard-driven padding (frozenPad) so the
+    // content can't reflow as the sheet slides out.
+    const active = useSharedValue(visible ? 1 : 0);
+    const frozenPad = useSharedValue(insets.bottom + spacing.lg);
     const [sheetHeight, setSheetHeight] = useState(
         Dimensions.get('window').height,
     );
@@ -73,11 +79,14 @@ export function DeclineSheet({
         if (visible) {
             setNote('');
             setMounted(true);
+            active.value = 1;
             progress.value = withTiming(1, {
                 duration: OPEN_MS,
                 easing: Easing.out(Easing.cubic),
             });
         } else {
+            // Freeze layout inputs before the exit slide so nothing reflows.
+            active.value = 0;
             progress.value = withTiming(
                 0,
                 { duration: CLOSE_MS, easing: Easing.in(Easing.cubic) },
@@ -86,23 +95,29 @@ export function DeclineSheet({
                 },
             );
         }
-    }, [visible, progress]);
+    }, [visible, progress, active]);
 
     const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
-    // Panel slide + the keyboard-synced bottom clearance: insets.bottom + lg
-    // when closed (home-indicator clearance), easing to just lg as the keyboard
-    // opens (the KAV has lifted the sheet to the keyboard's edge, so the inset
-    // would otherwise be dead space below Cancel).
-    const sheetStyle = useAnimatedStyle(() => ({
-        transform: [
-            { translateY: interpolate(progress.value, [0, 1], [sheetHeight, 0]) },
-        ],
-        paddingBottom: interpolate(
-            keyboardProgress.value,
-            [0, 1],
-            [insets.bottom + spacing.lg, spacing.lg],
-        ),
-    }));
+    // Panel slide (translateY) always runs — it IS the exit animation. The
+    // keyboard-driven bottom padding lifts content above the keyboard
+    // (-keyboardHeight) plus a constant lg gap, minus the home-indicator inset
+    // as the keyboard rises (only needed when closed). While dismissing (active
+    // === 0) it holds frozenPad — frozen at the last open value — so the exit is
+    // a pure slide with no reflow.
+    const sheetStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [sheetHeight, 0]);
+        let paddingBottom;
+        if (active.value === 1) {
+            paddingBottom =
+                -keyboardHeight.value +
+                spacing.lg +
+                insets.bottom * (1 - keyboardProgress.value);
+            frozenPad.value = paddingBottom;
+        } else {
+            paddingBottom = frozenPad.value;
+        }
+        return { transform: [{ translateY }], paddingBottom };
+    });
 
     const prompt = senderName
         ? `Add a note to ${senderName}?`
@@ -115,13 +130,10 @@ export function DeclineSheet({
             animationType="none"
             onRequestClose={onCancel}
         >
-            {/* keyboard-controller KAV: padding on both platforms. Note: this
-                sits inside an RN Modal, whose Android window the library's
-                inset handling may not reach — verify on device (commit 5). */}
-            <KeyboardAvoidingView
-                style={styles.fill}
-                behavior="padding"
-            >
+            {/* No KeyboardAvoidingView: the sheet is anchored at the bottom and
+                the keyboard-driven paddingBottom (see sheetStyle) lifts the
+                content above the keyboard while the background fills to the
+                screen bottom, so it docks flush to the keyboard. */}
                 <View style={styles.container}>
                     <AnimatedPressable
                         style={[
@@ -232,13 +244,11 @@ export function DeclineSheet({
                         </Pressable>
                     </Reanimated.View>
                 </View>
-            </KeyboardAvoidingView>
         </Modal>
     );
 }
 
 const styles = StyleSheet.create({
-    fill: { flex: 1 },
     container: {
         flex: 1,
         justifyContent: 'flex-end',
