@@ -3,7 +3,6 @@ import {
     ChevronRight,
     Plus,
     Search as SearchIcon,
-    Users,
     X,
 } from 'lucide-react-native';
 import { useCallback, useRef, useState } from 'react';
@@ -305,14 +304,9 @@ export default function FriendsScreen() {
                 </View>
             ) : showEmptyState ? (
                 <View style={styles.emptyState}>
-                    <Users
-                        color={palette.textMuted}
-                        size={64}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
                     <Text
                         style={[
-                            typography.heading,
+                            typography.display,
                             styles.emptyHeading,
                             { color: palette.text },
                         ]}
@@ -326,29 +320,29 @@ export default function FriendsScreen() {
                             { color: palette.textMuted },
                         ]}
                     >
-                        Add someone by their handle.
+                        Tap invite to get started.
                     </Text>
-                    <View style={styles.emptyActions}>
-                        <Pressable
-                            onPress={() => router.push('/friends/add')}
-                            style={({ pressed }) => [
-                                styles.secondaryButton,
-                                {
-                                    borderColor: palette.accent,
-                                    opacity: pressed ? 0.6 : 1,
-                                },
+                    <Pressable
+                        onPress={() => router.push('/friends/invite')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Invite friends"
+                        style={({ pressed }) => [
+                            styles.primaryButton,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: pressed ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.textInverse },
                             ]}
                         >
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.accent },
-                                ]}
-                            >
-                                Add by handle
-                            </Text>
-                        </Pressable>
-                    </View>
+                            Invite friends
+                        </Text>
+                    </Pressable>
                 </View>
             ) : (
                 <>
@@ -624,20 +618,15 @@ const styles = StyleSheet.create({
     },
     emptyHeading: {
         textAlign: 'center',
-        marginTop: spacing.lg,
     },
     emptyBody: {
         textAlign: 'center',
-        marginBottom: spacing.lg,
     },
-    emptyActions: {
-        alignSelf: 'stretch',
-        gap: spacing.sm,
-    },
-    secondaryButton: {
+    primaryButton: {
+        marginTop: spacing.sm,
         paddingVertical: spacing.md,
+        paddingHorizontal: spacing.xl,
         borderRadius: radius.sm,
-        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
     },
