@@ -42,18 +42,20 @@ alter table public.notifications
 -- ============================================================================
 -- (2) Trigger function: on a new report, notify the maintainer.
 --
--- SECURITY DEFINER so it can (a) read auth.users to resolve the maintainer and
--- (b) insert a notification whose user_id is someone else — both of which the
--- inserting authenticated user is not allowed to do under RLS. search_path
--- pinned to public (definer-injection hardening, same as the other notify
--- triggers). Never raises: a failure to resolve/notify must not block the
--- report insert itself.
+-- SECURITY DEFINER so it can insert a notification whose user_id is someone
+-- else — which the inserting authenticated user is not allowed to do under RLS.
+-- search_path pinned to public (definer-injection hardening, same as the other
+-- notify triggers). Never raises: the EXCEPTION handler below swallows any
+-- failure so notifying the maintainer can never block the report insert.
 --
 -- ***** MAINTAINER IDENTITY LIVES HERE *****
--- Resolved by email (paulandhisdocs@gmail.com) rather than a hardcoded uuid so
--- it's human-readable and self-documenting. To change the maintainer, edit the
--- email on the SELECT below (and re-run create-or-replace). Alternative if you
--- prefer a config table: replace the SELECT with a lookup into that table.
+-- Pinned by uuid directly (the paul account). An earlier version resolved the
+-- maintainer by email — but that FAILED on the live account: it signs in with
+-- Apple, so its auth.users.email is an Apple private-relay address
+-- (…@privaterelay.appleid.com), not paulandhisdocs@gmail.com, so the lookup
+-- matched nothing and no push was sent. Hardcoding the uuid is unambiguous and
+-- relay-proof. To change the maintainer, edit the uuid below and re-run
+-- create-or-replace.
 -- ============================================================================
 create or replace function public.notify_report_filed()
 returns trigger
@@ -61,24 +63,10 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-    v_maintainer uuid;
 begin
-    select id
-      into v_maintainer
-      from auth.users
-     where email = 'paulandhisdocs@gmail.com'
-     limit 1;
-
-    -- Maintainer not found (email changed, account gone) → do nothing, and
-    -- never block the report from being written.
-    if v_maintainer is null then
-        return null;
-    end if;
-
     insert into public.notifications (user_id, kind, payload, read_at)
     values (
-        v_maintainer,
+        '7ca2e1d0-5f94-417d-81ee-7c335240d2eb'::uuid,  -- maintainer (paul)
         'report_filed',
         jsonb_build_object(
             'reason', new.reason,
@@ -88,6 +76,11 @@ begin
     );
 
     return null;
+exception
+    when others then
+        -- Never block the report: if notifying the maintainer fails for any
+        -- reason, swallow it and let the report insert commit.
+        return null;
 end;
 $$;
 
