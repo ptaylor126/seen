@@ -11,7 +11,10 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import {
+    KeyboardAvoidingView,
+    useKeyboardState,
+} from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -48,6 +51,7 @@ export function DeclineSheet({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    const keyboardVisible = useKeyboardState((state) => state.isVisible);
 
     const [mounted, setMounted] = useState(visible);
     const [note, setNote] = useState('');
@@ -117,7 +121,14 @@ export function DeclineSheet({
                             styles.sheet,
                             {
                                 backgroundColor: palette.surface,
-                                paddingBottom: insets.bottom + spacing.lg,
+                                // Drop the home-indicator inset when the
+                                // keyboard is open: the KeyboardAvoidingView
+                                // already lifts the sheet to the keyboard's top
+                                // edge, so insets.bottom here just stacks as
+                                // dead space below Cancel. Keep it when closed.
+                                paddingBottom: keyboardVisible
+                                    ? spacing.lg
+                                    : insets.bottom + spacing.lg,
                                 transform: [{ translateY }],
                             },
                         ]}
