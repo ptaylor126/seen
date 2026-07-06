@@ -137,31 +137,6 @@ export default function RecommendScreen() {
     const [localQuery, setLocalQuery] = useState('');
     const [localFocused, setLocalFocused] = useState(false);
     const localSearchInputRef = useRef<TextInput | null>(null);
-    // Auto-scroll the selected recipient into view when the note field
-    // focuses — the pinned note bar rises with the keyboard and would
-    // otherwise clip the bottom rows (incl. the recipient being written
-    // about). scrollRef drives the scroll; friendListYRef is the friend
-    // list's y within the scroll content, and rowOffsetsRef maps each row's
-    // userId → its y within the list, so the absolute target is the sum.
-    const scrollRef = useRef<ScrollView | null>(null);
-    const friendListYRef = useRef(0);
-    const rowOffsetsRef = useRef<Map<string, number>>(new Map());
-
-    // Bring the first selected recipient near the top of the visible list, so
-    // it's clearly above the note bar / keyboard while composing. Deferred a
-    // frame so the keyboard inset is applied before we scroll.
-    function scrollSelectedRecipientIntoView() {
-        const firstSelected = filteredFriends.find((f) =>
-            selectedFriendIds.has(f.userId),
-        );
-        if (!firstSelected) return;
-        const rowY = rowOffsetsRef.current.get(firstSelected.userId);
-        if (rowY == null) return;
-        const target = Math.max(0, friendListYRef.current + rowY - spacing.base);
-        requestAnimationFrame(() => {
-            scrollRef.current?.scrollTo({ y: target, animated: true });
-        });
-    }
 
     useEffect(() => {
         if (!mediaType || !Number.isFinite(tmdbId)) {
@@ -310,6 +285,22 @@ export default function RecommendScreen() {
     const selectedCount = selectedFriendIds.size;
     const canSend =
         !sending && selectedCount > 0 && mediaType !== null && !loading;
+
+    // Compact "To <name>" / "To <name> +N" recipient label for the note bar,
+    // so the user still sees who they're sending to while the note field is
+    // focused (the friend list is then hidden behind the keyboard). Names come
+    // from the loaded friends list in its display order.
+    const selectedRecipients = friends.filter((f) =>
+        selectedFriendIds.has(f.userId),
+    );
+    const recipientLabel =
+        selectedRecipients.length === 0
+            ? null
+            : selectedRecipients.length === 1
+              ? `To ${selectedRecipients[0].displayName}`
+              : `To ${selectedRecipients[0].displayName} +${
+                    selectedRecipients.length - 1
+                }`;
 
     // Case-insensitive match against display name AND @handle (haystack
     // includes "@" so typing it or omitting it both work). Filtering
@@ -584,15 +575,6 @@ export default function RecommendScreen() {
             <Pressable
                 key={row.userId}
                 onPress={() => toggleFriend(row.userId)}
-                onLayout={(e) => {
-                    // y is relative to the friendList container; combined with
-                    // friendListYRef it gives the absolute scroll offset used
-                    // to bring a selected recipient into view.
-                    rowOffsetsRef.current.set(
-                        row.userId,
-                        e.nativeEvent.layout.y,
-                    );
-                }}
                 style={({ pressed }) => [
                     styles.friendRow,
                     isSelected && { backgroundColor: palette.accentSubtle },
@@ -697,7 +679,6 @@ export default function RecommendScreen() {
                 its own KeyboardStickyView below. */}
             <View style={styles.flex}>
                 <ScrollView
-                    ref={scrollRef}
                     style={styles.flex}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
@@ -878,10 +859,6 @@ export default function RecommendScreen() {
                             {filteredFriends.length > 0 ? (
                                 <View
                                     style={styles.friendList}
-                                    onLayout={(e) => {
-                                        friendListYRef.current =
-                                            e.nativeEvent.layout.y;
-                                    }}
                                 >
                                     {filteredFriends.map(renderFriendRow)}
                                 </View>
@@ -923,6 +900,22 @@ export default function RecommendScreen() {
                             },
                         ]}
                     >
+                        {/* Who this rec is going to — a quiet muted label so
+                            the recipient stays visible while the note field is
+                            focused and the friend list is hidden behind the
+                            keyboard. */}
+                        {recipientLabel ? (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.recipientLabel,
+                                    { color: palette.textMuted },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {recipientLabel}
+                            </Text>
+                        ) : null}
                         <Text
                             style={[
                                 typography.micro,
@@ -946,7 +939,6 @@ export default function RecommendScreen() {
                                 onChangeText={(v) =>
                                     setNote(v.slice(0, NOTE_MAX_LENGTH))
                                 }
-                                onFocus={scrollSelectedRecipientIntoView}
                                 placeholder="Why are you recommending this?"
                                 placeholderTextColor={palette.textMuted}
                                 multiline
@@ -1140,5 +1132,8 @@ const styles = StyleSheet.create({
     bottomBarLabel: {
         marginBottom: spacing.sm,
         letterSpacing: 0.5,
+    },
+    recipientLabel: {
+        marginBottom: spacing.xs,
     },
 });
