@@ -305,24 +305,26 @@ export default function FriendsScreen() {
                 </View>
             ) : showEmptyState ? (
                 <View style={styles.emptyState}>
-                    <Text
-                        style={[
-                            typography.display,
-                            styles.emptyHeading,
-                            { color: palette.text },
-                        ]}
-                    >
-                        Seen is better with friends. Add yours to get started.
-                    </Text>
-                    <Text
-                        style={[
-                            typography.body,
-                            styles.emptyBody,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        Tap invite to get started.
-                    </Text>
+                    <View style={styles.emptyHeadline}>
+                        <Text
+                            style={[
+                                typography.display,
+                                styles.emptyLine,
+                                { color: palette.text },
+                            ]}
+                        >
+                            Seen is better with friends
+                        </Text>
+                        <Text
+                            style={[
+                                styles.emptyLineRegular,
+                                styles.emptyLine,
+                                { color: palette.text },
+                            ]}
+                        >
+                            Invite yours to get started.
+                        </Text>
+                    </View>
                     <View style={styles.emptyButtons}>
                         <Pressable
                             onPress={() => void shareInvite()}
@@ -638,13 +640,28 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: spacing.xl,
+        // Optical centering: bias the group up off the geometric center (which
+        // reads low, partly under the floating tab bar) with a modest bottom
+        // offset. No app-wide optical-center pattern to match — other empty
+        // states use plain geometric center.
+        paddingBottom: spacing.xxxl,
         gap: spacing.base,
     },
-    emptyHeading: {
+    // Two-line headline: bold line 1 + regular line 2 at the SAME size, stacked
+    // tight (no gap — the emptyState gap is only between the headline block and
+    // the buttons).
+    emptyHeadline: {
+        alignItems: 'center',
+    },
+    emptyLine: {
         textAlign: 'center',
     },
-    emptyBody: {
-        textAlign: 'center',
+    emptyLineRegular: {
+        // display's size/lineHeight, regular weight.
+        fontFamily: 'Geist_400Regular',
+        fontSize: 32,
+        fontWeight: '400',
+        lineHeight: 38,
     },
     emptyButtons: {
         // Primary (Invite friends) on top, secondary (Add by handle) below —
