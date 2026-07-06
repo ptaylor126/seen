@@ -22,7 +22,8 @@ import { goToProfile } from '@/lib/profile-nav';
 import { promptPushAtHighIntent } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { fetchTitlesByItems } from '@/lib/titles';
+import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -205,7 +206,7 @@ interface SentRecItem {
 // thumbnail. Received call sites only read .title — they're updated in
 // place to use .title ?? null.
 interface TitleMeta {
-    title: string;
+    title: string | null;
     posterPath: string | null;
 }
 
@@ -391,19 +392,22 @@ export default function InboxScreen() {
             if (sentRecsResult.error) throw sentRecsResult.error;
 
             // Mark-read sweep — runs ONLY after the reads above resolve, so the
-            // unread fetch can't race the write (read-before-sweep). Every
-            // unread notification was just fetched uncapped, so sweeping ALL
-            // unread is consistent with what we're about to show. Best-effort:
+            // unread fetch can't race the write (read-before-sweep). The reads
+            // have already resolved here, so fire it WITHOUT awaiting: it's a
+            // write we don't need before rendering, and keeping it off the
+            // critical path shaves a round-trip off the loader. Best-effort:
             // a sweep failure leaves read_at intact (dots reappear next visit)
             // but never breaks the list.
-            const { error: markReadError } = await supabase
+            void supabase
                 .from('notifications')
                 .update({ read_at: new Date().toISOString() })
                 .eq('user_id', userId)
-                .is('read_at', null);
-            if (markReadError) {
-                console.warn('inbox mark-read sweep failed:', markReadError);
-            }
+                .is('read_at', null)
+                .then(({ error: markReadError }) => {
+                    if (markReadError) {
+                        console.warn('inbox mark-read sweep failed:', markReadError);
+                    }
+                });
 
             const unreadNotifs = unreadNotifsResult.data ?? [];
             const readNotifs = readNotifsResult.data ?? [];
@@ -480,19 +484,25 @@ export default function InboxScreen() {
                 avatarUrl: null,
             };
 
-            // TMDB title + poster fetches for incoming recs, sent recs,
-            // and title-bearing notifications, in parallel via
-            // Promise.allSettled so one failure doesn't break the whole
-            // inbox. Sent rows need posterPath; Received rows only read
-            // .title — both flow through the same shared cache.
+            // Title + poster metadata for incoming recs, sent recs, and
+            // title-bearing notifications. ONE batched query against the shared
+            // public.titles catalogue (fetchTitlesByItems) instead of a
+            // getMovie/getTV fan-out — the previous per-title Edge round-trips
+            // were the inbox's dominant load cost. Missing key → the same
+            // undefined-lookup fallback as before ('this title' / null poster).
             type TitleKey = string; // `${mediaType}:${tmdbId}`
-            const titleKeys = new Set<TitleKey>();
-            for (const r of recs) {
-                titleKeys.add(`${r.media_type}:${r.tmdb_id}`);
-            }
-            for (const r of sentRecs) {
-                titleKeys.add(`${r.media_type}:${r.tmdb_id}`);
-            }
+            const titleItems = new Map<
+                TitleKey,
+                { tmdb_id: number; media_type: string }
+            >();
+            const addTitleItem = (media_type: string, tmdb_id: number) => {
+                titleItems.set(`${media_type}:${tmdb_id}`, {
+                    tmdb_id,
+                    media_type,
+                });
+            };
+            for (const r of recs) addTitleItem(r.media_type, r.tmdb_id);
+            for (const r of sentRecs) addTitleItem(r.media_type, r.tmdb_id);
             for (const n of notifications) {
                 if (
                     n.kind !== 'rec_watched' &&
@@ -506,33 +516,20 @@ export default function InboxScreen() {
                 const payload = asRecord(n.payload);
                 const mt = pickMediaType(payload, 'media_type');
                 const tid = pickNumber(payload, 'tmdb_id');
-                if (mt && tid) titleKeys.add(`${mt}:${tid}`);
+                if (mt && tid) addTitleItem(mt, tid);
             }
 
             const titleByKey = new Map<TitleKey, TitleMeta>();
-            if (titleKeys.size > 0) {
-                const keys = Array.from(titleKeys);
-                const results = await Promise.allSettled(
-                    keys.map(async (key): Promise<TitleMeta | null> => {
-                        const [mt, tidStr] = key.split(':');
-                        const tid = Number.parseInt(tidStr ?? '', 10);
-                        if (!Number.isFinite(tid)) return null;
-                        const data =
-                            mt === 'movie' ? await getMovie(tid) : await getTV(tid);
-                        return {
-                            title:
-                                'title' in data ? data.title : data.name,
-                            posterPath: data.poster_path,
-                        };
-                    }),
+            if (titleItems.size > 0) {
+                const catalogByKey = await fetchTitlesByItems(
+                    Array.from(titleItems.values()),
                 );
-                results.forEach((res, i) => {
-                    const key = keys[i];
-                    if (!key) return;
-                    if (res.status === 'fulfilled' && res.value !== null) {
-                        titleByKey.set(key, res.value);
-                    }
-                });
+                for (const [key, row] of catalogByKey) {
+                    titleByKey.set(key, {
+                        title: row.title,
+                        posterPath: row.poster_path,
+                    });
+                }
             }
 
             // Library-status lookup for the recipient's own items rows
