@@ -119,8 +119,15 @@ export function DeclineSheet({
         return { transform: [{ translateY }], paddingBottom };
     });
 
-    const prompt = senderName
-        ? `Add a note to ${senderName}?`
+    // Hold the sender name while dismissing so the prompt/helper subtext can't
+    // change mid-exit if the caller clears it on close (parity with
+    // RequestRecSheet — the caller here keeps it stable, but the guard is free).
+    const [heldSenderName, setHeldSenderName] = useState(senderName);
+    useEffect(() => {
+        if (visible) setHeldSenderName(senderName);
+    }, [visible, senderName]);
+    const prompt = heldSenderName
+        ? `Add a note to ${heldSenderName}?`
         : 'Add a note?';
 
     return (
@@ -198,7 +205,7 @@ export function DeclineSheet({
                                 { color: palette.textMuted },
                             ]}
                         >
-                            {senderName || 'They'} won&apos;t be notified
+                            {heldSenderName || 'They'} won&apos;t be notified
                             unless you add a note.
                         </Text>
                         <Pressable

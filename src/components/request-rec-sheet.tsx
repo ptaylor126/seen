@@ -119,8 +119,16 @@ export function RequestRecSheet({
         return { transform: [{ translateY }], paddingBottom };
     });
 
-    const prompt = friendName
-        ? `What are you in the mood for? ${friendName} will see this.`
+    // The caller sets friendName to '' when it closes (its target → null), which
+    // would otherwise flip the prompt text mid-exit. Hold the last name while
+    // dismissing so the subtext is frozen as the sheet slides out — only adopt a
+    // new name while the sheet is visible.
+    const [heldFriendName, setHeldFriendName] = useState(friendName);
+    useEffect(() => {
+        if (visible) setHeldFriendName(friendName);
+    }, [visible, friendName]);
+    const prompt = heldFriendName
+        ? `What are you in the mood for? ${heldFriendName} will see this.`
         : 'What are you in the mood for?';
 
     return (

@@ -1161,12 +1161,20 @@ const styles = StyleSheet.create({
         // note input off-screen. flexGrow:0 keeps it from stretching tall.
         flexGrow: 0,
         marginBottom: spacing.sm,
+        // Bleed to the bar's edges (cancel its paddingHorizontal) so an
+        // overflowing row is clipped right at the visual edge — the last chip
+        // straddles it (peek affordance) instead of ending flush inside the
+        // inset. The content padding below restores the first chip's alignment
+        // and adds trailing room. When everything fits there's no overflow, so
+        // no clip and no visible change.
+        marginHorizontal: -spacing.lg,
     },
     recipientScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.md,
         paddingVertical: spacing.xs,
+        paddingHorizontal: spacing.lg,
     },
     recipientChip: {
         flexDirection: 'row',
