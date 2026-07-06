@@ -16,7 +16,7 @@ import {
     View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { pickFeedbackImage, uploadFeedbackScreenshot } from '@/lib/feedback-upload';
 import supabase from '@/lib/supabase';
@@ -46,6 +46,7 @@ export default function FeedbackScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     const [body, setBody] = useState('');
     const [replyEmail, setReplyEmail] = useState('');
@@ -430,7 +431,24 @@ export default function FeedbackScreen() {
                             </Text>
                         ) : null}
 
-                        <View style={styles.footer}>
+                        <View
+                            style={[
+                                styles.footer,
+                                // edges={['top']} doesn't reserve the bottom
+                                // inset, so base the footer padding on the real
+                                // one. Android: insets.bottom + md clears the
+                                // nav bar. iOS: lg (24) was below the
+                                // home-indicator inset (~46), so this also
+                                // nudges the footer up to clear it;
+                                // non-home-indicator iOS (inset 0) stays at lg.
+                                {
+                                    paddingBottom: Math.max(
+                                        spacing.lg,
+                                        insets.bottom + spacing.md,
+                                    ),
+                                },
+                            ]}
+                        >
                             <Pressable
                                 onPress={handleSubmit}
                                 disabled={!canSubmit}

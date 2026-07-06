@@ -13,7 +13,7 @@ import {
     View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
@@ -33,6 +33,7 @@ export default function AccountScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     const [confirmVisible, setConfirmVisible] = useState(false);
     const [confirmText, setConfirmText] = useState('');
@@ -127,7 +128,23 @@ export default function AccountScreen() {
                 </Text>
             </View>
 
-            <View style={styles.body}>
+            <View
+                style={[
+                    styles.body,
+                    // edges={['top']} doesn't reserve the bottom inset, so base
+                    // the bottom padding on the real one. Android: insets.bottom
+                    // + md clears the nav bar. iOS: xl (32) was actually below
+                    // the home-indicator inset (~46), so this also nudges the
+                    // button up to clear it; non-home-indicator iOS (inset 0)
+                    // stays at xl.
+                    {
+                        paddingBottom: Math.max(
+                            spacing.xl,
+                            insets.bottom + spacing.md,
+                        ),
+                    },
+                ]}
+            >
                 {/* Non-destructive settings, kept clearly separate from the
                     destructive Delete block at the bottom. */}
                 <Pressable
