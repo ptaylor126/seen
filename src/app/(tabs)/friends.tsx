@@ -317,9 +317,9 @@ export default function FriendsScreen() {
                         </Text>
                         <Text
                             style={[
-                                styles.emptyLineRegular,
+                                typography.body,
                                 styles.emptyLine,
-                                { color: palette.text },
+                                { color: palette.textMuted },
                             ]}
                         >
                             Invite yours to get started.
@@ -645,30 +645,24 @@ const styles = StyleSheet.create({
         // offset. No app-wide optical-center pattern to match — other empty
         // states use plain geometric center.
         paddingBottom: spacing.xxxl,
-        gap: spacing.base,
+        // Larger gap (xl) between the copy block and the buttons than between
+        // the two text lines (which stack tight on lineHeight) — so heading +
+        // subline read as one group, separate from the buttons.
+        gap: spacing.xl,
     },
-    // Two-line headline: bold line 1 + regular line 2 at the SAME size, stacked
-    // tight (no gap — the emptyState gap is only between the headline block and
-    // the buttons).
+    // Heading (line 1, display) + subline (line 2, body/muted), stacked tight —
+    // no gap here; lineHeight gives the small heading↔subline spacing.
     emptyHeadline: {
         alignItems: 'center',
     },
     emptyLine: {
         textAlign: 'center',
     },
-    emptyLineRegular: {
-        // display's size/lineHeight, regular weight.
-        fontFamily: 'Geist_400Regular',
-        fontSize: 32,
-        fontWeight: '400',
-        lineHeight: 38,
-    },
     emptyButtons: {
         // Primary (Invite friends) on top, secondary (Add by handle) below —
         // both full-width within the centered empty state, standard gap.
         alignSelf: 'stretch',
         gap: spacing.sm,
-        marginTop: spacing.sm,
     },
     primaryButton: {
         paddingVertical: spacing.md,
