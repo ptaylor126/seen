@@ -900,21 +900,23 @@ export default function RecommendScreen() {
                         {/* Who this rec is going to — one quiet avatar + name
                             row per recipient, so they stay visible while the
                             note field is focused and the friend list is hidden
-                            behind the keyboard. Capped height: past ~3 the area
-                            scrolls, so it never crowds out the note input. */}
+                            behind the keyboard. One fixed-height row; past what
+                            fits it scrolls horizontally, so it never crowds out
+                            the note input. */}
                         {selectedRecipients.length > 0 ? (
                             <ScrollView
+                                horizontal
                                 style={styles.recipientScroll}
                                 contentContainerStyle={
                                     styles.recipientScrollContent
                                 }
-                                showsVerticalScrollIndicator={false}
+                                showsHorizontalScrollIndicator={false}
                                 keyboardShouldPersistTaps="handled"
                             >
                                 {selectedRecipients.map((r) => (
                                     <View
                                         key={r.userId}
-                                        style={styles.recipientRow}
+                                        style={styles.recipientChip}
                                     >
                                         <Avatar
                                             avatarUrl={r.avatarUrl}
@@ -925,6 +927,7 @@ export default function RecommendScreen() {
                                         <Text
                                             style={[
                                                 typography.caption,
+                                                styles.recipientName,
                                                 { color: palette.textMuted },
                                             ]}
                                             numberOfLines={1}
@@ -1153,19 +1156,25 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     recipientScroll: {
-        // Caps the recipient area at ~3.5 rows (24 avatar + 8 padding ≈ 32px
-        // each); beyond that it scrolls, so many recipients never push the note
-        // input off-screen. Under the cap it just sizes to its rows.
-        maxHeight: 112,
+        // A single fixed-height row of recipient chips. Flow horizontally;
+        // past what fits, it scrolls sideways so many recipients never push the
+        // note input off-screen. flexGrow:0 keeps it from stretching tall.
+        flexGrow: 0,
         marginBottom: spacing.sm,
     },
     recipientScrollContent: {
-        // Rows carry their own vertical padding; no extra gap needed.
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        paddingVertical: spacing.xs,
     },
-    recipientRow: {
+    recipientChip: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
-        paddingVertical: spacing.xs,
+    },
+    recipientName: {
+        // Truncate long names (numberOfLines={1}) so several chips fit across.
+        maxWidth: 120,
     },
 });
