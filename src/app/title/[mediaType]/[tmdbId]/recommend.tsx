@@ -25,6 +25,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
@@ -54,6 +55,9 @@ interface TitleContext {
 
 const NOTE_MAX_LENGTH = 500;
 const FRIEND_AVATAR_SIZE = 44;
+// Recipient chips in the note bar are deliberately smaller/quieter than the
+// friend-list rows above.
+const RECIPIENT_AVATAR_SIZE = 24;
 const POSTER_W = 40;
 const POSTER_H = 60;
 
@@ -286,21 +290,14 @@ export default function RecommendScreen() {
     const canSend =
         !sending && selectedCount > 0 && mediaType !== null && !loading;
 
-    // Compact "To <name>" / "To <name> +N" recipient label for the note bar,
-    // so the user still sees who they're sending to while the note field is
-    // focused (the friend list is then hidden behind the keyboard). Names come
-    // from the loaded friends list in its display order.
+    // Recipients shown in the note bar (avatar + name, one row each) so the
+    // user sees exactly who they're sending to while the note field is focused
+    // and the friend list is hidden behind the keyboard. Order + data come from
+    // the loaded friends list; selection is independent of the search filter, so
+    // a filtered-out pick still appears here.
     const selectedRecipients = friends.filter((f) =>
         selectedFriendIds.has(f.userId),
     );
-    const recipientLabel =
-        selectedRecipients.length === 0
-            ? null
-            : selectedRecipients.length === 1
-              ? `To ${selectedRecipients[0].displayName}`
-              : `To ${selectedRecipients[0].displayName} +${
-                    selectedRecipients.length - 1
-                }`;
 
     // Case-insensitive match against display name AND @handle (haystack
     // includes "@" so typing it or omitting it both work). Filtering
@@ -900,21 +897,43 @@ export default function RecommendScreen() {
                             },
                         ]}
                     >
-                        {/* Who this rec is going to — a quiet muted label so
-                            the recipient stays visible while the note field is
-                            focused and the friend list is hidden behind the
-                            keyboard. */}
-                        {recipientLabel ? (
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    styles.recipientLabel,
-                                    { color: palette.textMuted },
-                                ]}
-                                numberOfLines={1}
+                        {/* Who this rec is going to — one quiet avatar + name
+                            row per recipient, so they stay visible while the
+                            note field is focused and the friend list is hidden
+                            behind the keyboard. Capped height: past ~3 the area
+                            scrolls, so it never crowds out the note input. */}
+                        {selectedRecipients.length > 0 ? (
+                            <ScrollView
+                                style={styles.recipientScroll}
+                                contentContainerStyle={
+                                    styles.recipientScrollContent
+                                }
+                                showsVerticalScrollIndicator={false}
+                                keyboardShouldPersistTaps="handled"
                             >
-                                {recipientLabel}
-                            </Text>
+                                {selectedRecipients.map((r) => (
+                                    <View
+                                        key={r.userId}
+                                        style={styles.recipientRow}
+                                    >
+                                        <Avatar
+                                            avatarUrl={r.avatarUrl}
+                                            displayName={r.displayName}
+                                            seedId={r.userId}
+                                            size={RECIPIENT_AVATAR_SIZE}
+                                        />
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                { color: palette.textMuted },
+                                            ]}
+                                            numberOfLines={1}
+                                        >
+                                            {r.displayName}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </ScrollView>
                         ) : null}
                         <Text
                             style={[
@@ -1133,7 +1152,20 @@ const styles = StyleSheet.create({
         marginBottom: spacing.sm,
         letterSpacing: 0.5,
     },
-    recipientLabel: {
-        marginBottom: spacing.xs,
+    recipientScroll: {
+        // Caps the recipient area at ~3.5 rows (24 avatar + 8 padding ≈ 32px
+        // each); beyond that it scrolls, so many recipients never push the note
+        // input off-screen. Under the cap it just sizes to its rows.
+        maxHeight: 112,
+        marginBottom: spacing.sm,
+    },
+    recipientScrollContent: {
+        // Rows carry their own vertical padding; no extra gap needed.
+    },
+    recipientRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingVertical: spacing.xs,
     },
 });
