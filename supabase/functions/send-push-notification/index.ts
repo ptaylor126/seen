@@ -53,7 +53,8 @@ type NotificationKind =
     | 'rec_reacted'
     | 'rec_commented'
     | 'rec_declined'
-    | 'rec_requested';
+    | 'rec_requested'
+    | 'report_filed';
 
 interface NotificationRow {
     id: string;
@@ -506,6 +507,22 @@ async function buildMessage(
             return {
                 title: `${requesterName} asked you for a recommendation`,
                 body: notePreview,
+                data,
+            };
+        }
+        case 'report_filed': {
+            // Maintainer alert for a new content report. Payload carries only
+            // the reason + reported_type — NO reporter identity, so neither the
+            // title nor the body names who reported. reason is nullable in the
+            // reports table (the app always sends one from the picker, but
+            // guard anyway).
+            const reason = stringField(notif.payload, 'reason');
+            const reportedType = stringField(notif.payload, 'reported_type');
+            return {
+                title: reportedType
+                    ? `New ${reportedType} report`
+                    : 'New content report',
+                body: reason ? `Reason: ${reason}` : 'No reason given',
                 data,
             };
         }
