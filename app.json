@@ -26,7 +26,7 @@
     "android": {
       "package": "com.paultaylor.seen",
       "adaptiveIcon": {
-        "backgroundColor": "#E4CADB",
+        "backgroundColor": "#F2E7EC",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
@@ -49,7 +49,7 @@
             "image": "./assets/images/android-icon-foreground.png",
             "imageWidth": 240,
             "resizeMode": "contain",
-            "backgroundColor": "#EFE7EC"
+            "backgroundColor": "#F2E7EC"
           }
         }
       ],
