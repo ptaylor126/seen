@@ -37,6 +37,37 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-07 — Screenshots redesigned, 1.0.4 OTA shipped, Android testing launch, icon/splash fix
+
+**Done**
+
+- App Store screenshot set redesigned and uploaded. New system: wash background (`#EFE7EC` in Figma), sentence-case headlines with bold on the key phrase, phones large and cropped, headline alternating top/bottom across the five frames. Content is varied across frames so multiple friends (bigron, Selemba, Duff) and titles appear rather than one friend repeating; frame 5 shows the new trailer row.
+- iOS 1.0.4 was **removed from review** to attach the new screenshots (screenshots lock on submit and can't be edited while waiting for review), then **resubmitted** with updated What's New mentioning trailers. For the future: changing screenshots on a live version requires a **new version** or the **Product Page Optimization apply-treatment** workaround — there is no standalone metadata review for screenshots.
+- OTA published to **both platforms from `7c09107`** (trailers on title pages, episode progress, season-0 stepper fix, Watched-by rating line, maintainer-UUID report fix, delete-account doc pages). Pre-publish gate passed; iOS runtime `abe40b00`, Android `7f2846af`.
+- **Android 1.0.4 (versionCode 3) confirmed live** on the closed-testing Alpha track. Installed on the A16, OTA applied, trailer verified working. Testing link sent to testers; **first real user onboarded.**
+- Android icon/splash diagnosed: both configs pointed at the tracked eyes-only asset in `assets/images/`, while the new wordmark export was sitting **untracked at `assets/` root, referenced by nothing**. Fixed in `62c5e34`: wordmark foreground (1024×1024, transparent, safe-zone sized) replaces the eyes asset, background hex unified to `#F2E7EC` in `adaptiveIcon` and the android splash, `featured-graphic.png` now tracked.
+- Onboarding currently-watching subtext fixed in `83c9125` ("Friends see it on their home screen. Sometimes that's all the recommendation they need."). The chat-8 prompt for this was never run, so the old "pick back up" line shipped in **both 1.0.4 binaries**.
+
+**Decisions worth remembering**
+
+- **Screenshot sets: light wash over dark; match the app's actual look.** Pull-out UI elements were abandoned — clean framed screens beat forced accents on dense screens.
+- **Android 12+ masks both the OS splash and the launcher icon into a circle** — assets must fit the middle two-thirds. The OS-splash-then-app-splash double take is platform behaviour, not a bug.
+- **Splash/icon fixes are cosmetic and don't block distribution** — the testing link went out with the eyes icon rather than waiting a review cycle.
+- **Friend-connection rate can't be measured meaningfully** until Android is in open production and an invite flow exists. Current measurable: do new installs finish sign-up and add anyone at all.
+
+**Next**
+
+- Cut **versionCode 4 + next iOS build** carrying `62c5e34` (icon/splash) and `83c9125` (onboarding copy). Main is **OTA-frozen** until then (app.json changed, fingerprint rotated).
+- Optional before cutting: **preview APK on the A16** to verify the wordmark icon and splash render correctly.
+- Watch Supabase for new Android sign-ups completing sign-up and adding a friend.
+
+**Open questions**
+
+- Monochrome Android icon (themed icons) still shows the eyes — keep, or replace with a wordmark silhouette in versionCode 4?
+- iOS 1.0.4 reviewer may open the app before the OTA applies and not find the trailer row mentioned in What's New. If rejected for that, reply pointing to a relaunch.
+
+---
+
 ## 2026-07-03 (cont. 2) — Polish batch shipped + Friends-list row slimmed
 
 **Controls polish batch → LIVE.** The four-commit batch from the previous entry (sort bottom sheet, segmented-control hairline, chip refinements, friend-profile divider/gap) published to production via the gated OTA flow — fingerprint verified against the live 1.0.3 runtime (`cd73e576…`) before publish, iOS update group `e9ebe6bc…`.
