@@ -235,6 +235,18 @@ export interface TMDBTV {
     original_language: string;
     credits?: { cast: TMDBCastMember[] };
     videos?: { results: TMDBVideo[] };
+    // Always present on the /tv/{id} detail response (no extra append needed).
+    // Drives episode-progress clamping — see selectTrailerKey's neighbour
+    // buildBounds in episode-progress. season_number 0 = "Specials".
+    seasons?: TMDBSeason[];
+}
+
+// One season entry from the TV detail's `seasons` array. episode_count can be
+// 0 or missing on odd data (future/unaired seasons) — callers clamp leniently.
+export interface TMDBSeason {
+    season_number: number;
+    episode_count: number;
+    name: string;
 }
 
 // Watch providers — JustWatch-sourced availability data per region.

@@ -28,6 +28,7 @@ import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-l
 import { Avatar } from '@/components/avatar';
 import { LoadError } from '@/components/load-error';
 import { AvatarStack } from '@/components/avatar-stack';
+import { EpisodeProgress } from '@/components/episode-progress';
 import { RatingSheet } from '@/components/rating-sheet';
 import { TitleTrailer } from '@/components/title-trailer';
 import {
@@ -222,6 +223,11 @@ export default function TitleDetailScreen() {
     // user's library (currentStatus !== null), which gates the control.
     const [currentVisibility, setCurrentVisibility] =
         useState<ItemVisibility>('friends');
+    // Persisted episode progress for a TV item (null = not tracked yet). Only
+    // surfaced while status === 'watching'; kept in the data across status
+    // changes. Feeds EpisodeProgress's initial values.
+    const [progressSeason, setProgressSeason] = useState<number | null>(null);
+    const [progressEpisode, setProgressEpisode] = useState<number | null>(null);
     const [visibilityBusy, setVisibilityBusy] = useState(false);
     const [updating, setUpdating] = useState(false);
     const [showRatingSheet, setShowRatingSheet] = useState(false);
@@ -336,14 +342,26 @@ export default function TitleDetailScreen() {
 
                 const userId = sessionResult.data.session?.user.id;
                 if (userId) {
-                    const { data: item } = await supabase
+                    const { data: itemRow } = await supabase
                         .from('items')
-                        .select('status, rating, visibility')
+                        .select(
+                            'status, rating, visibility, progress_season, progress_episode',
+                        )
                         .eq('user_id', userId)
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
                         .maybeSingle();
                     if (!active) return;
+                    // reason: progress_season / progress_episode come from the
+                    // pending migration (20260707120000) and aren't in the
+                    // generated Supabase types yet; cast to the runtime shape.
+                    const item = itemRow as unknown as {
+                        status: string | null;
+                        rating: number | null;
+                        visibility: string | null;
+                        progress_season: number | null;
+                        progress_episode: number | null;
+                    } | null;
                     if (item && STATUSES.includes(item.status as ItemStatus)) {
                         setCurrentStatus(item.status as ItemStatus);
                     }
@@ -352,6 +370,12 @@ export default function TitleDetailScreen() {
                     }
                     if (item && item.visibility === 'private') {
                         setCurrentVisibility('private');
+                    }
+                    if (item && typeof item.progress_season === 'number') {
+                        setProgressSeason(item.progress_season);
+                    }
+                    if (item && typeof item.progress_episode === 'number') {
+                        setProgressEpisode(item.progress_episode);
                     }
                 }
 
@@ -1372,6 +1396,20 @@ export default function TitleDetailScreen() {
                         );
                     })}
                 </View>
+
+                {/* Episode progress — TV only, and only while Watching. One
+                    compact stepper row (Season −/+, Episode −/+) under the
+                    status control. Progress is kept in the data across status
+                    changes but the control is hidden once not Watching. */}
+                {detail.type === 'tv' && currentStatus === 'watching' && (
+                    <EpisodeProgress
+                        tmdbId={tmdbId}
+                        initialSeason={progressSeason}
+                        initialEpisode={progressEpisode}
+                        seasons={detail.data.seasons}
+                        numberOfSeasons={detail.data.number_of_seasons}
+                    />
+                )}
 
                 {/* Recommend — a primary outgoing action. Filled accent
                     (vs. the outlined status pills above) so the visual
