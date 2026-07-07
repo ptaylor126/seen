@@ -189,8 +189,8 @@ export default function CurrentlyWatchingScreen() {
                     What are you watching right now?
                 </Text>
                 <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Anything you&apos;re partway through? Add it so it&apos;s
-                    easy to pick back up.
+                    Friends see it on their home screen. Sometimes that&apos;s
+                    all the recommendation they need.
                 </Text>
                 {added ? (
                     <View
