@@ -96,9 +96,9 @@ export default function SignInScreen() {
                         style={({ pressed }) => [
                             styles.googleButton,
                             {
-                                backgroundColor: pressed
-                                    ? palette.accentPressed
-                                    : palette.accent,
+                                // Match the Apple button's black pill (no plum);
+                                // pressed lifts to a slightly lighter dark grey.
+                                backgroundColor: pressed ? '#1a1a1a' : '#000000',
                                 opacity: busy ? 0.6 : 1,
                             },
                         ]}
@@ -106,14 +106,22 @@ export default function SignInScreen() {
                         {busy ? (
                             <ActivityIndicator color={palette.textInverse} />
                         ) : (
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.textInverse },
-                                ]}
-                            >
-                                Sign in with Google
-                            </Text>
+                            <View style={styles.googleContent}>
+                                <Image
+                                    source={require('../../../assets/images/google-g.png')}
+                                    style={styles.googleLogo}
+                                    contentFit="contain"
+                                    accessibilityLabel="Google"
+                                />
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.textInverse },
+                                    ]}
+                                >
+                                    Sign in with Google
+                                </Text>
+                            </View>
                         )}
                     </Pressable>
                 )}
@@ -197,6 +205,17 @@ const styles = StyleSheet.create({
         borderRadius: radius.md,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    // Logo + label as one centred row, mirroring the Apple button's
+    // logo+label arrangement.
+    googleContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    googleLogo: {
+        width: 18,
+        height: 18,
     },
     tagline: {
         textAlign: 'center',
