@@ -200,6 +200,21 @@ export interface TMDBMovie {
     // single film-level director — directing is per-episode, and a
     // TV-equivalent of this surface would use `created_by` instead.
     credits?: { cast: TMDBCastMember[]; crew?: TMDBCrewMember[] };
+    // Populated only when the caller passes { appendVideos: true } — flows
+    // through as append_to_response=videos. Drives the title-screen trailer.
+    videos?: { results: TMDBVideo[] };
+}
+
+// A trailer/teaser video row from TMDB's `videos` append. `key` is the
+// YouTube video id; `site` distinguishes YouTube from Vimeo etc.
+export interface TMDBVideo {
+    key: string;
+    name: string;
+    site: string; // 'YouTube' | 'Vimeo' | …
+    type: string; // 'Trailer' | 'Teaser' | 'Clip' | …
+    official: boolean;
+    published_at: string; // ISO
+    iso_639_1: string; // 'en', 'ja', …
 }
 
 export interface TMDBTV {
@@ -219,6 +234,7 @@ export interface TMDBTV {
     status: string;
     original_language: string;
     credits?: { cast: TMDBCastMember[] };
+    videos?: { results: TMDBVideo[] };
 }
 
 // Watch providers — JustWatch-sourced availability data per region.
@@ -420,31 +436,70 @@ export function searchTV(
     return callProxy('search/tv', { query, page, include_adult: false });
 }
 
-// `appendCredits: true` adds TMDB's `append_to_response=credits` param
-// so the detail response carries the cast inline — one request instead
-// of a follow-up /movie/{id}/credits call. Default false to keep the
-// payload small on callers that don't render cast (the ensureTitle
-// forward-path stamps title metadata only). The tmdb-proxy allowlist
-// matches on path only, so the appended query param flows through
-// without any proxy migration.
+// `appendCredits`/`appendVideos` add TMDB's `append_to_response` params so the
+// detail response carries the cast and/or trailer list inline — one request
+// instead of follow-up /credits and /videos calls. Both default false to keep
+// the payload small on callers that don't render them (the ensureTitle
+// forward-path stamps title metadata only). The tmdb-proxy allowlist matches on
+// path only, so the appended query params flow through without any proxy
+// migration.
+function appendParam(options?: {
+    appendCredits?: boolean;
+    appendVideos?: boolean;
+}): Record<string, string> {
+    const parts = [
+        ...(options?.appendCredits ? ['credits'] : []),
+        ...(options?.appendVideos ? ['videos'] : []),
+    ];
+    return parts.length > 0 ? { append_to_response: parts.join(',') } : {};
+}
+
 export function getMovie(
     tmdbId: number,
-    options?: { appendCredits?: boolean },
+    options?: { appendCredits?: boolean; appendVideos?: boolean },
 ): Promise<TMDBMovie> {
-    return callProxy(
-        `movie/${tmdbId}`,
-        options?.appendCredits ? { append_to_response: 'credits' } : {},
-    );
+    return callProxy(`movie/${tmdbId}`, appendParam(options));
 }
 
 export function getTV(
     tmdbId: number,
-    options?: { appendCredits?: boolean },
+    options?: { appendCredits?: boolean; appendVideos?: boolean },
 ): Promise<TMDBTV> {
-    return callProxy(
-        `tv/${tmdbId}`,
-        options?.appendCredits ? { append_to_response: 'credits' } : {},
+    return callProxy(`tv/${tmdbId}`, appendParam(options));
+}
+
+// Pick the single best trailer to surface on the title screen, or null if
+// none qualifies (→ the caller renders nothing). YouTube only (that's all we
+// deep-link to); Trailer/Teaser only. Rank: official Trailer > Trailer >
+// official Teaser > Teaser. Within a rank, prefer an English video (fall back
+// to any language), then the most recently published. Pure selection — no I/O.
+export function selectTrailerKey(
+    videos: TMDBVideo[] | undefined,
+): string | null {
+    const candidates = (videos ?? []).filter(
+        (v) =>
+            v.site === 'YouTube' &&
+            !!v.key &&
+            (v.type === 'Trailer' || v.type === 'Teaser'),
     );
+    if (candidates.length === 0) return null;
+
+    const rank = (v: TMDBVideo): number => {
+        if (v.type === 'Trailer') return v.official ? 0 : 1;
+        return v.official ? 2 : 3; // Teaser
+    };
+
+    const best = [...candidates].sort((a, b) => {
+        const byRank = rank(a) - rank(b);
+        if (byRank !== 0) return byRank;
+        // English preferred within rank, then newest first.
+        const byLang =
+            (a.iso_639_1 === 'en' ? 0 : 1) - (b.iso_639_1 === 'en' ? 0 : 1);
+        if (byLang !== 0) return byLang;
+        return (b.published_at ?? '').localeCompare(a.published_at ?? '');
+    });
+
+    return best[0].key;
 }
 
 export function getMovieWatchProviders(

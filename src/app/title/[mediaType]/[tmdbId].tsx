@@ -29,6 +29,7 @@ import { Avatar } from '@/components/avatar';
 import { LoadError } from '@/components/load-error';
 import { AvatarStack } from '@/components/avatar-stack';
 import { RatingSheet } from '@/components/rating-sheet';
+import { TitleTrailer } from '@/components/title-trailer';
 import {
     WatchersSheet,
     type WatcherSheetItem,
@@ -286,16 +287,23 @@ export default function TitleDetailScreen() {
 
         let active = true;
 
-        // appendCredits: true folds the cast list into the same TMDB
-        // round-trip as the detail fetch (via append_to_response=credits)
-        // — the cast row below renders from detail.data.credits.cast.
+        // appendCredits + appendVideos fold the cast list and the trailer list
+        // into the same TMDB round-trip as the detail fetch (via
+        // append_to_response=credits,videos) — the cast row renders from
+        // detail.data.credits.cast, the trailer from detail.data.videos.
         const detailPromise: Promise<Detail> =
             mediaType === 'movie'
-                ? getMovie(tmdbId, { appendCredits: true }).then((data) => ({
+                ? getMovie(tmdbId, {
+                      appendCredits: true,
+                      appendVideos: true,
+                  }).then((data) => ({
                       type: 'movie' as const,
                       data,
                   }))
-                : getTV(tmdbId, { appendCredits: true }).then((data) => ({
+                : getTV(tmdbId, {
+                      appendCredits: true,
+                      appendVideos: true,
+                  }).then((data) => ({
                       type: 'tv' as const,
                       data,
                   }));
@@ -1295,6 +1303,12 @@ export default function TitleDetailScreen() {
                         }
                     />
                 )}
+
+                {/* Trailer — a light play affordance under the meta block,
+                    above the synopsis. Renders nothing when no YouTube
+                    trailer/teaser is available. Deep-links to YouTube; no
+                    in-app embed. */}
+                <TitleTrailer videos={detail.data.videos?.results} />
 
                 {/* Synopsis — "what is this", placed ABOVE the cast
                     ("who's in it"). */}
