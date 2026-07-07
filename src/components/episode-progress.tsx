@@ -43,34 +43,44 @@ interface Bounds {
     minSeason: number;
     maxSeason: number;
     episodeCountBySeason: Map<number, number>;
+    // True only when TMDB gives seasons but none is a real (>= 1) season with
+    // episodes — i.e. a specials-only show. The control isn't rendered then.
+    specialsOnly: boolean;
 }
 
-// Build the clamp model from TMDB seasons. Only seasons with a positive
-// episode_count count as real (drops unaired/phantom seasons); the surviving
-// season_numbers give the season range (0 = Specials is honoured if that's the
-// data), and their counts cap the episode stepper. Missing/zero counts leave a
-// season uncapped rather than blocking input.
+// Build the clamp model from TMDB seasons. A season counts as real only if its
+// number is >= 1 (Season 0 = TMDB "Specials" is excluded from stepping) AND it
+// has a positive episode_count (drops unaired/phantom seasons). The surviving
+// season_numbers give the season range — so the floor is the first real season,
+// never Season 0 — and their counts cap the episode stepper. Missing/zero
+// counts leave a season uncapped rather than blocking input.
 function buildBounds(
     seasons: TMDBSeason[] | undefined,
     numberOfSeasons: number,
 ): Bounds {
-    const valid = (seasons ?? []).filter(
+    const real = (seasons ?? []).filter(
         (s) =>
             typeof s.season_number === 'number' &&
+            s.season_number >= 1 &&
             typeof s.episode_count === 'number' &&
             s.episode_count > 0,
     );
     const episodeCountBySeason = new Map<number, number>();
-    for (const s of valid) episodeCountBySeason.set(s.season_number, s.episode_count);
+    for (const s of real) episodeCountBySeason.set(s.season_number, s.episode_count);
 
-    const numbers = valid.map((s) => s.season_number).sort((a, b) => a - b);
+    const numbers = real.map((s) => s.season_number).sort((a, b) => a - b);
     const minSeason = numbers.length > 0 ? numbers[0] : 1;
     const maxSeason =
         numbers.length > 0
             ? numbers[numbers.length - 1]
             : Math.max(1, numberOfSeasons || 1);
 
-    return { minSeason, maxSeason, episodeCountBySeason };
+    // Specials-only is knowable only when seasons[] is present but yields no
+    // real season. Missing/empty seasons[] stays renderable (lenient — we fall
+    // back to numberOfSeasons and uncapped episodes).
+    const specialsOnly = (seasons?.length ?? 0) > 0 && real.length === 0;
+
+    return { minSeason, maxSeason, episodeCountBySeason, specialsOnly };
 }
 
 // Compact one-row progress control for a Watching TV show: Season −/+ and
@@ -91,8 +101,15 @@ export function EpisodeProgress({
         [seasons, numberOfSeasons],
     );
 
-    const [season, setSeason] = useState(initialSeason ?? 1);
-    const [episode, setEpisode] = useState(initialEpisode ?? 1);
+    // Clamp the persisted value into the real-season range on mount, so a
+    // legacy/odd Season 0 never displays (the floor is the first real season).
+    const [season, setSeason] = useState(() =>
+        Math.min(
+            Math.max(initialSeason ?? bounds.minSeason, bounds.minSeason),
+            bounds.maxSeason,
+        ),
+    );
+    const [episode, setEpisode] = useState(() => Math.max(1, initialEpisode ?? 1));
 
     // Debounce timer + the latest value to persist. dirtyRef marks unsaved
     // changes; inFlightRef serializes writes so a late write can't overwrite a
@@ -165,6 +182,10 @@ export function EpisodeProgress({
             void flush();
         };
     }, [flush]);
+
+    // Specials-only show (TMDB gives only Season 0) — nothing to step, so don't
+    // render the control at all. (After hooks, so hook order stays stable.)
+    if (bounds.specialsOnly) return null;
 
     function clampEpisode(forSeason: number, ep: number): number {
         const cap = bounds.episodeCountBySeason.get(forSeason);

@@ -2089,17 +2089,15 @@ function friendNamesPlain(names: string[]): string {
     }`;
 }
 
-// The visual caption: names BOLD, connectors and any suffix (e.g. the
-// " · 4.5★ avg" tail on the watched card) regular weight — the heading
-// above the card carries the verb, so the caption doesn't repeat it.
-// Grammar mirrors friendNamesPlain; keep the two in step.
+// The visual caption: names BOLD, connectors regular weight — the heading
+// above the card carries the verb, so the caption doesn't repeat it. Any
+// rating average is rendered as a separate muted line by the caller, not
+// inline here. Grammar mirrors friendNamesPlain; keep the two in step.
 function FriendNamesCaption({
     items,
-    suffix,
     palette,
 }: {
     items: WatcherSheetItem[];
-    suffix?: string;
     palette: Palette;
 }) {
     const names = items.map((w) => firstName(w.displayName));
@@ -2130,7 +2128,6 @@ function FriendNamesCaption({
             numberOfLines={2}
         >
             {parts}
-            {suffix ?? null}
         </Text>
     );
 }
@@ -2202,19 +2199,24 @@ function FriendActivitySection({
                     borderColor={palette.surfaceElevated}
                     leadFirst
                 />
-                {/* Caption to the RIGHT: "Jennyg and 5 others · 4.5★ avg"
-                    — names bold, the rest regular. flex:1 so it takes the
-                    remaining width beside the avatars. */}
+                {/* Caption to the RIGHT: bold names, with the rating average
+                    on its own muted line below (not crammed inline). flex:1 so
+                    it takes the remaining width beside the avatars. */}
                 <View style={styles.friendsWatchedText}>
                     <FriendNamesCaption
                         items={watchedFriends}
-                        suffix={
-                            ratingsLabel !== ''
-                                ? ` · ${ratingsLabel}`
-                                : undefined
-                        }
                         palette={palette}
                     />
+                    {ratingsLabel !== '' && (
+                        <Text
+                            style={[
+                                typography.caption,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            {ratingsLabel}
+                        </Text>
+                    )}
                 </View>
             </Pressable>
         </View>
