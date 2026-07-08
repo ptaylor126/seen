@@ -44,11 +44,8 @@
           "image": "./assets/logo.png",
           "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#EFE7EC",
+          "backgroundColor": "#F2E7EC",
           "android": {
-            "image": "./assets/images/android-icon-foreground.png",
-            "imageWidth": 240,
-            "resizeMode": "contain",
             "backgroundColor": "#F2E7EC"
           }
         }
