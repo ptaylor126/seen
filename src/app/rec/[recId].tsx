@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -108,6 +109,18 @@ interface TitleMeta {
 interface ReactionRow {
     userId: string;
     emoji: ReactionEmoji;
+    // Present on rec-level reactions (drives the last-seen identity below).
+    // Omitted for comment reactions, which don't animate on this marker.
+    createdAt?: string;
+}
+
+// Stable identity for the incoming reaction, persisted per-rec in AsyncStorage
+// so the soft pop fires once per NEW reaction. Emoji + created_at means a
+// changed emoji (or a removed-then-re-added reaction) reads as new and pops
+// again — desired. The reactions table has no single-column id (PK is
+// recommendation_id + user_id), hence the composite string.
+function reactionIdentity(r: ReactionRow): string {
+    return `${r.userId}:${r.emoji}:${r.createdAt ?? ''}`;
 }
 
 interface CommentRow {
@@ -152,6 +165,11 @@ export default function RecScreen() {
     const [sender, setSender] = useState<PartyProfile | null>(null);
     const [recipient, setRecipient] = useState<PartyProfile | null>(null);
     const [reactions, setReactions] = useState<ReactionRow[]>([]);
+    // True only when the incoming reaction is NEW vs the local last-seen marker
+    // (reactionSeen:<recId> in AsyncStorage) — gates the one-time soft pop on
+    // the incoming (otherReaction) reaction so it animates when new, not on
+    // every mount/focus return. Decided in load(), persisted after render.
+    const [shouldAnimateReaction, setShouldAnimateReaction] = useState(false);
     const [comments, setComments] = useState<CommentRow[]>([]);
     // commentReactions: comment_id → reactions on that comment.
     // Stored as a Map so per-comment lookups in the render path are O(1).
@@ -299,7 +317,7 @@ export default function RecScreen() {
                     .in('id', partyIds),
                 supabase
                     .from('recommendation_reactions')
-                    .select('user_id, emoji')
+                    .select('user_id, emoji, created_at')
                     .eq('recommendation_id', recId),
                 supabase
                     .from('recommendation_comments')
@@ -374,9 +392,31 @@ export default function RecScreen() {
                     validReactions.push({
                         userId: r.user_id,
                         emoji: r.emoji,
+                        createdAt: r.created_at,
                     });
                 }
             }
+
+            // Decide the one-time incoming-reaction pop from a LOCAL last-seen
+            // marker (not notifications). Animate only if the other party's
+            // current reaction identity differs from what we last stored for
+            // this rec (a new reaction, or a changed emoji); no stored key →
+            // first view → animate. Read BEFORE setState so the flag and
+            // reactions land in the SAME render (moti reads `from` at mount).
+            // Best-effort: any storage error → no animation.
+            const incoming = validReactions.find((r) => r.userId !== userId);
+            let animate = false;
+            if (incoming) {
+                try {
+                    const seen = await AsyncStorage.getItem(
+                        `reactionSeen:${recId}`,
+                    );
+                    animate = seen !== reactionIdentity(incoming);
+                } catch {
+                    animate = false;
+                }
+            }
+            setShouldAnimateReaction(animate);
             setReactions(validReactions);
 
             // Resolve comment authors. May include user_ids we don't
@@ -598,6 +638,19 @@ export default function RecScreen() {
     useEffect(() => {
         if (isRecipient) void maybeRequestReview();
     }, [isRecipient]);
+
+    // Persist the last-seen incoming-reaction identity AFTER render, so the
+    // next visit renders it static (the pop is one-time per new reaction).
+    // Keyed on otherReaction's ref: it changes on load (fresh objects) but
+    // survives the viewer's own optimistic taps (filter preserves the other
+    // party's object ref), so own taps neither re-pop nor rewrite the marker.
+    useEffect(() => {
+        if (!otherReaction) return;
+        void AsyncStorage.setItem(
+            `reactionSeen:${recId}`,
+            reactionIdentity(otherReaction),
+        );
+    }, [otherReaction, recId]);
 
     // Track keyboard visibility so the composer can drop its bottom
     // safe-area inset while typing (the keyboard covers the home-indicator
@@ -1475,15 +1528,19 @@ export default function RecScreen() {
                     ) : null}
                     {otherReaction ? (
                         <MotiView
-                            // Spring pop when the other party's reaction
-                            // arrives (mounts on realtime/load).
-                            from={{ scale: 0, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            transition={{
-                                type: 'spring',
-                                damping: 11,
-                                stiffness: 260,
-                            }}
+                            // The row as a whole just FADES in (350ms, a beat
+                            // softer than the emoji lands). Only the emoji (the
+                            // payload) does the scale pop below — so the bloom is
+                            // centered on the glyph, not read as the whole
+                            // left-aligned row sliding in from one edge. Gated on
+                            // shouldAnimateReaction; static otherwise.
+                            from={
+                                shouldAnimateReaction
+                                    ? { opacity: 0 }
+                                    : { opacity: 1 }
+                            }
+                            animate={{ opacity: 1 }}
+                            transition={{ type: 'timing', duration: 350 }}
                         >
                         <UserLink
                             userId={otherReaction.userId}
@@ -1515,8 +1572,29 @@ export default function RecScreen() {
                                     otherReactionProfile?.displayName ??
                                     'Former user'
                                 ).split(/\s+/)[0]}{' '}
-                                reacted {otherReaction.emoji}
+                                reacted
                             </Text>
+                            {/* Emoji pop — its own content-sized wrapper, so the
+                                transform box equals the glyph and the scale
+                                blooms from its centre. 0→1 with one visible
+                                overshoot (~1.15) that settles, no bounce cycles. */}
+                            <MotiView
+                                from={
+                                    shouldAnimateReaction
+                                        ? { scale: 0 }
+                                        : { scale: 1 }
+                                }
+                                animate={{ scale: 1 }}
+                                transition={{
+                                    type: 'spring',
+                                    damping: 18,
+                                    stiffness: 280,
+                                }}
+                            >
+                                <Text style={typography.caption}>
+                                    {otherReaction.emoji}
+                                </Text>
+                            </MotiView>
                         </UserLink>
                         </MotiView>
                     ) : null}
