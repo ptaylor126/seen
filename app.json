@@ -47,7 +47,7 @@
           "backgroundColor": "#F2E7EC",
           "android": {
             "image": "./assets/images/android-splash-eyes.png",
-            "imageWidth": 200,
+            "imageWidth": 240,
             "resizeMode": "contain",
             "backgroundColor": "#F2E7EC"
           }
