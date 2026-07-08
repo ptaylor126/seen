@@ -2398,6 +2398,10 @@ const styles = StyleSheet.create({
         // Transparent text area inside the pill; the pill chrome lives on
         // composerFieldWrap.
         paddingVertical: spacing.sm,
+        // Right inset on the input itself (not a wrap gap) so long text stays
+        // inset from its own edge while typing — mirrors the wrap's
+        // paddingLeft: spacing.md on the left.
+        paddingRight: spacing.md,
     },
     composerSendInline: {
         // Solid filled circle (accent set inline) with a white up-arrow,
