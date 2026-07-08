@@ -313,6 +313,7 @@ export default function RecommendScreen() {
               );
 
     function toggleFriend(userId: string) {
+        const isAdding = !selectedFriendIds.has(userId);
         setSelectedFriendIds((prev) => {
             const next = new Set(prev);
             if (next.has(userId)) {
@@ -322,6 +323,14 @@ export default function RecommendScreen() {
             }
             return next;
         });
+        // On ADD only: dismiss the keyboard so the search field blurs
+        // (localFocused → false), which via the existing collapse logic expands
+        // the note bar (recipient chips + ADD A NOTE + input) into view — so a
+        // user who searched-and-selected can't miss the note field. Removing a
+        // recipient must NOT yank the keyboard. No-op when no keyboard is up
+        // (unfiltered selection); does not clear the search text or focus the
+        // note input.
+        if (isAdding) Keyboard.dismiss();
     }
 
     // Recipient id -> display name for user-facing copy.
