@@ -37,6 +37,55 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-09 — Post-watched sheet, push diagnosis, rec_watched trigger fix
+
+**Done**
+
+- **Post-watched sheet built** — `RatingSheet` evolved into it (four steps, on device between each): keyboard-aware scaffold (swapped RN `Animated` → Reanimated + keyboard-controller, matching DeclineSheet), a note field, the rec/no-rec fork via `getReceivedRecsForTitle`, recipient chips (multi-sender, all pre-selected), a "Share rating with {name}" toggle, a "Hidden from friends" toggle that collapses the whole rec framing (private includes the recommender), and anything-to-commit enablement (rating OR note OR privacy change; rating optional). Fork renders only once the recs lookup resolves (no header flip). **Refactors first:** `postRecComment` (`dfbfb3b`) and `getReceivedRecsForTitle` (`017888f`) extracted to lib. **New `items.note` column** (private per-user notes) — applied live in the SQL editor, PostgREST reloaded; not in the generated types yet (writes cast); nothing displays it yet.
+- **Push notification diagnosis.** `notifications` rows + the in-app inbox are healthy. `push_tokens` is **100% iOS** — **Android push registration has never worked** (no FCM configured). The iOS send path is confirmed working. Android FCM is versionCode 5 work, alongside the monochrome icon.
+- **`rec_watched` trigger fixed** — now respects `items.visibility` (private **suppresses** the sender notification) and honors a transaction-local suppress flag via a new RPC **`mark_recommendation_watched(p_rec_id, p_suppress)`** — used when the sheet sends a comment, so **one action = one notification** (the comment, not also a "watched" ping).
+
+**Decisions worth remembering**
+
+- **`create or replace` on a live DB function ERASES what's there.** Before replacing a live function, diff `pg_proc.prosrc` (the *live* body) — not just the original migration — since the live version may have drifted from the committed migration.
+- Push coverage is platform-split until FCM lands: iOS delivers, Android silently registers nothing. Treat Android push as unbuilt, not broken.
+
+**Next**
+
+- Client-side notification fixes device matrix, then commit + OTA the sheet to Android.
+- Surface `items.note` in the UI (title page / library).
+- iOS build 22 + Android versionCode 5 session: FCM setup, monochrome icon, sheet embedded.
+
+**Open questions**
+
+- **Reddit / SideProject:** the SideProject post was removed by Reddit's spam filters (low-karma account + links); mod message sent. Karma-building continues; the r/ClaudeAI post is held until 50+ karma.
+
+---
+
+## 2026-07-08 — Android versionCode 4 to closed testing; splash/env lessons; polish OTA
+
+**Done**
+
+- **Android versionCode 4 shipped to closed testing** — wordmark launcher icon, eyes-only OS splash sized to match the animation's frame 1, Google sign-in restyled as a black pill with the G logo, and the onboarding currently-watching copy fix.
+- **Preview build hung on the OS splash** — root cause: the EAS **preview** environment was missing `EXPO_PUBLIC_SUPABASE_URL` / `ANON_KEY` (production had them, preview had none). Fixed via `eas env:create` for preview. **Lesson:** every EAS environment needs the env vars; a missing one fails as a **startup hang, not an error.**
+- **Six-fix polish OTA to Android:** reaction pop (once, softly, only when new — AsyncStorage last-seen marker), comment composer right inset, recipient selection reveals the note bar, rec-page keyboard autoscroll (delayed second `scrollToEnd` after the KAV settles), friend-library empty-state bottom padding, and a four-screen bottom-inset sweep (new `useBottomInset` hook) for Android edge-to-edge.
+
+**Decisions worth remembering**
+
+- **Android 12+ OS splash cannot be blank** — removing the image makes the OS fall back to the (cropped) launcher icon. Ship a mask-safe glyph instead.
+- **app.json changes freeze OTAs for BOTH platforms**, even when the change targets only one. iOS remains frozen until build 22.
+
+**Next**
+
+- iOS build 22 (unfreezes the iOS OTA path).
+
+**Open questions**
+
+- **Reddit marketing plan established** (90/10 rule, comments over posts, builder subs for posts + user subs comments-only). TV Time shutdown **July 15** = a live migration-thread window.
+- **Overlap-aware send + "already seen it" response** (designed, banked). **TV Time import** (banked, post-episode-level).
+
+---
+
 ## 2026-07-07 — Screenshots redesigned, 1.0.4 OTA shipped, Android testing launch, icon/splash fix
 
 **Done**
