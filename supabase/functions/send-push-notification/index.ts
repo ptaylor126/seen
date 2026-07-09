@@ -450,10 +450,16 @@ async function buildMessage(
                     ? `${body.slice(0, 80)}…`
                     : body
                 : undefined;
+            // A comment from the post-watched sheet reads as "watched" (it's the
+            // only notification the recipient gets for that watch — the plain
+            // rec_watched is suppressed). Body preview stays the same.
+            const verb = booleanField(notif.payload, 'from_watched')
+                ? 'watched'
+                : 'commented on';
             return {
                 title: title
-                    ? `${commenterName} commented on ${title}`
-                    : `${commenterName} commented on your rec`,
+                    ? `${commenterName} ${verb} ${title}`
+                    : `${commenterName} ${verb} your rec`,
                 body: bodyPreview,
                 data,
             };
@@ -541,6 +547,11 @@ function numberField(payload: unknown, key: string): number | null {
     if (!payload || typeof payload !== 'object') return null;
     const value = (payload as Record<string, unknown>)[key];
     return typeof value === 'number' ? value : null;
+}
+
+function booleanField(payload: unknown, key: string): boolean {
+    if (!payload || typeof payload !== 'object') return false;
+    return (payload as Record<string, unknown>)[key] === true;
 }
 
 async function fetchDisplayName(

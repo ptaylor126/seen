@@ -136,6 +136,9 @@ interface RecCommentedItem {
     tmdbId: number | null;
     mediaType: MediaType | null;
     titleName: string | null;
+    // The comment came from the post-watched sheet → the row reads "watched"
+    // instead of "commented" (the wording is the only difference).
+    fromWatched: boolean;
 }
 
 // Sender-side: a recipient passed on this rec WITH a note (silent declines
@@ -272,6 +275,10 @@ function pickString(payload: Record<string, unknown> | null, key: string): strin
 function pickNumber(payload: Record<string, unknown> | null, key: string): number | null {
     const v = payload?.[key];
     return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function pickBoolean(payload: Record<string, unknown> | null, key: string): boolean {
+    return payload?.[key] === true;
 }
 
 function pickMediaType(
@@ -775,6 +782,7 @@ export default function InboxScreen() {
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
+                        fromWatched: pickBoolean(payload, 'from_watched'),
                     });
                 } else if (n.kind === 'rec_declined') {
                     const declinerId = pickString(payload, 'from_user_id');
@@ -1403,7 +1411,7 @@ export default function InboxScreen() {
                         >
                             {item.commenter.displayName}
                         </Text>{' '}
-                        commented on{' '}
+                        {item.fromWatched ? 'watched' : 'commented on'}{' '}
                         <Text style={typography.bodyEmphasis}>{title}</Text>
                     </Text>
                     <Text style={[typography.caption, { color: palette.textMuted }]}>
