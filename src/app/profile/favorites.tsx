@@ -34,7 +34,6 @@ import {
     reorderFavorites,
     type UserFavorites,
 } from '@/lib/favorites';
-import { applyWatchedRating } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
@@ -684,30 +683,10 @@ export default function EditFavoritesScreen() {
     // Rating flow — same shape as the title screen's handleRate.
     // ------------------------------------------------------------------
 
-    async function handleRatingSubmit(rating: number | null) {
-        const target = pendingRating;
-        // Close the sheet immediately so the UI doesn't trap behind a
-        // spinner if the network is slow (mirrors the title screen).
+    // The RatingSheet now owns persistence (rating + rec transitions); here we
+    // only close the sheet.
+    function handleRatingSubmit() {
         setPendingRating(null);
-        if (!target || !userId) return;
-        if (rating === null) return; // skip
-        setRatingBusy(true);
-        try {
-            await applyWatchedRating({
-                userId,
-                tmdbId: target.tmdbId,
-                mediaType: target.mediaType,
-                rating,
-            });
-        } catch (err) {
-            console.error('favorites rating update failed:', err);
-            Alert.alert(
-                'Rating update failed',
-                formatErrorMessage(err),
-            );
-        } finally {
-            setRatingBusy(false);
-        }
     }
 
     // ------------------------------------------------------------------
@@ -1176,6 +1155,8 @@ export default function EditFavoritesScreen() {
                 visible={pendingRating !== null}
                 busy={ratingBusy}
                 initialRating={pendingRating?.currentRating ?? null}
+                tmdbId={pendingRating?.tmdbId ?? null}
+                mediaType={pendingRating?.mediaType ?? null}
                 onSubmit={handleRatingSubmit}
             />
         </View>

@@ -20,18 +20,25 @@ export function formatRatingStars(rating: number): string {
 }
 
 // Apply a 1-10 star rating (or skip with `null`) to a watched title.
-// Updates items.rating when a value was chosen, and always transitions
-// any matching open recommendations (pending | accepted) into `watched`
-// — which fires the rec_watched notification trigger for the sender.
-// rating_thumb on the rec is derived from the star value only when the
-// user chose a rating; skipping leaves it null.
+// Updates items.rating when a value was chosen, and transitions each matching
+// open recommendation (pending | accepted) into `watched` via the
+// mark_recommendation_watched RPC — one call per rec, so each carries its own
+// transaction-local suppress flag. Suppressing a rec (its sender is in
+// `suppressRecIds` because they're getting a comment instead) skips the
+// rec_watched notification, giving one notification per action. The RPC also
+// suppresses when the item is private (checked server-side). The rec's
+// rating_thumb (credibility signal) is set from the star value when rating is
+// given, via the RPC's p_thumb arg (coalesced, so a skip leaves it unchanged).
 export async function applyWatchedRating(args: {
     userId: string;
     tmdbId: number;
     mediaType: MediaType;
     rating: number | null;
+    // Rec ids whose sender should NOT get a rec_watched notification (they're
+    // receiving a comment from the post-watched sheet instead).
+    suppressRecIds?: ReadonlySet<string>;
 }): Promise<void> {
-    const { userId, tmdbId, mediaType, rating } = args;
+    const { userId, tmdbId, mediaType, rating, suppressRecIds } = args;
 
     if (rating !== null) {
         const { error: itemError } = await supabase
@@ -52,24 +59,30 @@ export async function applyWatchedRating(args: {
         .in('status', ['pending', 'accepted']);
     if (queryError) throw queryError;
 
-    if (openRecs && openRecs.length > 0) {
-        const update: {
-            status: 'watched';
-            watched_via_rec: boolean;
-            rating_thumb?: RatingThumb;
-        } = {
-            status: 'watched',
-            watched_via_rec: true,
-        };
-        if (rating !== null) update.rating_thumb = thumbFromRating(rating);
+    const thumb: RatingThumb | null =
+        rating !== null ? thumbFromRating(rating) : null;
 
-        const { error: recError } = await supabase
-            .from('recommendations')
-            .update(update)
-            .in(
-                'id',
-                openRecs.map((r) => r.id),
-            );
-        if (recError) throw recError;
+    for (const rec of openRecs ?? []) {
+        // reason: mark_recommendation_watched isn't in the generated Supabase
+        // types yet (created live in the dashboard, types not regenerated); cast
+        // supabase.rpc to its known signature. It MUST stay a direct
+        // `supabase.rpc(...)` member call (a parenthesized cast, not extracted
+        // into a variable) so `this` binds to the client — otherwise rpc reads
+        // `this.rest` off undefined and throws.
+        const { error: rpcError } = await (
+            supabase.rpc as unknown as (
+                fn: string,
+                args: {
+                    p_rec_id: string;
+                    p_suppress: boolean;
+                    p_thumb: RatingThumb | null;
+                },
+            ) => Promise<{ error: { message: string } | null }>
+        )('mark_recommendation_watched', {
+            p_rec_id: rec.id,
+            p_suppress: suppressRecIds?.has(rec.id) ?? false,
+            p_thumb: thumb,
+        });
+        if (rpcError) throw rpcError;
     }
 }

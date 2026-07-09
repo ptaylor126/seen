@@ -44,11 +44,7 @@ import {
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
 import { getReceivedRecsForTitle } from '@/lib/recs';
-import {
-    applyWatchedRating,
-    formatRatingStars,
-    type MediaType,
-} from '@/lib/rating';
+import { formatRatingStars, type MediaType } from '@/lib/rating';
 import { UserLink } from '@/components/user-link';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptReport } from '@/lib/report';
@@ -855,34 +851,13 @@ export default function TitleDetailScreen() {
         }
     }
 
-    // Apply a 1-5 star rating (or skip with `null`) after a watched
-    // transition. Database writes (items.rating, matching-rec status
-    // transitions) are delegated to applyWatchedRating in lib/rating.
-    async function handleRate(rating: number | null) {
-        if (ratingBusy || !mediaType) return;
-        setRatingBusy(true);
-        // Close the sheet immediately so the UI doesn't trap the user
-        // behind a spinner if the network is slow. Errors surface via
-        // Alert; success is silent.
+    // The RatingSheet now owns persistence (rating + rec transitions + note/
+    // comment/privacy). Here we only close and reflect the chosen rating
+    // locally so a re-rate pre-fills the sheet; skip (rating === null) leaves
+    // the previous value alone.
+    function handleRate(rating: number | null) {
         setShowRatingSheet(false);
-        try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const userId = session?.user.id;
-            if (!userId) throw new Error('Not authenticated');
-
-            await applyWatchedRating({ userId, tmdbId, mediaType, rating });
-            // Track locally so a subsequent re-rate pre-fills the sheet.
-            // Skip (rating === null) leaves the previous value alone —
-            // applyWatchedRating doesn't clear it on the items row.
-            if (rating !== null) setCurrentRating(rating);
-        } catch (err) {
-            console.error('rating update failed:', err);
-            surfaceUpdateError(err);
-        } finally {
-            setRatingBusy(false);
-        }
+        if (rating !== null) setCurrentRating(rating);
     }
 
     // Flip the item's privacy. Optimistic: update local state first, write
@@ -1481,6 +1456,8 @@ export default function TitleDetailScreen() {
                 visible={showRatingSheet}
                 busy={ratingBusy}
                 initialRating={currentRating}
+                tmdbId={tmdbId}
+                mediaType={mediaType}
                 onSubmit={handleRate}
             />
 

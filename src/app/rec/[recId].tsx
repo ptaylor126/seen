@@ -35,7 +35,7 @@ import {
 } from '@/lib/item-status';
 import { postRecComment } from '@/lib/comments';
 import { goToProfile } from '@/lib/profile-nav';
-import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { type MediaType } from '@/lib/rating';
 import { promptReport } from '@/lib/report';
 import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
@@ -130,6 +130,9 @@ interface CommentRow {
     author: PartyProfile | null; // null = author was deleted (user_id SET NULL)
     body: string;
     createdAt: string;
+    // Originated from the post-watched sheet (rating comment) → shows a quiet
+    // "watched" status under the name. False for ordinary typed comments.
+    fromWatched: boolean;
 }
 
 function relativeTimestamp(iso: string): string {
@@ -322,9 +325,21 @@ export default function RecScreen() {
                     .eq('recommendation_id', recId),
                 supabase
                     .from('recommendation_comments')
-                    .select('id, user_id, body, created_at')
+                    .select('id, user_id, body, created_at, from_watched')
                     .eq('recommendation_id', recId)
-                    .order('created_at', { ascending: true }),
+                    .order('created_at', { ascending: true })
+                    // reason: from_watched isn't in the generated types yet
+                    // (added live, types not regenerated) — the select-string
+                    // parser can't see it, so declare the row shape here.
+                    .returns<
+                        {
+                            id: string;
+                            user_id: string | null;
+                            body: string;
+                            created_at: string;
+                            from_watched: boolean;
+                        }[]
+                    >(),
                 (mediaType === 'movie'
                     ? getMovie(summary.tmdbId)
                     : getTV(summary.tmdbId)
@@ -452,6 +467,7 @@ export default function RecScreen() {
                 author: c.user_id ? profilesById.get(c.user_id) ?? null : null,
                 body: c.body,
                 createdAt: c.created_at,
+                fromWatched: c.from_watched,
             }));
             setComments(resolvedComments);
 
@@ -757,6 +773,7 @@ export default function RecScreen() {
                             author: myProfile,
                             body: note,
                             createdAt: inserted.created_at,
+                            fromWatched: false,
                         },
                     ]);
                 }
@@ -889,32 +906,14 @@ export default function RecScreen() {
         }
     }
 
-    // Rating sheet submit after a 'watched' pick. applyWatchedRating writes
-    // items.rating AND transitions this (pending) rec → watched, so it
-    // stays in the inbox with the watched marker. Reflect both locally.
-    async function handleRate(rating: number | null) {
+    // The RatingSheet now owns persistence (rating + rec transitions). Close and
+    // reflect the chosen rating locally. NOTE: the rec's own status is NOT
+    // reflected here anymore — the sheet only transitions it on submit (not on
+    // skip), and onSubmit(null) can't distinguish skip from a note-only submit,
+    // so the rec status (and the Decline option) re-reads on the next focus.
+    function handleRate(rating: number | null) {
         setShowRatingSheet(false);
-        if (!rec) return;
-        try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const userId = session?.user.id;
-            if (!userId) throw new Error('Not authenticated');
-            await applyWatchedRating({
-                userId,
-                tmdbId: rec.tmdbId,
-                mediaType: rec.mediaType,
-                rating,
-            });
-            if (rating !== null) setCurrentRating(rating);
-            // The rec is now watched (applyWatchedRating transitioned it) —
-            // reflect locally so the Decline option drops out.
-            setRec((prev) => (prev ? { ...prev, status: 'watched' } : prev));
-        } catch (err) {
-            console.error('rating failed:', err);
-            Alert.alert('Could not save rating', 'Please try again.');
-        }
+        if (rating !== null) setCurrentRating(rating);
     }
 
     async function handleReactionTap(emoji: ReactionEmoji) {
@@ -1065,6 +1064,7 @@ export default function RecScreen() {
                     author: myProfile,
                     body,
                     createdAt: inserted.created_at,
+                    fromWatched: false,
                 },
             ]);
             setComposer('');
@@ -1793,6 +1793,20 @@ export default function RecScreen() {
                                                     )}
                                                 </Text>
                                             </View>
+                                            {/* Quiet status for comments that
+                                                came from the post-watched sheet
+                                                — a plum accent line under the
+                                                name, not a badge. */}
+                                            {c.fromWatched ? (
+                                                <Text
+                                                    style={[
+                                                        typography.caption,
+                                                        { color: palette.accent },
+                                                    ]}
+                                                >
+                                                    watched
+                                                </Text>
+                                            ) : null}
                                             <Text
                                                 style={[
                                                     typography.body,
@@ -2161,6 +2175,8 @@ export default function RecScreen() {
                 visible={showRatingSheet}
                 busy={false}
                 initialRating={currentRating}
+                tmdbId={rec.tmdbId}
+                mediaType={rec.mediaType}
                 onSubmit={handleRate}
             />
 

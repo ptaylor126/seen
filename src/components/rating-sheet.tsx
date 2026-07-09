@@ -1,21 +1,36 @@
 import * as Haptics from 'expo-haptics';
 import { Star, StarHalf } from 'lucide-react-native';
+import { MotiView } from 'moti';
 import { useEffect, useRef, useState } from 'react';
 import {
-    Animated,
+    Alert,
     Dimensions,
-    Easing,
     Modal,
     PanResponder,
     Pressable,
     StyleSheet,
     Text,
+    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
-import { MotiView } from 'moti';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Reanimated, {
+    Easing,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
+import { postRecComment } from '@/lib/comments';
+import { setItemVisibility } from '@/lib/item-status';
+import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { getReceivedRecsForTitle, type ReceivedRec } from '@/lib/recs';
+import supabase from '@/lib/supabase';
 import {
     getPalette,
     ICON_STROKE_WIDTH,
@@ -31,11 +46,20 @@ interface RatingSheetProps {
     // on the half-star 1-10 scale (1 = ½★, 2 = 1★, …, 10 = 5★). Null
     // means no pre-selection.
     initialRating: number | null;
+    // Title identity — used on open to look up the recs the current user
+    // received for it (the post-watched rec-case fork) and, later, to save the
+    // note. Null when unknown → the sheet behaves as the no-rec case.
+    tmdbId: number | null;
+    mediaType: MediaType | null;
     // Called with the chosen 1-10 rating when the user taps Done, or
     // null when they dismissed without committing (Skip, backdrop tap,
     // hardware back).
     onSubmit: (rating: number | null) => void;
 }
+
+// Note length cap — matches the rec comment composer's cap, since in the rec
+// case the note becomes a recommendation_comments body.
+const NOTE_MAX = 500;
 
 const STAR_COUNT = 5;
 const HALF_COUNT = STAR_COUNT * 2; // = 10
@@ -44,12 +68,20 @@ const HALF_COUNT = STAR_COUNT * 2; // = 10
 // Below: a tap, the Pressable handles it. Above: a drag.
 const DRAG_THRESHOLD_PX = 5;
 
-// Bottom-sheet open/close motion: backdrop fades while the panel slides
-// (see the animation effect below). Standard pattern, replacing Modal's
-// animationType="slide" (which slid backdrop + panel as one unit).
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+// Bottom-sheet open/close motion: backdrop fades (stationary) while the panel
+// slides up — one shared `progress` value — matching DeclineSheet /
+// RequestRecSheet. Keyboard-aware: the panel rides above the keyboard when the
+// note field (added later) is focused, so the sheet is built on the same
+// react-native-keyboard-controller scaffold rather than Modal's slide.
+const AnimatedPressable = Reanimated.createAnimatedComponent(Pressable);
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
+// Max time to wait for the received-recs lookup before opening anyway. Fetch-
+// before-open: the sheet slides up already knowing rec vs no-rec at its true
+// final height, so nothing settles after the slide. Past this cap (slow fetch)
+// it opens in the no-rec layout and the rec section appears when the fetch
+// lands — a rare fallback.
+const OPEN_MAX_WAIT_MS = 150;
 // Confirmation beat duration — how long the "row collapses, ★ N pops" plays
 // after Done before onSubmit fires (and the parent closes the sheet). The
 // collapse timing + pop spring below are scaled to fill this window so the
@@ -63,6 +95,32 @@ const CONFIRM_COLLAPSE_MS = 600;
 function formatStarsLabel(rating: number): string {
     const stars = rating / 2;
     return Number.isInteger(stars) ? String(stars) : stars.toFixed(1);
+}
+
+// The rating as star glyphs: '★' repeated floor(stars) times, plus '½' for a
+// half. rating is the 1-10 half-scale (2 = 1★, 9 = 4½★), so full = floor(r/2)
+// and a half when r is odd. e.g. 8 → "★★★★", 9 → "★★★★½", 1 → "½".
+function ratingGlyphs(rating: number): string {
+    return '★'.repeat(Math.floor(rating / 2)) + (rating % 2 === 1 ? '½' : '');
+}
+
+// Build the rec-comment body: note text, a blank line if both are present, then
+// the rating line "I gave it ★★★★" (½ appended for a half). Note-only when
+// share-rating is off; rating-line-only when there's no note. Capped at the
+// recommendation_comments 500-char limit, reserving room so the rating line is
+// never truncated.
+function buildCommentBody(
+    note: string,
+    rating: number | null,
+    shareRating: boolean,
+): string {
+    const ratingLine =
+        rating !== null && shareRating ? `I gave it ${ratingGlyphs(rating)}` : '';
+    if (!ratingLine) return note.slice(0, NOTE_MAX);
+    if (!note) return ratingLine;
+    const room = NOTE_MAX - ratingLine.length - 2; // 2 for the "\n\n" separator
+    const notePart = note.length > room ? note.slice(0, room) : note;
+    return `${notePart}\n\n${ratingLine}`;
 }
 
 type StarVariant = 'empty' | 'half' | 'full';
@@ -99,15 +157,28 @@ export function RatingSheet({
     visible,
     busy,
     initialRating,
+    tmdbId,
+    mediaType,
     onSubmit,
 }: RatingSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
-    // Keep the Modal mounted while the close animation plays.
-    const [mounted, setMounted] = useState(visible);
-    // 0 = closed (backdrop transparent, panel off-screen), 1 = open.
-    const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
+    // Animated keyboard height (negative: 0 → -keyboardHeight) + progress (0
+    // closed → 1 open) drive the panel's bottom padding so it docks above the
+    // keyboard once the note field is focused — same scaffold as DeclineSheet.
+    const { height: keyboardHeight, progress: keyboardProgress } =
+        useReanimatedKeyboardAnimation();
+    // Mounted only while opening/open (mounts when the fetch resolves, not on
+    // `visible`); stays mounted through the close animation.
+    const [mounted, setMounted] = useState(false);
+    // 0 = closed (backdrop transparent, panel off-screen), 1 = open. Starts
+    // closed — the open effect drives it once the fetch settles.
+    const progress = useSharedValue(0);
+    // 1 while open/settling, 0 the instant dismissal starts — freezes the
+    // keyboard-driven padding (frozenPad) so nothing reflows during the exit.
+    const active = useSharedValue(0);
+    const frozenPad = useSharedValue(insets.bottom + spacing.lg);
     // Panel height drives the slide distance; tall fallback until first
     // onLayout so the panel starts fully off-screen.
     const [sheetHeight, setSheetHeight] = useState(
@@ -125,6 +196,27 @@ export function RatingSheet({
     // single "★ N" pops in, THEN onSubmit fires (delayed so the beat is
     // visible before the parent closes the sheet). Reset on each open.
     const [confirming, setConfirming] = useState(false);
+
+    // Post-watched fork. `received` is null until the open-time lookup resolves;
+    // [] = no-rec case, length > 0 = rec case. The note text, the per-sender
+    // selection (all pre-selected), and the share-rating toggle are held here;
+    // the submit writes land in a later step.
+    const [received, setReceived] = useState<ReceivedRec[] | null>(null);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [selectedSenderIds, setSelectedSenderIds] = useState<Set<string>>(
+        () => new Set(),
+    );
+    const [note, setNote] = useState('');
+    const [shareRating, setShareRating] = useState(true);
+    // Marks the item private (items.visibility = 'private'). Initialized from
+    // the item's current visibility on open (default OFF for a 'friends' item);
+    // ON collapses the whole rec framing — private includes the recommender.
+    const [hiddenFromFriends, setHiddenFromFriends] = useState(false);
+    // The item's visibility at open (private?) — the baseline for deciding
+    // whether the privacy toggle actually changed anything on submit.
+    const [initialPrivate, setInitialPrivate] = useState(false);
+    // While the sheet's own writes (comment / note / visibility) are in flight.
+    const [submitting, setSubmitting] = useState(false);
 
     // Refs mirror state for the PanResponder closures: the responder is
     // created once via useRef, so its handlers can't close over the
@@ -153,42 +245,128 @@ export function RatingSheet({
         pressedRatingRef.current = pressedRating;
     }, [pressedRating]);
 
-    // Resync internal state to the prop each time the sheet opens.
-    useEffect(() => {
-        if (visible) {
-            setSelected(initialRating);
-            setPressedRating(null);
-            setConfirming(false);
-            lastHapticValueRef.current = null;
-        }
-    }, [visible, initialRating]);
+    // Guards triggerOpen so the fetch's finally + the max-wait timer can't both
+    // open (only the first wins).
+    const openedRef = useRef(false);
 
-    // Open/close motion: backdrop fades + panel slides off ONE value.
-    // Stay mounted through the close animation, then unmount.
+    // Fetch-before-open orchestration. On `visible`: reset for this open, run
+    // the received-recs + visibility lookup, THEN slide up — so the sheet opens
+    // already knowing rec vs no-rec, at its true final height (no content settle
+    // after the slide). A max wait (OPEN_MAX_WAIT_MS) caps a slow fetch; past it
+    // the sheet opens in the no-rec layout and the rec section appears when the
+    // fetch lands (rare). Failure / missing title / session → no-rec case.
     useEffect(() => {
-        if (visible) {
+        if (!visible) return;
+
+        // Reset internal state for this open.
+        setSelected(initialRating);
+        setPressedRating(null);
+        setConfirming(false);
+        setReceived(null);
+        setCurrentUserId(null);
+        setSelectedSenderIds(new Set());
+        setNote('');
+        setShareRating(true);
+        setHiddenFromFriends(false);
+        setInitialPrivate(false);
+        setSubmitting(false);
+        lastHapticValueRef.current = null;
+        openedRef.current = false;
+
+        let cancelled = false;
+        const open = () => {
+            if (cancelled || openedRef.current) return;
+            openedRef.current = true;
             setMounted(true);
-            Animated.timing(progress, {
-                toValue: 1,
+            active.value = 1;
+            progress.value = withTiming(1, {
                 duration: OPEN_MS,
                 easing: Easing.out(Easing.cubic),
-                useNativeDriver: true,
-            }).start();
-        } else {
-            Animated.timing(progress, {
-                toValue: 0,
-                duration: CLOSE_MS,
-                easing: Easing.in(Easing.cubic),
-                useNativeDriver: true,
-            }).start(({ finished }) => {
-                if (finished) setMounted(false);
             });
-        }
-    }, [visible, progress]);
+        };
+        const timer = setTimeout(open, OPEN_MAX_WAIT_MS);
 
-    const translateY = progress.interpolate({
-        inputRange: [0, 1],
-        outputRange: [sheetHeight, 0],
+        (async () => {
+            try {
+                if (tmdbId === null || mediaType === null) {
+                    if (!cancelled) setReceived([]);
+                    return;
+                }
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+                const uid = session?.user.id ?? null;
+                if (!uid) {
+                    if (!cancelled) setReceived([]);
+                    return;
+                }
+                const [recs, itemRow] = await Promise.all([
+                    getReceivedRecsForTitle(uid, tmdbId, mediaType),
+                    supabase
+                        .from('items')
+                        .select('visibility')
+                        .eq('user_id', uid)
+                        .eq('tmdb_id', tmdbId)
+                        .eq('media_type', mediaType)
+                        .maybeSingle(),
+                ]);
+                if (cancelled) return;
+                const isPrivate = itemRow.data?.visibility === 'private';
+                setCurrentUserId(uid);
+                setReceived(recs);
+                setSelectedSenderIds(new Set(recs.map((r) => r.fromUserId)));
+                setInitialPrivate(isPrivate);
+                setHiddenFromFriends(isPrivate);
+            } catch (err) {
+                console.warn('rating sheet: received recs fetch failed', err);
+                if (!cancelled) setReceived([]);
+            } finally {
+                // Content now known — open (or the timer already did).
+                clearTimeout(timer);
+                open();
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [visible, tmdbId, mediaType, initialRating, active, progress]);
+
+    // Close: slide down + unmount when `visible` goes false (only if actually
+    // open — a dismiss before the fetch resolved just cancels the open above).
+    useEffect(() => {
+        if (visible || !mounted) return;
+        // Freeze layout inputs before the exit slide so nothing reflows.
+        active.value = 0;
+        progress.value = withTiming(
+            0,
+            { duration: CLOSE_MS, easing: Easing.in(Easing.cubic) },
+            (finished) => {
+                if (finished) runOnJS(setMounted)(false);
+            },
+        );
+    }, [visible, mounted, active, progress]);
+
+    const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+    // Panel slide (translateY) always runs — it IS the exit animation. The
+    // keyboard-driven bottom padding lifts content above the keyboard
+    // (-keyboardHeight) plus a constant lg gap, minus the home-indicator inset
+    // as the keyboard rises. While dismissing (active === 0) it holds frozenPad
+    // so the exit is a pure slide with no reflow.
+    const sheetStyle = useAnimatedStyle(() => {
+        const translateY = interpolate(progress.value, [0, 1], [sheetHeight, 0]);
+        let paddingBottom;
+        if (active.value === 1) {
+            paddingBottom =
+                -keyboardHeight.value +
+                spacing.lg +
+                insets.bottom * (1 - keyboardProgress.value);
+            frozenPad.value = paddingBottom;
+        } else {
+            paddingBottom = frozenPad.value;
+        }
+        return { transform: [{ translateY }], paddingBottom };
     });
 
     // Captures both the row's width and its absolute page-X position
@@ -255,26 +433,199 @@ export function RatingSheet({
         setSelected((curr) => (curr === value ? null : value));
     }
 
-    function handleDone() {
-        // Done is disabled unless a rating is selected; guard anyway and
-        // ignore re-taps once the beat is running.
-        if (selected === null || confirming) return;
-        // Play the confirmation beat, THEN submit — the delay lets the row
-        // collapse + "★ N" pop show before the parent closes the sheet.
-        setConfirming(true);
-        confirmTimerRef.current = setTimeout(() => {
-            onSubmit(selected);
-        }, CONFIRM_BEAT_MS);
+    async function handleSubmit() {
+        // Re-entrancy / nothing-to-commit guards.
+        if (busy || submitting || confirming) return;
+        if (!hasSomethingToCommit) return;
+
+        const body = note.trim();
+        const uid = currentUserId;
+
+        // The sheet's own writes (privacy, comment, note) — each independent so
+        // one failure can't lose another, and none of them can lose the rating
+        // (which fires below via onSubmit regardless). Only possible with a
+        // known user + title.
+        if (uid !== null && tmdbId !== null && mediaType !== null) {
+            setSubmitting(true);
+
+            // 1. Privacy — reuse setItemVisibility, exactly as the title page.
+            if (visibilityChanged) {
+                try {
+                    await setItemVisibility({
+                        userId: uid,
+                        tmdbId,
+                        mediaType,
+                        visibility: hiddenFromFriends ? 'private' : 'friends',
+                    });
+                } catch (err) {
+                    console.error('rating sheet: visibility update failed', err);
+                    Alert.alert('Could not update privacy', 'Please try again.');
+                }
+            }
+
+            // 2a. Rec case: post the note (+ optional rating glyphs) to each
+            //     selected sender's rec. Collect the rec ids whose comment
+            //     actually landed — those senders are suppressed below (they get
+            //     the comment, not also a rec_watched ping).
+            const suppressRecIds = new Set<string>();
+            if (recFork && willSend) {
+                const commentBody = buildCommentBody(body, selected, shareRating);
+                if (commentBody.length > 0) {
+                    const targets = recs.filter((r) =>
+                        selectedSenderIds.has(r.fromUserId),
+                    );
+                    const results = await Promise.allSettled(
+                        targets.map((r) =>
+                            postRecComment(r.recId, uid, commentBody, true),
+                        ),
+                    );
+                    results.forEach((res, i) => {
+                        if (res.status === 'fulfilled') {
+                            suppressRecIds.add(targets[i].recId);
+                        }
+                    });
+                    if (results.some((r) => r.status === 'rejected')) {
+                        console.error('rating sheet: comment post failed', results);
+                        Alert.alert(
+                            "Couldn't send",
+                            "Your comment didn't send. Your rating was still saved.",
+                        );
+                    }
+                }
+            } else if (body.length > 0) {
+                // 2b. No-rec (or private): save the note to items.note. An empty
+                //     note never overwrites an existing note with ''.
+                try {
+                    // reason: items.note isn't in the generated Supabase types
+                    // yet (added live, not regenerated); cast the payload until
+                    // the types are regenerated.
+                    const payload = { note: body } as never;
+                    const { error } = await supabase
+                        .from('items')
+                        .update(payload)
+                        .eq('user_id', uid)
+                        .eq('tmdb_id', tmdbId)
+                        .eq('media_type', mediaType);
+                    if (error) throw error;
+                } catch (err) {
+                    console.error('rating sheet: note save failed', err);
+                    Alert.alert("Couldn't save note", 'Please try again.');
+                }
+            }
+
+            // 3. Rating write + rec → watched transitions, LAST (after privacy
+            //    committed and comments posted, so the suppress set is known and
+            //    the trigger sees the visibility). Independent of the writes
+            //    above.
+            try {
+                await applyWatchedRating({
+                    userId: uid,
+                    tmdbId,
+                    mediaType,
+                    rating: selected,
+                    suppressRecIds,
+                });
+            } catch (err) {
+                console.error('rating sheet: mark watched failed', err);
+                Alert.alert("Couldn't finish", 'Please try again.');
+            }
+
+            setSubmitting(false);
+        }
+
+        // 3. Rating — via onSubmit, exactly as RatingSheet does today. Play the
+        //    confirmation beat only when a rating was chosen; otherwise submit
+        //    null (no rating) and let the parent close. Independent of the
+        //    writes above — a comment/note failure can't lose the rating.
+        if (selected !== null) {
+            setConfirming(true);
+            confirmTimerRef.current = setTimeout(() => {
+                onSubmit(selected);
+            }, CONFIRM_BEAT_MS);
+        } else {
+            onSubmit(null);
+        }
     }
 
     function handleSkip() {
+        // Skip / dismiss still marks the rec watched and notifies the sender
+        // (plain rec_watched, empty suppress set) — the watch is real; only the
+        // rating / note / comment are optional. Fire-and-forget so dismissal
+        // stays instant; currentUserId may be unset if dismissed before the
+        // open-time fetch resolved, so fall back to the session.
+        if (tmdbId !== null && mediaType !== null) {
+            const tid = tmdbId;
+            const mt = mediaType;
+            void (async () => {
+                try {
+                    const uid =
+                        currentUserId ??
+                        (await supabase.auth.getSession()).data.session?.user
+                            .id ??
+                        null;
+                    if (uid !== null) {
+                        await applyWatchedRating({
+                            userId: uid,
+                            tmdbId: tid,
+                            mediaType: mt,
+                            rating: null,
+                        });
+                    }
+                } catch (err) {
+                    console.error(
+                        'rating sheet: mark watched (skip) failed',
+                        err,
+                    );
+                }
+            })();
+        }
         onSubmit(null);
+    }
+
+    // Rec-case fork. received === null → still loading (shown as no-rec until
+    // it resolves); length > 0 → rec case.
+    const recs = received ?? [];
+    const isRecCase = recs.length > 0;
+    const firstNameOf = (name: string) => name.split(/\s+/)[0];
+    // Name for the header / share-rating toggle: the single sender's first
+    // name, or "them" when there are several.
+    const recipientLabel =
+        recs.length === 1 ? firstNameOf(recs[0].sender.displayName) : 'them';
+    // The rec framing (header / chips / share-rating toggle / Send) shows only
+    // when it's a rec case AND not marked private — a private note isn't shared
+    // with the recommender either.
+    const recFork = isRecCase && !hiddenFromFriends;
+    const headerText = recFork
+        ? `Tell ${recipientLabel} what you thought`
+        : 'What did you think?';
+    const notePlaceholder = recFork ? 'Add a note' : 'Just for you';
+    // Chips only when there's more than one sender to pick between.
+    const showChips = recFork && recs.length > 1;
+    // A comment has content when there's a note, or a rating being shared.
+    const commentHasContent =
+        note.trim().length > 0 || (selected !== null && shareRating);
+    // Primary action is "Send" only when a comment will actually go out.
+    const willSend =
+        recFork && selectedSenderIds.size > 0 && commentHasContent;
+    // Did the privacy toggle change the item's stored visibility?
+    const visibilityChanged = hiddenFromFriends !== initialPrivate;
+    function toggleSender(id: string) {
+        setSelectedSenderIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     }
 
     // Stars fill from the pressed preview first; when not pressing,
     // fall back to the committed selection.
     const effectiveRating = pressedRating ?? selected;
-    const doneDisabled = busy || selected === null;
+    // Rating is optional: the primary enables when there's ANYTHING to commit —
+    // a rating, a non-empty note, or a privacy change. All-empty → use Skip.
+    const hasSomethingToCommit =
+        selected !== null || note.trim().length > 0 || visibilityChanged;
+    const primaryDisabled = busy || submitting || !hasSomethingToCommit;
 
     return (
         <Modal
@@ -288,25 +639,27 @@ export function RatingSheet({
                 <AnimatedPressable
                     style={[
                         StyleSheet.absoluteFill,
-                        { backgroundColor: palette.overlay, opacity: progress },
+                        { backgroundColor: palette.overlay },
+                        backdropStyle,
                     ]}
                     onPress={handleSkip}
                 />
                 {/* Panel: slides up; on top of the backdrop so taps on it
                     don't fall through to dismiss. */}
-                <Animated.View
+                <Reanimated.View
                     onLayout={(e) =>
                         setSheetHeight(e.nativeEvent.layout.height)
                     }
                     style={[
                         styles.sheet,
-                        {
-                            backgroundColor: palette.surface,
-                            paddingBottom: insets.bottom + spacing.lg,
-                            transform: [{ translateY }],
-                        },
+                        { backgroundColor: palette.surface },
+                        sheetStyle,
                     ]}
                 >
+                    {/* Header + chips. The received-recs lookup runs before the
+                        open slide (fetch-before-open), so headerText / recs are
+                        already correct here — no fade gate needed; the sheet
+                        opens at its true final height. */}
                     <Text
                         style={[
                             typography.heading,
@@ -314,8 +667,59 @@ export function RatingSheet({
                             { color: palette.text },
                         ]}
                     >
-                        How was it?
+                        {headerText}
                     </Text>
+                    {/* Rec case with multiple senders: recipient chips, all
+                        pre-selected, tap to toggle who the note goes to. */}
+                    {showChips && !confirming ? (
+                        <View style={styles.chipsRow}>
+                            {recs.map((r) => {
+                                const on = selectedSenderIds.has(r.fromUserId);
+                                return (
+                                    <Pressable
+                                        key={r.fromUserId}
+                                        onPress={() =>
+                                            toggleSender(r.fromUserId)
+                                        }
+                                        disabled={busy}
+                                        accessibilityRole="button"
+                                        accessibilityState={{ selected: on }}
+                                        style={[
+                                            styles.chip,
+                                            {
+                                                borderColor: on
+                                                    ? palette.accent
+                                                    : palette.border,
+                                                backgroundColor: on
+                                                    ? palette.accentWash
+                                                    : 'transparent',
+                                                opacity: busy ? 0.6 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Avatar
+                                            avatarUrl={r.sender.avatarUrl}
+                                            displayName={r.sender.displayName}
+                                            seedId={r.fromUserId}
+                                            size={20}
+                                        />
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                {
+                                                    color: on
+                                                        ? palette.accent
+                                                        : palette.textMuted,
+                                                },
+                                            ]}
+                                        >
+                                            {firstNameOf(r.sender.displayName)}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                    ) : null}
                     <View style={styles.ratingArea}>
                     <MotiView
                         // Collapses toward center as the confirmation beat
@@ -480,14 +884,76 @@ export function RatingSheet({
                         "★ N" stands alone before the sheet closes. */}
                     {!confirming ? (
                         <>
+                            {/* Note + toggles. Content is known before the open
+                                slide (fetch-before-open), so recFork / placeholder
+                                are correct here — no fade gate. */}
+                            {/* Rec case (and not private): append the rating to
+                                the comment when ON. Default ON. Beneath the
+                                stars; collapses when Hidden-from-friends is ON. */}
+                            {recFork ? (
+                                <View style={styles.toggleRow}>
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.text },
+                                        ]}
+                                    >
+                                        Share rating with {recipientLabel}
+                                    </Text>
+                                    <Toggle
+                                        value={shareRating}
+                                        onValueChange={setShareRating}
+                                        palette={palette}
+                                        disabled={busy}
+                                    />
+                                </View>
+                            ) : null}
+                            <TextInput
+                                value={note}
+                                onChangeText={(v) =>
+                                    setNote(v.slice(0, NOTE_MAX))
+                                }
+                                editable={!busy}
+                                multiline
+                                maxLength={NOTE_MAX}
+                                placeholder={notePlaceholder}
+                                placeholderTextColor={palette.textMuted}
+                                style={[
+                                    styles.noteInput,
+                                    typography.body,
+                                    {
+                                        color: palette.text,
+                                        backgroundColor: palette.bg,
+                                    },
+                                ]}
+                            />
+                            {/* Privacy — marks the item private. Default OFF.
+                                Shown in both cases; ON collapses the rec
+                                framing above (chips + share-rating toggle). */}
+                            <View style={styles.toggleRow}>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.text },
+                                    ]}
+                                >
+                                    Hidden from friends
+                                </Text>
+                                <Toggle
+                                    value={hiddenFromFriends}
+                                    onValueChange={setHiddenFromFriends}
+                                    palette={palette}
+                                    disabled={busy}
+                                />
+                            </View>
                             <Pressable
-                                onPress={handleDone}
-                                disabled={doneDisabled}
+                                onPress={handleSubmit}
+                                disabled={primaryDisabled}
                                 style={({ pressed }) => [
                                     styles.doneButton,
                                     {
                                         backgroundColor: palette.accent,
-                                        opacity: doneDisabled
+                                        opacity: primaryDisabled
                                             ? 0.4
                                             : pressed
                                               ? 0.6
@@ -501,15 +967,20 @@ export function RatingSheet({
                                         { color: palette.textInverse },
                                     ]}
                                 >
-                                    Done
+                                    {willSend ? 'Send' : 'Done'}
                                 </Text>
                             </Pressable>
                             <Pressable
                                 onPress={handleSkip}
-                                disabled={busy}
+                                disabled={busy || submitting}
                                 style={({ pressed }) => [
                                     styles.skipButton,
-                                    { opacity: pressed || busy ? 0.6 : 1 },
+                                    {
+                                        opacity:
+                                            pressed || busy || submitting
+                                                ? 0.6
+                                                : 1,
+                                    },
                                 ]}
                             >
                                 <Text
@@ -523,9 +994,48 @@ export function RatingSheet({
                             </Pressable>
                         </>
                     ) : null}
-                </Animated.View>
+                </Reanimated.View>
             </View>
         </Modal>
+    );
+}
+
+// Small on/off switch (track + sliding thumb). Used for the share-rating
+// toggle (and the privacy toggle in the next step).
+function Toggle({
+    value,
+    onValueChange,
+    palette,
+    disabled,
+}: {
+    value: boolean;
+    onValueChange: (next: boolean) => void;
+    palette: ReturnType<typeof getPalette>;
+    disabled?: boolean;
+}) {
+    return (
+        <Pressable
+            onPress={() => onValueChange(!value)}
+            disabled={disabled}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: value, disabled }}
+            hitSlop={spacing.sm}
+            style={[
+                styles.toggleTrack,
+                {
+                    backgroundColor: value ? palette.accent : palette.border,
+                    justifyContent: value ? 'flex-end' : 'flex-start',
+                    opacity: disabled ? 0.6 : 1,
+                },
+            ]}
+        >
+            <View
+                style={[
+                    styles.toggleThumb,
+                    { backgroundColor: palette.surface },
+                ]}
+            />
+        </Pressable>
     );
 }
 
@@ -541,10 +1051,55 @@ const styles = StyleSheet.create({
         borderTopRightRadius: radius.xl,
         paddingHorizontal: spacing.base,
         paddingTop: spacing.lg,
+        // paddingBottom is animated (keyboard-aware) via sheetStyle.
     },
     title: {
         textAlign: 'center',
         marginBottom: spacing.lg,
+    },
+    chipsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        gap: spacing.sm,
+        marginBottom: spacing.base,
+    },
+    chip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        borderWidth: 1,
+        borderRadius: radius.full,
+        paddingLeft: spacing.xs,
+        paddingRight: spacing.sm,
+        paddingVertical: spacing.xs,
+    },
+    toggleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: spacing.md,
+    },
+    toggleTrack: {
+        width: 46,
+        height: 28,
+        borderRadius: 14,
+        padding: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    toggleThumb: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+    },
+    noteInput: {
+        minHeight: 72,
+        maxHeight: 140,
+        borderRadius: radius.md,
+        padding: spacing.md,
+        textAlignVertical: 'top',
+        marginTop: spacing.md,
     },
     // Wraps the star row + the confirmation "★ N" overlay so the latter
     // centers over the same area as the row collapses out.

@@ -81,6 +81,9 @@ interface RecWatchedItem {
     createdAt: string;
     notificationId: string;
     watcher: ProfileSummary;
+    // The rec the watch happened on — tapping opens its thread, same as
+    // rec_commented / rec_reacted. tmdbId/mediaType stay for the title label.
+    recId: string | null;
     tmdbId: number | null;
     mediaType: MediaType | null;
     titleName: string | null;
@@ -668,6 +671,7 @@ export default function InboxScreen() {
                         createdAt: n.created_at,
                         notificationId: n.id,
                         watcher,
+                        recId: pickString(payload, 'recommendation_id'),
                         tmdbId: tid,
                         mediaType: mt,
                         titleName:
@@ -1199,12 +1203,14 @@ export default function InboxScreen() {
 
     function renderRecWatched(item: RecWatchedItem) {
         const title = item.titleName ?? 'your rec';
-        const canNavigate = !!(item.mediaType && item.tmdbId);
+        // Tap → the rec thread (rec detail for this recommendation_id), matching
+        // rec_commented / rec_reacted — where the watch's comment/rating lives.
+        const canNavigate = !!item.recId;
         return (
             <Pressable
                 onPress={() => {
                     if (canNavigate) {
-                        router.push(`/title/${item.mediaType}/${item.tmdbId}`);
+                        router.push(`/rec/${item.recId}`);
                     }
                 }}
                 disabled={!canNavigate}

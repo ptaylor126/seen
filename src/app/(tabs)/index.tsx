@@ -30,7 +30,7 @@ import {
 } from '@/components/search-bar';
 import { useLaunchReady } from '@/hooks/use-launch-ready';
 import { useUnreadCount } from '@/hooks/use-unread-count';
-import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { type MediaType } from '@/lib/rating';
 import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
@@ -795,25 +795,13 @@ export default function HomeScreen() {
         setRatingTarget(null);
         setRatingBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const userId = session?.user.id;
-            if (!userId) throw new Error('Not authenticated');
-
-            await applyWatchedRating({
-                userId,
-                tmdbId: target.tmdbId,
-                mediaType: target.mediaType,
-                rating,
-            });
-
-            // Refresh so the now-watched item drops out of Currently
-            // watching and the rec (if any) leaves Recs for you.
+            // The RatingSheet already persisted the rating + rec transition.
+            // Refresh so the now-watched item drops out of Currently watching
+            // and the rec (if any) leaves Recs for you.
             const refreshed = await load();
             setData(refreshed);
         } catch (err) {
-            console.error('rating apply failed:', err);
+            console.error('rating refresh failed:', err);
             surfaceUpdateError(err);
         } finally {
             setRatingBusy(false);
@@ -1566,6 +1554,8 @@ export default function HomeScreen() {
                 visible={!!ratingTarget}
                 busy={ratingBusy}
                 initialRating={ratingTarget?.rating ?? null}
+                tmdbId={ratingTarget?.tmdbId ?? null}
+                mediaType={ratingTarget?.mediaType ?? null}
                 onSubmit={handleRatingSubmit}
             />
             {search.overlayVisible && (
