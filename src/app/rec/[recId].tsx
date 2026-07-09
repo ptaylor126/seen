@@ -33,6 +33,7 @@ import {
     formatLibraryBadge,
     type ItemStatus,
 } from '@/lib/item-status';
+import { postRecComment } from '@/lib/comments';
 import { goToProfile } from '@/lib/profile-nav';
 import { applyWatchedRating, type MediaType } from '@/lib/rating';
 import { promptReport } from '@/lib/report';
@@ -1046,16 +1047,7 @@ export default function RecScreen() {
         if (body.length > COMMENT_MAX_CHARS) return;
         setComposerBusy(true);
         try {
-            const { data: inserted, error: insertErr } = await supabase
-                .from('recommendation_comments')
-                .insert({
-                    recommendation_id: rec.id,
-                    user_id: myUserId,
-                    body,
-                })
-                .select('id, created_at')
-                .single();
-            if (insertErr) throw insertErr;
+            const inserted = await postRecComment(rec.id, myUserId, body);
             // Optimistic append using the row id + created_at the DB
             // just returned — saves a refetch and keeps the scroll
             // position rooted at the new comment.
