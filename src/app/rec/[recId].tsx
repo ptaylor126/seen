@@ -672,6 +672,14 @@ export default function RecScreen() {
         const showSub = Keyboard.addListener(showEvt, () => {
             setKeyboardOpen(true);
             scrollRef.current?.scrollToEnd({ animated: true });
+            // The KeyboardAvoidingView shrinks the scroll area DURING the
+            // keyboard animation, so the immediate scroll above targets the
+            // pre-shrink end. Re-scroll once the animation + layout settle
+            // (~300ms covers both platforms) to correct the target. scrollRef
+            // is null-safe if the screen unmounts before it fires.
+            setTimeout(() => {
+                scrollRef.current?.scrollToEnd({ animated: true });
+            }, 300);
         });
         const hideSub = Keyboard.addListener(hideEvt, () =>
             setKeyboardOpen(false),
@@ -1920,11 +1928,20 @@ export default function RecScreen() {
                             // case (e.g. a hardware keyboard, where no
                             // keyboardWillShow/DidShow fires): still pull the
                             // latest message above the input on focus.
-                            onFocus={() =>
+                            onFocus={() => {
                                 scrollRef.current?.scrollToEnd({
                                     animated: true,
-                                })
-                            }
+                                });
+                                // Correct the target after the keyboard/KAV
+                                // resize settles (see the keyboard-show
+                                // listener) — the immediate scroll lands on the
+                                // pre-shrink end.
+                                setTimeout(() => {
+                                    scrollRef.current?.scrollToEnd({
+                                        animated: true,
+                                    });
+                                }, 300);
+                            }}
                             placeholder={
                                 comments.length === 0
                                     ? 'Start a conversation'
