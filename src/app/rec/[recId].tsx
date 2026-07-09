@@ -938,14 +938,19 @@ export default function RecScreen() {
         }
     }
 
-    // The RatingSheet now owns persistence (rating + rec transitions). Close and
-    // reflect the chosen rating locally. NOTE: the rec's own status is NOT
-    // reflected here anymore — the sheet only transitions it on submit (not on
-    // skip), and onSubmit(null) can't distinguish skip from a note-only submit,
-    // so the rec status (and the Decline option) re-reads on the next focus.
+    // The RatingSheet owns persistence (rating + rec transitions + comment/
+    // note/visibility). Close, then reload the whole screen so the new comment,
+    // the rec's now-watched lifecycle status (Decline option drops), and the
+    // library status/rating all appear without navigating away and back — the
+    // sheet is a modal on this screen, so nothing else triggers a refresh.
+    // Unconditional: a note-only submit and Skip also change DB state (comment
+    // posted / rec marked watched), and load() never re-sets `loading`, so this
+    // silently re-fetches with no spinner flash. setCurrentRating stays for
+    // instant star feedback while load() is in flight.
     function handleRate(rating: number | null) {
         setShowRatingSheet(false);
         if (rating !== null) setCurrentRating(rating);
+        void load();
     }
 
     async function handleReactionTap(emoji: ReactionEmoji) {
