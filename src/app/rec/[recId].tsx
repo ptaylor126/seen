@@ -135,6 +135,38 @@ interface CommentRow {
     fromWatched: boolean;
 }
 
+// A post-watched comment's body is `${note}\n\nGave it ★★★★` (or just the
+// rating line when there's no note / rating-only). Split the trailing rating
+// line off so it renders as its own styled sibling instead of a \n\n blank
+// gap. Only a tail after the LAST "\n\n" that starts with a rating lead-in
+// counts — a typed note may contain its own blank lines. note is null when the
+// whole body is the rating line; ratingLine is null when there's nothing to
+// split.
+//
+// Both lead-ins are recognised: "Gave it " (current) and "I gave it " (older
+// comments stored before the wording change) so already-posted rows still split.
+const RATING_LINE_PREFIXES = ['Gave it ', 'I gave it '];
+function ratingLinePrefixOf(line: string): string | null {
+    return RATING_LINE_PREFIXES.find((p) => line.startsWith(p)) ?? null;
+}
+function splitWatchedBody(body: string): {
+    note: string | null;
+    ratingLine: string | null;
+} {
+    const sep = body.lastIndexOf('\n\n');
+    if (sep !== -1) {
+        const tail = body.slice(sep + 2);
+        if (ratingLinePrefixOf(tail) !== null) {
+            const head = body.slice(0, sep);
+            return { note: head.length > 0 ? head : null, ratingLine: tail };
+        }
+    }
+    if (ratingLinePrefixOf(body) !== null) {
+        return { note: null, ratingLine: body };
+    }
+    return { note: body, ratingLine: null };
+}
+
 function relativeTimestamp(iso: string): string {
     const date = new Date(iso);
     const diffMs = Date.now() - date.getTime();
@@ -1726,6 +1758,30 @@ export default function RecScreen() {
                                 // the badge is display-only.
                                 const cReactionList =
                                     commentReactions.get(c.id) ?? [];
+                                // Watched-sheet comments carry the rating as a
+                                // trailing "Gave it ★★★★" line — split it out
+                                // so it renders as its own accent line (tight
+                                // gap) rather than a \n\n blank line in the body.
+                                const watchedParts = c.fromWatched
+                                    ? splitWatchedBody(c.body)
+                                    : null;
+                                // Rating-only watched comment (no note) → the
+                                // "watched" caption and the rating line would be
+                                // two near-identical accent lines, so collapse
+                                // to a single "watched · ★★★★" (glyphs only,
+                                // dropping the rating lead-in).
+                                const collapsedWatchedStars =
+                                    watchedParts &&
+                                    watchedParts.note === null &&
+                                    watchedParts.ratingLine !== null
+                                        ? watchedParts.ratingLine.slice(
+                                              (
+                                                  ratingLinePrefixOf(
+                                                      watchedParts.ratingLine,
+                                                  ) ?? ''
+                                              ).length,
+                                          )
+                                        : null;
                                 return (
                                     <Pressable
                                         key={c.id}
@@ -1793,11 +1849,14 @@ export default function RecScreen() {
                                                     )}
                                                 </Text>
                                             </View>
-                                            {/* Quiet status for comments that
-                                                came from the post-watched sheet
-                                                — a plum accent line under the
-                                                name, not a badge. */}
-                                            {c.fromWatched ? (
+                                            {/* Quiet "watched" status for
+                                                post-watched-sheet comments — a
+                                                plum accent line under the name,
+                                                not a badge. Hidden in the no-note
+                                                case, where it merges into the
+                                                single collapsed line below. */}
+                                            {c.fromWatched &&
+                                            !collapsedWatchedStars ? (
                                                 <Text
                                                     style={[
                                                         typography.caption,
@@ -1807,14 +1866,73 @@ export default function RecScreen() {
                                                     watched
                                                 </Text>
                                             ) : null}
-                                            <Text
-                                                style={[
-                                                    typography.body,
-                                                    { color: palette.text },
-                                                ]}
-                                            >
-                                                {c.body}
-                                            </Text>
+                                            {collapsedWatchedStars ? (
+                                                <Text
+                                                    style={[
+                                                        typography.caption,
+                                                        { color: palette.accent },
+                                                    ]}
+                                                >
+                                                    watched ·{' '}
+                                                    {collapsedWatchedStars}
+                                                </Text>
+                                            ) : watchedParts ? (
+                                                <>
+                                                    {watchedParts.note !==
+                                                    null ? (
+                                                        <Text
+                                                            style={[
+                                                                typography.body,
+                                                                {
+                                                                    color: palette.text,
+                                                                    // Container
+                                                                    // gap is xs;
+                                                                    // +xs = sm
+                                                                    // between the
+                                                                    // "watched"
+                                                                    // caption and
+                                                                    // the note.
+                                                                    marginTop:
+                                                                        spacing.xs,
+                                                                },
+                                                            ]}
+                                                        >
+                                                            {watchedParts.note}
+                                                        </Text>
+                                                    ) : null}
+                                                    {watchedParts.ratingLine !==
+                                                    null ? (
+                                                        <Text
+                                                            style={[
+                                                                typography.body,
+                                                                {
+                                                                    color: palette.accent,
+                                                                    // Container
+                                                                    // gap is xs;
+                                                                    // +xs = sm
+                                                                    // between note
+                                                                    // and rating.
+                                                                    marginTop:
+                                                                        spacing.xs,
+                                                                },
+                                                            ]}
+                                                        >
+                                                            {
+                                                                watchedParts.ratingLine
+                                                            }
+                                                        </Text>
+                                                    ) : null}
+                                                </>
+                                            ) : (
+                                                <Text
+                                                    style={[
+                                                        typography.body,
+                                                        { color: palette.text },
+                                                    ]}
+                                                >
+                                                    {c.body}
+                                                </Text>
+                                            )}
                                             {cReactionList.length > 0 ? (
                                                 <View
                                                     style={

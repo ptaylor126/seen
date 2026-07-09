@@ -105,17 +105,18 @@ function ratingGlyphs(rating: number): string {
 }
 
 // Build the rec-comment body: note text, a blank line if both are present, then
-// the rating line "I gave it ★★★★" (½ appended for a half). Note-only when
+// the rating line "Gave it ★★★★" (½ appended for a half). Note-only when
 // share-rating is off; rating-line-only when there's no note. Capped at the
 // recommendation_comments 500-char limit, reserving room so the rating line is
-// never truncated.
+// never truncated. ("Gave it", not "I gave it" — a note starting with "I"
+// stacked above "I gave it" read as a repetitive double-I.)
 function buildCommentBody(
     note: string,
     rating: number | null,
     shareRating: boolean,
 ): string {
     const ratingLine =
-        rating !== null && shareRating ? `I gave it ${ratingGlyphs(rating)}` : '';
+        rating !== null && shareRating ? `Gave it ${ratingGlyphs(rating)}` : '';
     if (!ratingLine) return note.slice(0, NOTE_MAX);
     if (!note) return ratingLine;
     const room = NOTE_MAX - ratingLine.length - 2; // 2 for the "\n\n" separator
