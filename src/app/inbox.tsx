@@ -1,9 +1,10 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { CheckCircle, XCircle } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
+    AppState,
     FlatList,
     Pressable,
     StyleSheet,
@@ -309,8 +310,14 @@ export default function InboxScreen() {
     // sweep still clears read_at, so the next visit starts clean.
     const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
 
+    // Show the full loading state only on the FIRST load (mount/focus). Later
+    // re-runs — navigation-focus refocus, and especially the AppState 'active'
+    // foreground refetch — update the list in place with no spinner flash,
+    // mirroring use-unread-count's silent refresh. Flipped true on first success
+    // so a failed first load still shows the spinner on retry.
+    const hasLoadedOnce = useRef(false);
     const load = useCallback(async () => {
-        setLoading(true);
+        if (!hasLoadedOnce.current) setLoading(true);
         setError(null);
         try {
             const {
@@ -903,6 +910,8 @@ export default function InboxScreen() {
                 });
             }
             setSentItems(sentList.slice(0, MAX_ITEMS));
+            // First successful load done → subsequent re-runs refresh silently.
+            hasLoadedOnce.current = true;
         } catch (err) {
             console.error('inbox fetch failed:', err);
             setError(err instanceof Error ? err.message : 'Failed to load inbox');
@@ -916,6 +925,22 @@ export default function InboxScreen() {
             load();
         }, [load]),
     );
+
+    // App-foreground fallback: useFocusEffect only fires on navigation focus.
+    // It does NOT fire when the OS brings the app back from background with the
+    // inbox still the focused screen — e.g. tapping a push banner that
+    // foregrounds onto the already-open inbox — so a just-arrived notification
+    // would stay missing until the user navigated away and back. Reloading on
+    // AppState 'active' closes that gap. Mirrors use-unread-count.tsx (which
+    // does the same for the bell count).
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'active') {
+                void load();
+            }
+        });
+        return () => sub.remove();
+    }, [load]);
 
     async function handleAccept(requestId: string) {
         if (actionBusy) return;
