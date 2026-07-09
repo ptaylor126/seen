@@ -1919,10 +1919,12 @@ const styles = StyleSheet.create({
     },
     footerStatus: {
         // Loading / error / empty message, shown under the sticky filter
-        // row. Top padding gives it air instead of jamming under the tabs.
+        // row. Top padding gives it air instead of jamming under the tabs;
+        // symmetric bottom padding so it isn't left 24px off the screen edge.
         alignItems: 'center',
         justifyContent: 'center',
         paddingTop: spacing.xxl,
+        paddingBottom: spacing.xxl,
         paddingHorizontal: spacing.xl,
         gap: spacing.sm,
     },
