@@ -43,6 +43,7 @@ import {
 } from '@/lib/item-status';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
+import { getReceivedRecsForTitle } from '@/lib/recs';
 import {
     applyWatchedRating,
     formatRatingStars,
@@ -386,64 +387,27 @@ export default function TitleDetailScreen() {
                 // how the user arrived. Failures here are silent — the rest
                 // of the screen renders fine.
                 if (userId) {
-                    const { data: recRows, error: recsError } = await supabase
-                        .from('recommendations')
-                        .select('from_user_id, sent_at, note')
-                        .eq('to_user_id', userId)
-                        .eq('tmdb_id', tmdbId)
-                        .eq('media_type', mediaType)
-                        .in('status', ['pending', 'accepted', 'watched'])
-                        .order('sent_at', { ascending: false });
-                    if (recsError) {
-                        console.warn('rec context fetch failed:', recsError);
-                    } else if (active && recRows && recRows.length > 0) {
-                        // Dedup by sender, most-recent-first (rows are already
-                        // sent_at DESC), keeping the note from each sender's
-                        // most-recent rec. A sender can appear twice if they
-                        // re-sent after a dismiss — rare, but cheap to guard.
-                        const senderIds: string[] = [];
-                        const noteBySender = new Map<string, string | null>();
-                        for (const row of recRows) {
-                            const sid = row.from_user_id;
-                            if (!sid || noteBySender.has(sid)) continue;
-                            senderIds.push(sid);
-                            const note =
-                                typeof row.note === 'string' &&
-                                row.note.trim().length > 0
-                                    ? row.note
-                                    : null;
-                            noteBySender.set(sid, note);
-                        }
-
-                        let cards: RecAttribution[] = [];
-                        if (senderIds.length > 0) {
-                            const { data: profileRows } = await supabase
-                                .from('profiles')
-                                .select('id, handle, display_name, avatar_url')
-                                .in('id', senderIds);
-                            const profileById = new Map(
-                                (profileRows ?? []).map((p) => [p.id, p]),
+                    try {
+                        const received = await getReceivedRecsForTitle(
+                            userId,
+                            tmdbId,
+                            mediaType,
+                        );
+                        if (active && received.length > 0) {
+                            setRecCards(
+                                received.map((r) => ({
+                                    sender: {
+                                        userId: r.fromUserId,
+                                        handle: r.sender.handle,
+                                        displayName: r.sender.displayName,
+                                        avatarUrl: r.sender.avatarUrl,
+                                    },
+                                    note: r.note,
+                                })),
                             );
-                            cards = senderIds
-                                .map((id) => {
-                                    const p = profileById.get(id);
-                                    if (!p) return null;
-                                    return {
-                                        sender: {
-                                            userId: p.id,
-                                            handle: p.handle,
-                                            displayName: p.display_name,
-                                            avatarUrl: p.avatar_url,
-                                        },
-                                        note: noteBySender.get(id) ?? null,
-                                    };
-                                })
-                                .filter((c): c is RecAttribution => c !== null);
                         }
-
-                        if (active && cards.length > 0) {
-                            setRecCards(cards);
-                        }
+                    } catch (err) {
+                        console.warn('rec context fetch failed:', err);
                     }
                 }
 
