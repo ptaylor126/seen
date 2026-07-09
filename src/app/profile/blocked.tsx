@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { useBottomInset } from '@/hooks/use-bottom-inset';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
@@ -35,6 +36,8 @@ export default function BlockedUsersScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    // Pushed screen (edges={['top']}) — pad the list clear of the nav bar.
+    const bottomInset = useBottomInset(spacing.lg);
 
     // null = still loading; [] = loaded, none blocked.
     const [rows, setRows] = useState<BlockedUser[] | null>(null);
@@ -214,7 +217,10 @@ export default function BlockedUsersScreen() {
                     data={rows}
                     keyExtractor={(item) => item.userId}
                     renderItem={renderRow}
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={[
+                        styles.listContent,
+                        { paddingBottom: bottomInset },
+                    ]}
                     ItemSeparatorComponent={() => (
                         <View
                             style={[

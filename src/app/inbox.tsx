@@ -23,6 +23,7 @@ import { promptPushAtHighIntent } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
+import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { imageUrl } from '@/lib/tmdb';
 import {
     getPalette,
@@ -282,6 +283,8 @@ export default function InboxScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    // Pushed screen (no floating tab bar) — pad the lists clear of the nav bar.
+    const bottomInset = useBottomInset(spacing.lg);
 
     const [items, setItems] = useState<InboxItem[]>([]);
     const [sentItems, setSentItems] = useState<SentRecItem[]>([]);
@@ -1739,7 +1742,10 @@ export default function InboxScreen() {
                         data={items}
                         keyExtractor={(item) => item.id}
                         renderItem={renderRow}
-                        contentContainerStyle={styles.listContent}
+                        contentContainerStyle={[
+                            styles.listContent,
+                            { paddingBottom: bottomInset },
+                        ]}
                         ItemSeparatorComponent={() => (
                             <View
                                 style={[
@@ -1765,7 +1771,10 @@ export default function InboxScreen() {
                     data={sentItems}
                     keyExtractor={(item) => item.id}
                     renderItem={renderSentRec}
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={[
+                        styles.listContent,
+                        { paddingBottom: bottomInset },
+                    ]}
                     ItemSeparatorComponent={() => (
                         <View
                             style={[
@@ -1790,7 +1799,7 @@ const styles = StyleSheet.create({
     },
     listContent: {
         paddingHorizontal: spacing.base,
-        paddingBottom: spacing.lg,
+        // paddingBottom is applied inline via useBottomInset (nav-bar clearance).
     },
     row: {
         flexDirection: 'row',

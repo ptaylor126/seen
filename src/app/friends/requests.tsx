@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
+import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import {
@@ -38,6 +39,8 @@ export default function FriendRequestsScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    // Pushed screen (edges={['top']}) — pad content clear of the nav bar.
+    const bottomInset = useBottomInset(spacing.xl);
 
     const [incoming, setIncoming] = useState<RequestRow[]>([]);
     const [outgoing, setOutgoing] = useState<RequestRow[]>([]);
@@ -352,7 +355,9 @@ export default function FriendRequestsScreen() {
                     </Text>
                 </View>
             ) : (
-                <ScrollView contentContainerStyle={styles.scrollContent}>
+                <ScrollView
+                    contentContainerStyle={{ paddingBottom: bottomInset }}
+                >
                     {incoming.length > 0 && (
                         <View style={styles.section}>
                             <Text
@@ -414,7 +419,6 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     fillCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    scrollContent: { paddingBottom: spacing.xl },
     section: {
         marginTop: spacing.lg,
     },

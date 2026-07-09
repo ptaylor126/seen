@@ -31,6 +31,7 @@ import { Avatar } from '@/components/avatar';
 import { SegmentedControl } from '@/components/segmented-control';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { ViewControls } from '@/components/view-controls';
+import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
 import {
     type LibraryGridCols,
@@ -295,6 +296,8 @@ export default function FriendDetailScreen() {
     const palette = getPalette(scheme);
     const router = useRouter();
     const requestRec = useRequestRec();
+    // Pushed screen (edges={['top']}) — pad the list clear of the nav bar.
+    const bottomInset = useBottomInset(spacing.lg);
     const { handle: rawHandle, userId: rawTargetUserId } =
         useLocalSearchParams<{ handle: string; userId?: string }>();
     // Handles are stored lowercase in the DB (per the handle column's
@@ -1626,7 +1629,10 @@ export default function FriendDetailScreen() {
                 // (data[0]) is child 1.
                 stickyHeaderIndices={[1]}
                 ListFooterComponent={listFooter}
-                contentContainerStyle={styles.scrollContent}
+                contentContainerStyle={[
+                    styles.scrollContent,
+                    { paddingBottom: bottomInset },
+                ]}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
                 ItemSeparatorComponent={({
@@ -1901,10 +1907,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
     },
     scrollContent: {
-        // Whole-screen FlatList: only a bottom cushion is needed here.
-        // Horizontal insets live on the header/filter/body items, which
-        // each manage their own gutters.
-        paddingBottom: spacing.lg,
+        // Whole-screen FlatList: horizontal insets live on the header/filter/
+        // body items, which each manage their own gutters. The bottom cushion
+        // is applied inline via useBottomInset (nav-bar clearance).
     },
     bodyInset: {
         // Horizontal gutter for library rows / grid rows + their
