@@ -51,6 +51,13 @@ Adults who consume film and TV regularly and discover new content primarily thro
 - **watched** — terminal. Sender is notified. Trigger fires on transitions from either `pending` or `accepted` into `watched`.
 - **dismissed** — terminal. Sender sees the dismiss reason (enum or free text, NULL allowed for silent dismiss).
 
+### Chat about a title (added 2026-07-09, post-MVP build)
+- "Chat about it": a lightweight conversation thread about a title between two friends, with no recommendation implied — nobody is recommending anything. Reuses the rec-thread interaction model (comments, reactions) with quieter styling, less imagery.
+- One chat per (friend pair, title), direction-agnostic — starting the "mirror" chat opens the existing one.
+- Entry points: (1) a "Chat about it" action on the title page, sibling to Recommend, any friend pickable; (2) the overlap prompt.
+- Overlap prompt: adding a title to the watchlist that friends have watched shows a gentle dismissible in-app banner ("Bobby and 2 others have seen this"), which also persists as a quiet informational row (non-actionable, no push) in the notification list. Tapping shows the watchers with their ratings; pick who to chat with. Reverse direction (a friend watches something already on your watchlist) gets the quiet row only, no banner. Only the watchlist-holder is ever notified — they choose whether to hear an opinion before watching.
+- This is NOT general-purpose messaging: threads are always scoped to a title and to a friend pair (see §6).
+
 ### Friend system
 - Profile info (handle, display name, avatar) is visible to any signed-in user. This enables handle search and friend request discovery. All library activity, recommendations, and notes are gated by friendship.
 - Mutual accept required to become friends via handle search (sending a request → recipient accepts)
@@ -111,7 +118,7 @@ System DND respected; no in-app quiet hours in MVP.
 - Spoiler-management tools
 - Letterboxd CSV import
 - Share-sheet extension (post-MVP; planned for v1.1)
-- In-app messaging
+- General-purpose in-app messaging (free-form DMs, group chats). Title-scoped two-party threads — "Chat about a title", §5 — were brought into scope 2026-07-09 and are the deliberate ceiling: every conversation in Seen is anchored to a title.
 - Rating philosophy / public profile sections
 - Offline writes (read-only offline supported)
 - Data export

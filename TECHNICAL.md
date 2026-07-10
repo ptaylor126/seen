@@ -113,6 +113,18 @@ Lifecycle:
 Unique constraint: (from_user_id, to_user_id, tmdb_id, media_type) — prevents re-sends
 Indexes: (to_user_id, status), (from_user_id, status)
 
+### `title_chats` + chat thread tables
+"Chat about a title" (PRD §5, added 2026-07-09): a conversation thread about a title between two friends with NO recommendation semantics. Deliberately a SEPARATE cluster from `recommendations` — a kind flag there would collide with `recommendations_pair_unique` (a chat would permanently block a real rec of that title between that pair) and with `applyWatchedRating`'s open-recs sweep (chat rows would be transitioned to watched and mis-notify). Migration: `20260709180000_create_title_chats_thread.sql` (applied by hand 2026-07-10).
+
+Four tables, structurally mirroring the rec thread (`recommendation_comments` / `_reactions` / `_comment_reactions`, migrations 20260605120000 + 20260607130000):
+
+- `title_chats` — id PK, from_user_id (initiator) + to_user_id, both FK profiles ON DELETE CASCADE (no anonymisation — a chat has no meaning with a party gone), tmdb_id, media_type, created_at. **Direction-agnostic** unique expression index on `(least(from,to), greatest(from,to), tmdb_id, media_type)`: one chat per unordered pair per title; the mirror-direction insert fails 23505 and the client opens the existing chat. No status lifecycle, no note, nothing client-mutable (no UPDATE grant at all).
+- `chat_comments` — same shape as `recommendation_comments` (body 1–500, immutable after INSERT, author-delete only, user_id SET NULL) minus the rec-only columns (`is_decline_note`, `from_watched`).
+- `chat_reactions` — same shape as `recommendation_reactions`, but writes are SYMMETRIC (both parties; rec-level reactions are recipient-only because reacting to a rec is the recipient responding to it — a chat has no recipient role).
+- `chat_comment_reactions` — verbatim structural clone of `recommendation_comment_reactions`.
+
+Notify triggers (SECURITY DEFINER, INSERT-only): `chat_commented`, `chat_reacted` → the other party; `chat_comment_reacted` → the comment's author. Payloads carry `chat_id` (not `recommendation_id`) + `from_user_id`, `comment_id`/`emoji` as applicable, `tmdb_id`, `media_type`. No `chat_started` kind — the first message IS the announcement.
+
 ### `invite_links`
 Personal invite tokens. One per user, regeneratable.
 
@@ -132,7 +144,7 @@ In-app notification feed. Drives push and the bell icon.
 |---|---|---|
 | id | uuid | PK |
 | user_id | uuid | FK profiles.id, ON DELETE CASCADE |
-| kind | text | 'rec_received' / 'rec_watched' / 'friend_request' / 'friend_accepted' |
+| kind | text | Constrained by `notifications_kind_check` (widened as kinds land). Current set: 'rec_received' / 'rec_watched' / 'friend_request' / 'friend_accepted' / 'rec_reacted' / 'rec_commented' / 'comment_reacted' / 'rec_declined' / 'rec_requested' / 'report_filed' / 'chat_commented' / 'chat_reacted' / 'chat_comment_reacted' |
 | payload | jsonb | Kind-specific data (rec_id, friend_id, tmdb_id, etc.) |
 | read_at | timestamptz | NULL = unread |
 | created_at | timestamptz | Default now() |
@@ -183,12 +195,18 @@ Principle: by default, deny. Each table gets explicit `auth.uid()`-based policie
 ### blocks
 - SELECT: only your own outgoing rows (`blocker_id = auth.uid()`) — for an unblock list. There is NO policy exposing rows where you are the blocked party, so a blocked user cannot query the table to confirm they were blocked.
 - INSERT/DELETE: only `blocker_id = auth.uid()`. Block/unblock go through the `block_user` / `unblock_user` RPCs.
-- Enforcement: the visibility helpers (`is_blocked_with_auth`, `is_party_to_rec_unblocked`, `is_party_to_comment_unblocked`) are SECURITY DEFINER and auth-relative (they only consult blocks involving the caller). The 2-arg base `is_blocked_pair` is internal — NOT granted to `authenticated` — so clients can't probe arbitrary pairs.
+- Enforcement: the visibility helpers (`is_blocked_with_auth`, `is_party_to_rec_unblocked`, `is_party_to_comment_unblocked`, and the chat clones `is_party_to_chat_unblocked` / `is_party_to_chat_comment_unblocked`) are SECURITY DEFINER and auth-relative (they only consult blocks involving the caller). The 2-arg base `is_blocked_pair` is internal — NOT granted to `authenticated` — so clients can't probe arbitrary pairs.
 
 ### recommendations
 - SELECT: rows where you are sender or recipient, AND not blocked with the other party. Rec notes/comments/reactions are PARTY-scoped (not friendship-scoped), so unfriending does NOT hide an existing thread — the block check does. The block exclusion is applied to the SELECT on `recommendations`, `recommendation_comments`, `recommendation_reactions`, and `recommendation_comment_reactions` (via the `*_unblocked` helpers), and to the INSERT on comments/reactions (so a blocked user can't add to an old shared thread). Reaction/comment-reaction UPDATE/DELETE stay on the non-block helpers — own-row-only writes, already SELECT-hidden, so no leak.
 - INSERT: only `from_user_id = auth.uid()`, only to friends, only if no existing (sender, recipient, tmdb_id, media_type) row. New-rec-to-a-blocked-user is covered by the friendship gate (block auto-unfriends and re-friending is blocked).
 - UPDATE: recipient can update `status`, `dismiss_reason`. Sender cannot edit after send.
+
+### title_chats (+ chat_comments, chat_reactions, chat_comment_reactions)
+Same block-aware party model as the rec thread, via the chat clones of the party helpers (`is_party_to_chat[_unblocked]`, `is_party_to_chat_comment[_unblocked]`):
+- SELECT (all four tables): party to the chat AND not blocked with the other party — after a block the shared thread disappears for both.
+- INSERT: `title_chats` only as the initiator (`from_user_id = auth.uid()`), only to a friend (block-safe via the friendship gate, like recs). Comments/reactions: own `user_id` AND the `_unblocked` party check — a blocked user cannot keep posting into an existing thread (each post would notify the blocker).
+- UPDATE/DELETE: `title_chats` has neither (nothing mutable, not user-deletable in v1 — no grants either). Comments: author-delete only, immutable otherwise. Reactions: own-row UPDATE/DELETE on the plain (non-block) party helpers — already SELECT-hidden across a block, same deliberate non-change as the rec cluster.
 
 ### invite_links
 - SELECT: own row only.
