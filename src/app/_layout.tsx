@@ -212,6 +212,10 @@ function RootLayoutInner() {
                     options={{ presentation: 'modal' }}
                 />
                 <Stack.Screen
+                    name="title/[mediaType]/[tmdbId]/chat"
+                    options={{ presentation: 'modal' }}
+                />
+                <Stack.Screen
                     name="library/add"
                     options={{ presentation: 'modal' }}
                 />
@@ -232,6 +236,20 @@ function RootLayoutInner() {
                 <Stack.Screen
                     name="rec/[recId]"
                     options={{ presentation: 'card' }}
+                />
+                {/* fullScreenModal, NOT card: the chat is entered from the
+                    title page, which is ITSELF a presented fullScreenModal —
+                    and on the iOS native stack a card pushed while a
+                    fullScreenModal is presented attaches to the base stack
+                    BEHIND the modal (device-confirmed 2026-07-10: the chat
+                    mounted and segments moved, but the title page stayed
+                    visible). fullScreenModal stacks over it — same reason
+                    recommend/review present fine from the title page — and
+                    the chat's own drill into /title still works
+                    (fullScreenModal over fullScreenModal covers the screen). */}
+                <Stack.Screen
+                    name="chat/[chatId]"
+                    options={{ presentation: 'fullScreenModal' }}
                 />
             </Stack>
             {launchActive && (

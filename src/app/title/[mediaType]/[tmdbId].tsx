@@ -6,6 +6,7 @@ import {
     ExternalLink,
     Lock,
     LockOpen,
+    MessageCircle,
     MoreHorizontal,
     Pencil,
     Send,
@@ -1378,6 +1379,37 @@ export default function TitleDetailScreen() {
                         ]}
                     >
                         Recommend to a friend
+                    </Text>
+                </Pressable>
+
+                {/* Chat about it — the casual sibling beneath Recommend.
+                    Ghost row (muted, no fill/border) so the hierarchy reads
+                    Recommend = the committed act, Chat = the light one —
+                    the same primary/secondary pairing as the rec screen's
+                    Save over "Not for me". */}
+                <Pressable
+                    onPress={() =>
+                        router.push(`/title/${mediaType}/${tmdbId}/chat`)
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel="Chat about it with a friend"
+                    style={({ pressed }) => [
+                        styles.chatButton,
+                        { opacity: pressed ? 0.6 : 1 },
+                    ]}
+                >
+                    <MessageCircle
+                        color={palette.textMuted}
+                        size={18}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        Chat about it
                     </Text>
                 </Pressable>
 
@@ -2861,6 +2893,17 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
+    },
+    chatButton: {
+        // Ghost secondary beneath Recommend: icon + muted label, no
+        // fill/border — quiet by design (see the JSX comment).
+        flexDirection: 'row',
+        gap: spacing.xs,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: spacing.base,
+        marginTop: spacing.xs,
+        paddingVertical: spacing.sm,
     },
     closeButton: {
         position: 'absolute',

@@ -174,6 +174,13 @@ export default function RecScreen() {
     // before or after the ~180ms close animation — so whichever finishes last
     // calls maybeOpenRatingSheet(). Refs (not state) so the async upsert and
     // the onClosed callback always read the latest values.
+    //
+    // NOTE: this drop-during-dismissal behaviour is documented for RN
+    // <Modal>s ONLY. A 2026-07-10 hypothesis that native-stack router
+    // pushes suffer the same swallow was DISPROVEN by instrumentation —
+    // that bug was presentation topology instead (a 'card' pushed while a
+    // fullScreenModal is presented attaches BEHIND the modal; the screen
+    // mounts but never shows). See _layout.tsx's chat/[chatId] registration.
     const pendingRatingRef = useRef(false);
     const actionSheetClosedRef = useRef(true);
     const [statusBusy, setStatusBusy] = useState(false);
