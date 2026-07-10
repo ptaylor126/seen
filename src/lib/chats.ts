@@ -207,52 +207,10 @@ export async function getChatComments(chatId: string): Promise<
     );
 }
 
-// Chat-level reactions (both parties can react — symmetric, unlike recs).
-// emoji is returned raw; the screen narrows via isReactionEmoji.
-export async function getChatReactions(chatId: string): Promise<
-    Array<{ userId: string; emoji: string; createdAt: string }>
-> {
-    const { data, error } = await db
-        .from('chat_reactions')
-        .select('user_id, emoji, created_at')
-        .eq('chat_id', chatId);
-    if (error) throw error;
-    return (data ?? []).map(
-        (r: { user_id: string; emoji: string; created_at: string }) => ({
-            userId: r.user_id,
-            emoji: r.emoji,
-            createdAt: r.created_at,
-        }),
-    );
-}
-
-export async function setChatReaction(
-    chatId: string,
-    userId: string,
-    emoji: string,
-): Promise<void> {
-    const { error } = await db.from('chat_reactions').upsert(
-        {
-            chat_id: chatId,
-            user_id: userId,
-            emoji,
-        },
-        { onConflict: 'chat_id,user_id' },
-    );
-    if (error) throw error;
-}
-
-export async function clearChatReaction(
-    chatId: string,
-    userId: string,
-): Promise<void> {
-    const { error } = await db
-        .from('chat_reactions')
-        .delete()
-        .eq('chat_id', chatId)
-        .eq('user_id', userId);
-    if (error) throw error;
-}
+// NB: no chat-LEVEL reaction helpers — chats carry message-level reactions
+// only (chat_comment_reactions below). The chat_reactions table exists and
+// stays in the realtime publication, but nothing client-side reads or writes
+// it since the chat-level picker was removed (2026-07-10).
 
 // Reactions on the given comments, for the per-comment chips.
 export async function getChatCommentReactions(

@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ChevronRight, X } from 'lucide-react-native';
@@ -7,6 +6,8 @@ import {
     Alert,
     AppState,
     Keyboard,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
     Platform,
     Pressable,
     ScrollView,
@@ -25,10 +26,6 @@ import { ThreadCommentList } from '@/components/thread/comment-list';
 import { ThreadCommentMenu } from '@/components/thread/comment-menu';
 import { ThreadComposer } from '@/components/thread/composer';
 import {
-    ThreadIncomingReaction,
-    ThreadReactionPicker,
-} from '@/components/thread/reactions';
-import {
     COMMENT_MAX_CHARS,
     type CommentMenuTarget,
     type CommentRow,
@@ -40,17 +37,15 @@ import {
 import { UserLink } from '@/components/user-link';
 import {
     clearChatCommentReaction,
-    clearChatReaction,
     deleteChatComment,
     getChatCommentReactions,
     getChatComments,
-    getChatReactions,
     getTitleChat,
     postChatComment,
     setChatCommentReaction,
-    setChatReaction,
     type TitleChatRow,
 } from '@/lib/chats';
+import { useThreadRealtime } from '@/hooks/use-thread-realtime';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
@@ -73,18 +68,13 @@ interface ChatTitleMeta {
     posterPath: string | null;
 }
 
-// Stable identity for the incoming reaction, persisted per-chat in
-// AsyncStorage so the soft pop fires once per NEW reaction — same mechanism
-// as the rec screen's reactionSeen marker, under a chat-scoped key.
-function reactionIdentity(r: ReactionRow): string {
-    return `${r.userId}:${r.emoji}:${r.createdAt ?? ''}`;
-}
-
 // "Chat about a title" thread — a conversation between two friends about a
 // title, with NO recommendation semantics: no lifecycle/status chrome, no
 // Save/Decline, no "X recommends" framing, no full-bleed hero. A compact
 // tappable title header + a light "Chat with {name}" line, then the shared
-// thread components wired to the chat_* tables.
+// thread components wired to the chat_* tables. Reactions are MESSAGE-level
+// only (the long-press menu + chips) — the chat-level picker/incoming row
+// were removed by design (2026-07-10 device pass).
 export default function ChatScreen() {
     const params = useLocalSearchParams<{ chatId: string }>();
     const router = useRouter();
@@ -106,15 +96,10 @@ export default function ChatScreen() {
     // framing + incoming reaction row.
     const [myProfile, setMyProfile] = useState<PartyProfile | null>(null);
     const [otherProfile, setOtherProfile] = useState<PartyProfile | null>(null);
-    const [reactions, setReactions] = useState<ReactionRow[]>([]);
-    // Gates the one-time soft pop on the incoming reaction (local last-seen
-    // marker chatReactionSeen:<chatId>), same as the rec screen.
-    const [shouldAnimateReaction, setShouldAnimateReaction] = useState(false);
     const [comments, setComments] = useState<CommentRow[]>([]);
     const [commentReactions, setCommentReactions] = useState<
         Map<string, ReactionRow[]>
     >(new Map());
-    const [reactionBusy, setReactionBusy] = useState(false);
     const [commentReactionBusy, setCommentReactionBusy] = useState<
         string | null
     >(null);
@@ -124,6 +109,26 @@ export default function ChatScreen() {
     const [composerBusy, setComposerBusy] = useState(false);
     const scrollRef = useRef<ScrollView | null>(null);
     const [keyboardOpen, setKeyboardOpen] = useState(false);
+    // Whether the user is at/near the bottom of the thread (within ~one
+    // screen). Drives the new-message auto-scroll: content arriving via a
+    // load() refetch (realtime / focus / foreground) scrolls to the bottom
+    // only when they were already there — never yanks them out of history.
+    // Ref (not state): read inside the comments effect, no re-render needed.
+    // Starts true so a fresh arrival lands at the latest message.
+    const nearBottomRef = useRef(true);
+    // Previous comment count — the auto-scroll fires only when it GROWS
+    // (a reaction-only refetch must not scroll).
+    const prevCommentCountRef = useRef(0);
+    // Arrival pin: while true, every content-size change re-scrolls to the
+    // end (unanimated). A one-shot timer raced the initial many-row layout —
+    // the scroll landed mid-list or at the top, AND the failed arrival left
+    // nearBottomRef's initial `true` misdescribing the position (the
+    // yank-from-history bug). onContentSizeChange fires on each growth, so
+    // pinning there holds the bottom through the row/avatar/image settle.
+    const pinToBottomRef = useRef(false);
+    // "New message ↓" pill — shown when a new message lands while the user
+    // is up in history (position held). Tap or reaching the bottom clears it.
+    const [showNewMessagePill, setShowNewMessagePill] = useState(false);
 
     // Single loader for the whole screen — chat row first, then the
     // dependent fetches (profiles, TMDB title, comments, reactions) in
@@ -169,14 +174,13 @@ export default function ChatScreen() {
                     ? chatRow.toUserId
                     : chatRow.fromUserId;
 
-            const [profilesResult, commentRows, reactionRows, titleResult] =
+            const [profilesResult, commentRows, titleResult] =
                 await Promise.all([
                     supabase
                         .from('profiles')
                         .select('id, display_name, avatar_url')
                         .in('id', [chatRow.fromUserId, chatRow.toUserId]),
                     getChatComments(chatId),
-                    getChatReactions(chatId),
                     (chatRow.mediaType === 'movie'
                         ? getMovie(chatRow.tmdbId)
                         : getTV(chatRow.tmdbId)
@@ -221,34 +225,6 @@ export default function ChatScreen() {
             }
             setMyProfile(profilesById.get(userId) ?? null);
             setOtherProfile(profilesById.get(otherUserId) ?? null);
-
-            const validReactions: ReactionRow[] = [];
-            for (const r of reactionRows) {
-                if (isReactionEmoji(r.emoji)) {
-                    validReactions.push({
-                        userId: r.userId,
-                        emoji: r.emoji,
-                        createdAt: r.createdAt,
-                    });
-                }
-            }
-            // One-time incoming-reaction pop, from the LOCAL last-seen
-            // marker — read BEFORE setState so flag + reactions land in the
-            // same render. Best-effort: storage error → no animation.
-            const incoming = validReactions.find((r) => r.userId !== userId);
-            let animate = false;
-            if (incoming) {
-                try {
-                    const seen = await AsyncStorage.getItem(
-                        `chatReactionSeen:${chatId}`,
-                    );
-                    animate = seen !== reactionIdentity(incoming);
-                } catch {
-                    animate = false;
-                }
-            }
-            setShouldAnimateReaction(animate);
-            setReactions(validReactions);
 
             // Comment authors are always the two parties (RLS), both already
             // resolved above. fromWatched is always false — chats have no
@@ -313,24 +289,74 @@ export default function ChatScreen() {
         return () => sub.remove();
     }, [load]);
 
-    // Derived reaction views — mine drives the picker's selected state, the
-    // other party's renders read-only below it.
-    const myReaction: ReactionEmoji | null = myUserId
-        ? reactions.find((r) => r.userId === myUserId)?.emoji ?? null
-        : null;
-    const otherReaction = myUserId
-        ? reactions.find((r) => r.userId !== myUserId) ?? null
-        : null;
+    // Track proximity to the bottom for the new-message auto-scroll. "Near"
+    // = within one screen of the end, so a reader a couple of messages up
+    // still follows the conversation, but someone deep in history doesn't.
+    // Reaching the bottom (by any means) also clears the new-message pill —
+    // the setState bails when already false, so per-event calls are cheap.
+    function handleScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
+        const { contentOffset, layoutMeasurement, contentSize } =
+            e.nativeEvent;
+        nearBottomRef.current =
+            contentOffset.y + layoutMeasurement.height >=
+            contentSize.height - layoutMeasurement.height;
+        if (nearBottomRef.current) setShowNewMessagePill(false);
+    }
 
-    // Persist the last-seen incoming-reaction identity AFTER render — same
-    // one-time-pop mechanism as the rec screen, chat-scoped key.
+    // While the arrival pin is set, every content growth re-snaps to the end
+    // — this is what actually lands the open-at-latest-message scroll (a
+    // timer can't; see pinToBottomRef).
+    function handleContentSizeChange() {
+        if (!pinToBottomRef.current) return;
+        scrollRef.current?.scrollToEnd({ animated: false });
+    }
+
+    // Auto-scroll when NEW messages land via a load() refetch (realtime,
+    // focus, foreground):
+    //   - arrival (count 0 → N): pin to the bottom through the initial
+    //     layout settle (~1s window, content-size-driven), so the screen
+    //     opens at the latest message with no visible scroll;
+    //   - at/near the bottom: follow with the same deferred animated
+    //     scrollToEnd the composer/keyboard paths use;
+    //   - up in history: hold position and show the "New message ↓" pill.
     useEffect(() => {
-        if (!otherReaction) return;
-        void AsyncStorage.setItem(
-            `chatReactionSeen:${chatId}`,
-            reactionIdentity(otherReaction),
-        );
-    }, [otherReaction, chatId]);
+        const prev = prevCommentCountRef.current;
+        prevCommentCountRef.current = comments.length;
+        if (comments.length <= prev) return;
+        if (prev === 0) {
+            pinToBottomRef.current = true;
+            scrollRef.current?.scrollToEnd({ animated: false });
+            // Release the pin once the initial layout has settled — after
+            // this, the follow/hold logic owns scrolling. A user drag inside
+            // the window also releases it (onScrollBeginDrag).
+            setTimeout(() => {
+                pinToBottomRef.current = false;
+            }, 1000);
+            return;
+        }
+        if (!nearBottomRef.current) {
+            setShowNewMessagePill(true);
+            return;
+        }
+        setTimeout(() => {
+            scrollRef.current?.scrollToEnd({ animated: true });
+        }, 50);
+    }, [comments]);
+
+    // Live thread while focused: any insert/update/delete on THIS chat's
+    // comments triggers a silent load() refetch (own writes included — the
+    // reconcile is a no-op visually). No chat_reactions binding: nothing
+    // renders chat-level reactions anymore (message-level only). Comment-
+    // reactions are deliberately not subscribed (no chat_id column to filter
+    // on); their chips refresh via focus/foreground/any-other-event reloads.
+    useThreadRealtime({
+        topic: `chat:${chatId}`,
+        bindings: chatId
+            ? [{ table: 'chat_comments', filter: `chat_id=eq.${chatId}` }]
+            : [],
+        onEvent: load,
+        enabled: !!chatId,
+    });
 
     // Keyboard visibility → composer bottom padding + keep the latest
     // message visible above the shrunk scroll area. Verbatim from the rec
@@ -355,37 +381,6 @@ export default function ChatScreen() {
             hideSub.remove();
         };
     }, []);
-
-    // Chat-level reaction — symmetric: BOTH parties can react (unlike recs,
-    // where the picker is recipient-only). Optimistic with rollback.
-    async function handleReactionTap(emoji: ReactionEmoji) {
-        if (!myUserId || !chat || reactionBusy) return;
-        const removing = myReaction === emoji;
-        const previous = reactions;
-        setReactions((prev) => {
-            const withoutMine = prev.filter((r) => r.userId !== myUserId);
-            return removing
-                ? withoutMine
-                : [...withoutMine, { userId: myUserId, emoji }];
-        });
-        setReactionBusy(true);
-        try {
-            if (removing) {
-                await clearChatReaction(chat.id, myUserId);
-            } else {
-                await setChatReaction(chat.id, myUserId, emoji);
-            }
-        } catch (err) {
-            setReactions(previous);
-            console.error('chat reaction update failed:', err);
-            Alert.alert(
-                "Couldn't react",
-                err instanceof Error ? err.message : 'Unknown error',
-            );
-        } finally {
-            setReactionBusy(false);
-        }
-    }
 
     // Per-comment reaction — same delete-on-active / upsert semantics as the
     // rec screen, against chat_comment_reactions.
@@ -566,9 +561,22 @@ export default function ChatScreen() {
                 behavior="padding"
                 keyboardVerticalOffset={0}
             >
+                {/* Relative wrapper so the "New message ↓" pill can float at
+                    the thread's bottom edge, above the composer. */}
+                <View style={styles.flex}>
                 <ScrollView
                     ref={scrollRef}
                     style={styles.flex}
+                    onScroll={handleScroll}
+                    // Proximity tracking only needs coarse updates, not
+                    // per-frame events.
+                    scrollEventThrottle={100}
+                    onContentSizeChange={handleContentSizeChange}
+                    // A real user drag always releases the arrival pin — they
+                    // own the scroll position from that moment.
+                    onScrollBeginDrag={() => {
+                        pinToBottomRef.current = false;
+                    }}
                     contentContainerStyle={[
                         styles.scrollContent,
                         {
@@ -694,20 +702,6 @@ export default function ChatScreen() {
                             </Text>
                         </View>
 
-                        {/* Chat-level reactions — symmetric (both parties). */}
-                        <ThreadReactionPicker
-                            selected={myReaction}
-                            busy={reactionBusy}
-                            onTap={handleReactionTap}
-                        />
-                        {otherReaction ? (
-                            <ThreadIncomingReaction
-                                reaction={otherReaction}
-                                profile={otherProfile}
-                                animate={shouldAnimateReaction}
-                            />
-                        ) : null}
-
                         <ThreadCommentList
                             comments={comments}
                             myUserId={myUserId}
@@ -716,6 +710,39 @@ export default function ChatScreen() {
                         />
                     </View>
                 </ScrollView>
+
+                {/* Floating "New message ↓" — shown when a message landed
+                    while the user was up in history. Tap scrolls to the end;
+                    scrolling to the bottom yourself also clears it (see
+                    handleScroll). Accent pill, same fill/radius language as
+                    the composer's send circle. */}
+                {showNewMessagePill ? (
+                    <Pressable
+                        onPress={() => {
+                            setShowNewMessagePill(false);
+                            scrollRef.current?.scrollToEnd({ animated: true });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Scroll to newest message"
+                        style={({ pressed }) => [
+                            styles.newMessagePill,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: pressed ? 0.8 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.caption,
+                                { color: palette.textInverse },
+                            ]}
+                        >
+                            New message ↓
+                        </Text>
+                    </Pressable>
+                ) : null}
+                </View>
 
                 <ThreadComposer
                     value={composer}
@@ -808,5 +835,15 @@ const styles = StyleSheet.create({
         // attribution-line name treatment.
         fontFamily: fontFamily.bold,
         fontWeight: '700',
+    },
+    newMessagePill: {
+        // Floating over the thread's bottom edge, self-centered. Full-radius
+        // accent pill (fill set inline) — the app's pill/chip shape.
+        position: 'absolute',
+        bottom: spacing.md,
+        alignSelf: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
     },
 });
