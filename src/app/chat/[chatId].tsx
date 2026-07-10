@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ChevronRight, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
+    AppState,
     Keyboard,
     Platform,
     Pressable,
@@ -287,8 +288,29 @@ export default function ChatScreen() {
         }
     }, [chatId]);
 
+    // Load on every navigation focus — initial mount AND refocus (back from
+    // the title page, a fresh navigation to this chat). load() never re-sets
+    // `loading` after the first resolve, so re-runs refresh the thread in
+    // place with no spinner flash — same silent-refresh shape as the inbox.
+    useFocusEffect(
+        useCallback(() => {
+            void load();
+        }, [load]),
+    );
+
+    // App-foreground fallback: useFocusEffect only fires on navigation focus.
+    // It does NOT fire when the OS brings the app back from background with
+    // this chat still the focused screen — e.g. a push-tap that foregrounds
+    // onto the already-open chat — so the other party's new message would
+    // stay missing until leave-and-return. Reloading on AppState 'active'
+    // closes that gap. Mirrors the inbox fix (and use-unread-count).
     useEffect(() => {
-        void load();
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'active') {
+                void load();
+            }
+        });
+        return () => sub.remove();
     }, [load]);
 
     // Derived reaction views — mine drives the picker's selected state, the
