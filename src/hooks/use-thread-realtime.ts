@@ -59,26 +59,40 @@ export function useThreadRealtime({
         useCallback(() => {
             if (!enabled || bindingsRef.current.length === 0) return;
 
+            // CHANNEL-PER-BINDING — permanent design, do NOT consolidate
+            // bindings onto one shared channel. Two postgres_changes
+            // bindings sharing an identical filter string on one channel
+            // silently drop the SECOND binding's events (device-confirmed
+            // 2026-07-10, realtime-js 2.106.0: the rec screen's comments
+            // binding delivered while its reactions binding — same
+            // `recommendation_id=eq.X` filter — never did; both tables
+            // delivered fine on dedicated channels). One channel per table
+            // binding costs one extra join per open screen — nothing next to
+            // silently-dead events.
             const suffix = Math.random().toString(36).slice(2, 10);
-            let channel = supabase.channel(`${topic}:${suffix}`);
-            for (const b of bindingsRef.current) {
-                channel = channel.on(
-                    'postgres_changes',
-                    {
-                        event: '*',
-                        schema: 'public',
-                        table: b.table,
-                        filter: b.filter,
-                    },
-                    () => {
-                        onEventRef.current();
-                    },
-                );
-            }
-            channel.subscribe();
+            const channels = bindingsRef.current.map((b) => {
+                const channel = supabase
+                    .channel(`${topic}:${b.table}:${suffix}`)
+                    .on(
+                        'postgres_changes',
+                        {
+                            event: '*',
+                            schema: 'public',
+                            table: b.table,
+                            filter: b.filter,
+                        },
+                        () => {
+                            onEventRef.current();
+                        },
+                    );
+                channel.subscribe();
+                return channel;
+            });
 
             return () => {
-                void supabase.removeChannel(channel);
+                for (const channel of channels) {
+                    void supabase.removeChannel(channel);
+                }
             };
             // eslint-disable-next-line react-hooks/exhaustive-deps -- bindings
             // participate via bindingsKey (value identity, not reference).

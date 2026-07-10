@@ -8,6 +8,9 @@ import {
     Alert,
     Dimensions,
     Keyboard,
+    type LayoutChangeEvent,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
     Platform,
     Pressable,
     ScrollView,
@@ -43,6 +46,7 @@ import {
     relativeTimestamp,
 } from '@/components/thread/shared';
 import { UserLink } from '@/components/user-link';
+import { useThreadRealtime } from '@/hooks/use-thread-realtime';
 import {
     formatLibraryBadge,
     type ItemStatus,
@@ -152,6 +156,22 @@ export default function RecScreen() {
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
     const scrollRef = useRef<ScrollView | null>(null);
+    // New-comment auto-scroll (ported from the chat screen, WITHOUT its
+    // arrival pin — this screen always opens on the rec itself, never the
+    // thread). Near-bottom is MEASUREMENT-derived (offset + viewport +
+    // content height, each from its own event) rather than scroll-only:
+    // unlike chat, the user starts at the TOP here, so a scroll-event-only
+    // ref with a `true` default would misclassify a never-scrolled reader on
+    // a long thread — the chat screen's original yank-from-history bug.
+    const scrollOffsetRef = useRef(0);
+    const layoutHeightRef = useRef(0);
+    const contentHeightRef = useRef(0);
+    const nearBottomRef = useRef(true); // accurate until measured: short content = bottom visible
+    // Previous comment count — auto-scroll/pill fire only when it GROWS.
+    const prevCommentCountRef = useRef(0);
+    // "New comment ↓" pill — shown when someone ELSE's comment lands while
+    // the user is up at the rec/hero. Tap or reaching the bottom clears it.
+    const [showNewMessagePill, setShowNewMessagePill] = useState(false);
     // Whether the keyboard is up — drops the composer's bottom safe-area
     // inset while typing (the keyboard already covers the home-indicator
     // area, so keeping the inset leaves a white gap above the keyboard).
@@ -586,6 +606,86 @@ export default function RecScreen() {
             };
         }, [recId]),
     );
+
+    // Live thread while focused: any insert/update/delete on THIS rec's
+    // comments or reactions triggers a silent load() refetch (own writes
+    // included — the reconcile is a no-op visually). Unlike the chat screen,
+    // the reactions binding is live UI here — the rec keeps its reaction
+    // picker/incoming row. Comment-reactions are deliberately not subscribed
+    // (no recommendation_id column to filter on); their chips refresh via
+    // focus/foreground/any-other-event reloads. Same hook + mechanics as the
+    // chat screen (device-proven there); the publication already carries
+    // both tables (20260710120000).
+    useThreadRealtime({
+        topic: `rec:${recId}`,
+        bindings: recId
+            ? [
+                  {
+                      table: 'recommendation_comments',
+                      filter: `recommendation_id=eq.${recId}`,
+                  },
+                  {
+                      table: 'recommendation_reactions',
+                      filter: `recommendation_id=eq.${recId}`,
+                  },
+              ]
+            : [],
+        onEvent: load,
+        enabled: !!recId,
+    });
+
+    // Recompute near-bottom whenever any of its three inputs move. "Near" =
+    // within one viewport of the end (same threshold as the chat screen).
+    function updateNearBottom() {
+        nearBottomRef.current =
+            scrollOffsetRef.current + layoutHeightRef.current >=
+            contentHeightRef.current - layoutHeightRef.current;
+        if (nearBottomRef.current) setShowNewMessagePill(false);
+    }
+
+    function handleScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
+        const { contentOffset, layoutMeasurement, contentSize } =
+            e.nativeEvent;
+        scrollOffsetRef.current = contentOffset.y;
+        layoutHeightRef.current = layoutMeasurement.height;
+        contentHeightRef.current = contentSize.height;
+        updateNearBottom();
+    }
+
+    function handleContentSizeChange(_w: number, h: number) {
+        contentHeightRef.current = h;
+        updateNearBottom();
+    }
+
+    function handleScrollLayout(e: LayoutChangeEvent) {
+        layoutHeightRef.current = e.nativeEvent.layout.height;
+        updateNearBottom();
+    }
+
+    // Auto-scroll when NEW comments land via a load() refetch (realtime,
+    // focus resync, sheet submit): follow with the deferred animated
+    // scrollToEnd while at/near the bottom; up at the rec/hero, hold
+    // position and show the "New comment ↓" pill — but only for the OTHER
+    // party's comments (own appends, e.g. a decline note, manage their own
+    // UX). Deliberately NO arrival behavior: on first load (count 0 → N)
+    // only the counter is recorded — this screen opens on the rec itself.
+    useEffect(() => {
+        const prev = prevCommentCountRef.current;
+        prevCommentCountRef.current = comments.length;
+        if (comments.length <= prev) return;
+        if (prev === 0) return;
+        const newest = comments[comments.length - 1];
+        const isOwn = !!myUserId && newest?.userId === myUserId;
+        if (!nearBottomRef.current) {
+            if (!isOwn) setShowNewMessagePill(true);
+            return;
+        }
+        setTimeout(() => {
+            scrollRef.current?.scrollToEnd({ animated: true });
+        }, 50);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on
+        // comment-list changes only; myUserId is stable after load.
+    }, [comments]);
 
     const myReaction: ReactionEmoji | null = myUserId
         ? reactions.find((r) => r.userId === myUserId)?.emoji ?? null
@@ -1176,6 +1276,9 @@ export default function RecScreen() {
                 // visible content.
                 keyboardVerticalOffset={0}
             >
+                {/* Relative wrapper so the "New comment ↓" pill can float at
+                    the scroll area's bottom edge, above the composer. */}
+                <View style={styles.flex}>
                 <ScrollView
                     ref={scrollRef}
                     // flex: 1 so the scroll area fills the space above the
@@ -1183,6 +1286,11 @@ export default function RecScreen() {
                     // ScrollView content-height and the composer floats up
                     // with empty space below it instead of bottom-anchoring.
                     style={styles.flex}
+                    onScroll={handleScroll}
+                    // Proximity tracking only needs coarse updates.
+                    scrollEventThrottle={100}
+                    onContentSizeChange={handleContentSizeChange}
+                    onLayout={handleScrollLayout}
                     contentContainerStyle={[
                         styles.scrollContent,
                         { paddingBottom: insets.bottom + spacing.base },
@@ -1595,6 +1703,39 @@ export default function RecScreen() {
                     </View>
                 </ScrollView>
 
+                {/* Floating "New comment ↓" — shown when the other party's
+                    comment landed while the user was up at the rec/hero. Tap
+                    scrolls to the end; reaching the bottom yourself also
+                    clears it (see updateNearBottom). Same accent pill as the
+                    chat screen's. */}
+                {showNewMessagePill ? (
+                    <Pressable
+                        onPress={() => {
+                            setShowNewMessagePill(false);
+                            scrollRef.current?.scrollToEnd({ animated: true });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Scroll to newest comment"
+                        style={({ pressed }) => [
+                            styles.newMessagePill,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: pressed ? 0.8 : 1,
+                            },
+                        ]}
+                    >
+                        <Text
+                            style={[
+                                typography.caption,
+                                { color: palette.textInverse },
+                            ]}
+                        >
+                            New comment ↓
+                        </Text>
+                    </Pressable>
+                ) : null}
+                </View>
+
                 {/* Composer pinned to the bottom of the keyboard
                     avoidance container. The screen owns the keyboard
                     listeners (they also drive the thread scroll) and passes
@@ -1814,6 +1955,17 @@ const styles = StyleSheet.create({
         // edge, quiet (textMuted) so it doesn't compete with the note.
         marginLeft: 'auto',
         padding: spacing.xs,
+    },
+    newMessagePill: {
+        // Floating over the scroll area's bottom edge, self-centered.
+        // Full-radius accent pill (fill set inline) — same as the chat
+        // screen's new-message pill.
+        position: 'absolute',
+        bottom: spacing.md,
+        alignSelf: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
     },
     noteHero: {
         // The hero note — large pull-quote. Geist regular at a generous
