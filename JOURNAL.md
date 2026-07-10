@@ -37,6 +37,36 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-10 — Chat-about-it shipped end to end; realtime pass; thread scroll model
+
+**Done**
+
+- **Chat-about-it shipped end to end:** `/chat/[chatId]` screen (compact header, no lifecycle chrome), "Chat about it" ghost row under Recommend, compose-first create flow (single-select picker, message required), 23505 → existing-chat handling, inbox renderers both sides (recipient rows + sent items), push copy, push-tap routing. OTA'd.
+- **Full realtime pass:** `useThreadRealtime` hook, chat + rec threads live (comments, rec-level reactions), comment reactions made live via denormalized thread-id columns (server-derived by BEFORE INSERT trigger — client value overridden, can't drift), publication now 10 tables. Refetch-not-merge; AppState/focus reloads kept as the reconciliation layer (postgres_changes has no replay).
+- **Scroll behavior, both thread surfaces:** chat opens at newest (arrival pin — content-size-driven snap, drag releases), follow when near bottom, "New message ↓" / "New comment ↓" pill when reading history. Rec screen: state-dependent arrival — opens at the newest comment only when accepted/watched AND the thread exceeds a screen (the check is physical: scrollToEnd on short content is a no-op); pending/dismissed always open at the rec.
+- **Chat-level reactions removed** from the chat screen (a chat is a conversation, not an object — message reactions are the reaction model there). Rec screen keeps rec-level reactions (recipient-only).
+- **Play closed-testing countries widened** (account-country mismatch: Play availability follows the tester's Play ACCOUNT country, not location — all-countries is correct for closed testing since the tester list gates access).
+
+**Lessons**
+
+- **REALTIME: two postgres_changes bindings sharing an identical filter string on one channel silently drop the second binding's events** (realtime-js 2.106.0, device-confirmed). Channel-per-binding is the design now — recorded in the hook. Cost: one extra join per screen, nothing.
+- DELETE events on filtered realtime subscriptions don't deliver (platform limitation) — reaction removal reconciles on next reload. Accepted.
+- **iOS navigation topology: a card pushed while a fullScreenModal is presented mounts INVISIBLY behind it** — JS state moves, screen renders, user sees nothing. Symptom: "navigation silently fails" while logs show the screen alive. Fix is presentation-level (fullScreenModal over fullScreenModal), not timing. Three timing fixes chased this before instrumentation named it: INSTRUMENT BEFORE HYPOTHESIZING on navigation bugs.
+- `router.replace` across presentation styles (modal slot → card) is unreliable; the app's vocabulary is modals exit with `back()`, screens enter with `push()`.
+- **A pass-map item without a reported result is NOT a pass:** chat_reactions liveness was never actually verified during the chat pass (pass-map item skipped in reporting) — the phantom "chat works, rec doesn't" asymmetry cost an hour.
+- Denormalized columns for realtime filterability should be **server-derived** (BEFORE INSERT trigger), never client-trusted — eight lines that prevent a silent liveness regression from a future client bug.
+- The **arrival-pin pattern** (snap on every onContentSizeChange through settle, released by drag) beats one-shot timers for scroll-to-position on load — timers race multi-row layout.
+- Scroll-position tracking needs **measurement-derived near-bottom** when there's no arrival pin landing the user somewhere known — a scroll-event-only default misclassifies the never-scrolled reader.
+
+**Next**
+
+- **3b: the overlap prompt** — add-to-watchlist banner ("Bobby and 2 others have seen this"), watcher-picker with ratings, quiet informational notification row, watchlist-holder only. Last piece of the chat design.
+- Token-refresh AppState wiring (unchanged, still queued).
+- **versionCode 5 / iOS build 22 session — growing urgent:** iOS testers are on 1.0.4 with none of this week's work; Android FCM unlocks push for Android testers.
+- Reply to Bobby: the triangulation idea is built-adjacent now — chat-about-it shipped, overlap prompt next.
+
+---
+
 ## 2026-07-09 — Post-watched sheet, push diagnosis, rec_watched trigger fix
 
 **Done**
@@ -104,6 +134,11 @@ _Continues the snapshot above; the sheet and its notification/routing work lande
 **Architecture decision: SEPARATE `title_chats` table, NOT a kind flag on recommendations.** Two killer reasons from the coupling investigation: (1) `recommendations_pair_unique` means a chat row would permanently block a real rec of that title between that pair; (2) `applyWatchedRating` sweeps all open recs by title — it would transition chat rows to watched, stamp `rating_thumb`, and mis-fire `rec_watched` pushes to chat partners. Plus a kind filter would need adding to 12 existing query sites and every future one, with silent user-visible failures when missed. Separate table = one mechanical migration cloning the proven rec-thread pattern; client work is identical under either approach.
 
 **Build order**: (1) extract thread UI from `rec/[recId].tsx` into shared components — pure refactor; (2) `title_chats` migration cluster (table, pair-unique, `is_party_to_chat`, `chat_comments`/`reactions`, notify triggers, new notification kinds); (3) `/chat/[chatId]` screen + "Chat about it" entry point + overlap banner/picker; (4) inbox/push/`usePushNavigation` entries for the new kinds; (5) overlap detection trigger creating the quiet notification.
+
+### 2026-07-09 (evening) — chat build steps 1–2
+
+- Chat-about-it build began the same evening as the design: **step 1** (thread UI extracted from `rec/[recId].tsx` into `src/components/thread/` — five components, pure refactor, device-verified identical) and **step 2** (`title_chats` migration cluster applied and verified: four tables, block-aware RLS, `is_party_to_chat` helpers, notify triggers, kind-check widened to 13). **The RLS auditor caught a real gap in the draft:** the original mirror missed the block-exclusion retrofit — a blocked user could have kept posting into a shared chat. Folded in before apply.
+- Design decisions recorded in PRD/TECHNICAL: direction-agnostic pair-unique (one conversation per pair+title; the client must catch 23505 and open the existing chat), no rec-only columns on chat tables, both-party cascade on party deletion.
 
 ---
 
