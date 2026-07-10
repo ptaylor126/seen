@@ -2,20 +2,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowUp, ChevronRight, MoreHorizontal, X, XCircle } from 'lucide-react-native';
-import { MotiView } from 'moti';
+import { ChevronRight, MoreHorizontal, X, XCircle } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Dimensions,
     Keyboard,
-    Modal,
     Platform,
     Pressable,
     ScrollView,
     StyleSheet,
     Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -28,6 +25,23 @@ import { DeclineSheet } from '@/components/decline-sheet';
 import { LoadError } from '@/components/load-error';
 import { RatingSheet } from '@/components/rating-sheet';
 import { RecActionSheet } from '@/components/rec-action-sheet';
+import { ThreadCommentList } from '@/components/thread/comment-list';
+import { ThreadCommentMenu } from '@/components/thread/comment-menu';
+import { ThreadComposer } from '@/components/thread/composer';
+import {
+    ThreadIncomingReaction,
+    ThreadReactionPicker,
+} from '@/components/thread/reactions';
+import {
+    COMMENT_MAX_CHARS,
+    type CommentMenuTarget,
+    type CommentRow,
+    isReactionEmoji,
+    type PartyProfile,
+    type ReactionEmoji,
+    type ReactionRow,
+    relativeTimestamp,
+} from '@/components/thread/shared';
 import { UserLink } from '@/components/user-link';
 import {
     formatLibraryBadge,
@@ -50,34 +64,11 @@ import {
     typography,
 } from '@/theme/theme';
 
-// Locked emoji set — must match the CHECK constraint on
-// recommendation_reactions.emoji. Widening is a one-line migration
-// PLUS adding the new emoji to this array. Order is the picker order.
-const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '👀'] as const;
-type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
-
-function isReactionEmoji(value: string): value is ReactionEmoji {
-    return (REACTION_EMOJIS as readonly string[]).includes(value);
-}
-
-const COMMENT_MAX_CHARS = 500;
-const REACTION_PICKER_SIZE = 40;
-// White circular reaction buttons — larger than the comment-popover
-// cells (REACTION_PICKER_SIZE), spread across the full row width.
-const REACTION_CELL_SIZE = 52;
 // Small avatar on the recommender line above the note.
 const REC_LINE_AVATAR_SIZE = 28;
-// Composer avatar — larger, roughly the height of the taller pill field.
-const COMPOSER_AVATAR_SIZE = 40;
 // Immersive backdrop header — the hero of the screen (~50% of height).
 // Read once at module load (same pattern as the home hero / Top 5 row).
 const HEADER_HEIGHT = Math.round(Dimensions.get('window').height * 0.5);
-
-interface PartyProfile {
-    userId: string;
-    displayName: string;
-    avatarUrl: string | null;
-}
 
 interface RecSummary {
     id: string;
@@ -107,14 +98,6 @@ interface TitleMeta {
     genreIds: number[];
 }
 
-interface ReactionRow {
-    userId: string;
-    emoji: ReactionEmoji;
-    // Present on rec-level reactions (drives the last-seen identity below).
-    // Omitted for comment reactions, which don't animate on this marker.
-    createdAt?: string;
-}
-
 // Stable identity for the incoming reaction, persisted per-rec in AsyncStorage
 // so the soft pop fires once per NEW reaction. Emoji + created_at means a
 // changed emoji (or a removed-then-re-added reaction) reads as new and pops
@@ -122,62 +105,6 @@ interface ReactionRow {
 // recommendation_id + user_id), hence the composite string.
 function reactionIdentity(r: ReactionRow): string {
     return `${r.userId}:${r.emoji}:${r.createdAt ?? ''}`;
-}
-
-interface CommentRow {
-    id: string;
-    userId: string | null;
-    author: PartyProfile | null; // null = author was deleted (user_id SET NULL)
-    body: string;
-    createdAt: string;
-    // Originated from the post-watched sheet (rating comment) → shows a quiet
-    // "watched" status under the name. False for ordinary typed comments.
-    fromWatched: boolean;
-}
-
-// A post-watched comment's body is `${note}\n\nGave it ★★★★` (or just the
-// rating line when there's no note / rating-only). Split the trailing rating
-// line off so it renders as its own styled sibling instead of a \n\n blank
-// gap. Only a tail after the LAST "\n\n" that starts with a rating lead-in
-// counts — a typed note may contain its own blank lines. note is null when the
-// whole body is the rating line; ratingLine is null when there's nothing to
-// split.
-//
-// Both lead-ins are recognised: "Gave it " (current) and "I gave it " (older
-// comments stored before the wording change) so already-posted rows still split.
-const RATING_LINE_PREFIXES = ['Gave it ', 'I gave it '];
-function ratingLinePrefixOf(line: string): string | null {
-    return RATING_LINE_PREFIXES.find((p) => line.startsWith(p)) ?? null;
-}
-function splitWatchedBody(body: string): {
-    note: string | null;
-    ratingLine: string | null;
-} {
-    const sep = body.lastIndexOf('\n\n');
-    if (sep !== -1) {
-        const tail = body.slice(sep + 2);
-        if (ratingLinePrefixOf(tail) !== null) {
-            const head = body.slice(0, sep);
-            return { note: head.length > 0 ? head : null, ratingLine: tail };
-        }
-    }
-    if (ratingLinePrefixOf(body) !== null) {
-        return { note: null, ratingLine: body };
-    }
-    return { note: body, ratingLine: null };
-}
-
-function relativeTimestamp(iso: string): string {
-    const date = new Date(iso);
-    const diffMs = Date.now() - date.getTime();
-    const diffMinutes = diffMs / (1000 * 60);
-    const diffHours = diffMinutes / 60;
-    const diffDays = diffHours / 24;
-    if (diffMinutes < 1) return 'just now';
-    if (diffMinutes < 60) return `${Math.floor(diffMinutes)}m`;
-    if (diffHours < 24) return `${Math.floor(diffHours)}h`;
-    if (diffDays < 7) return `${Math.floor(diffDays)}d`;
-    return date.toLocaleDateString();
 }
 
 export default function RecScreen() {
@@ -219,17 +146,9 @@ export default function RecScreen() {
         string | null
     >(null);
     // Long-press popover anchored at the touch point of the comment
-    // the user pressed. `anchorY` is from the long-press event's
-    // nativeEvent.pageY (screen Y); `isOwn` controls whether the
-    // actions menu appears below the emoji row.
-    const [commentMenuFor, setCommentMenuFor] = useState<{
-        commentId: string;
-        anchorY: number;
-        isOwn: boolean;
-        // Comment author's user id — used to stamp a report's reported_user_id
-        // for someone else's comment. null if the author was deleted.
-        authorId: string | null;
-    } | null>(null);
+    // the user pressed — see CommentMenuTarget in thread/shared.
+    const [commentMenuFor, setCommentMenuFor] =
+        useState<CommentMenuTarget | null>(null);
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
     const scrollRef = useRef<ScrollView | null>(null);
@@ -1121,6 +1040,23 @@ export default function RecScreen() {
         }
     }
 
+    // Composer focus fallback for the focus-without-keyboard-event case
+    // (e.g. a hardware keyboard, where no keyboardWillShow/DidShow fires):
+    // still pull the latest message above the input on focus.
+    function handleComposerFocus() {
+        scrollRef.current?.scrollToEnd({
+            animated: true,
+        });
+        // Correct the target after the keyboard/KAV resize settles (see the
+        // keyboard-show listener) — the immediate scroll lands on the
+        // pre-shrink end.
+        setTimeout(() => {
+            scrollRef.current?.scrollToEnd({
+                animated: true,
+            });
+        }, 300);
+    }
+
     function handleDeleteComment(commentId: string) {
         Alert.alert('Delete comment?', 'This cannot be undone.', [
             { text: 'Cancel', style: 'cancel' },
@@ -1514,126 +1450,18 @@ export default function RecScreen() {
                         doesn't see the picker (they still see the recipient's
                         reaction read-only below). */}
                     {isRecipient ? (
-                        <View style={styles.reactionRow}>
-                            {REACTION_EMOJIS.map((emoji) => {
-                                const isActive = myReaction === emoji;
-                                return (
-                                    <Pressable
-                                        key={emoji}
-                                        onPress={() => handleReactionTap(emoji)}
-                                        disabled={reactionBusy}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`React with ${emoji}`}
-                                        accessibilityState={{ selected: isActive }}
-                                        style={({ pressed }) => [
-                                            styles.reactionCell,
-                                            {
-                                                backgroundColor: isActive
-                                                    ? palette.accent
-                                                    : palette.surface,
-                                                opacity:
-                                                    pressed || reactionBusy
-                                                        ? 0.6
-                                                        : 1,
-                                            },
-                                        ]}
-                                    >
-                                        {/* Pop the emoji when it becomes the
-                                            selected reaction. Keyed on active
-                                            so selecting remounts it (springs
-                                            from 0.6 → 1); deselecting starts
-                                            at 1 (no pop). Optimistic state
-                                            makes this fire instantly on tap. */}
-                                        <MotiView
-                                            key={isActive ? `on-${emoji}` : `off-${emoji}`}
-                                            from={{ scale: isActive ? 0.6 : 1 }}
-                                            animate={{ scale: 1 }}
-                                            transition={{
-                                                type: 'spring',
-                                                damping: 9,
-                                                stiffness: 300,
-                                            }}
-                                        >
-                                            <Text style={styles.reactionEmoji}>
-                                                {emoji}
-                                            </Text>
-                                        </MotiView>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
+                        <ThreadReactionPicker
+                            selected={myReaction}
+                            busy={reactionBusy}
+                            onTap={handleReactionTap}
+                        />
                     ) : null}
                     {otherReaction ? (
-                        <MotiView
-                            // The row as a whole just FADES in (350ms, a beat
-                            // softer than the emoji lands). Only the emoji (the
-                            // payload) does the scale pop below — so the bloom is
-                            // centered on the glyph, not read as the whole
-                            // left-aligned row sliding in from one edge. Gated on
-                            // shouldAnimateReaction; static otherwise.
-                            from={
-                                shouldAnimateReaction
-                                    ? { opacity: 0 }
-                                    : { opacity: 1 }
-                            }
-                            animate={{ opacity: 1 }}
-                            transition={{ type: 'timing', duration: 350 }}
-                        >
-                        <UserLink
-                            userId={otherReaction.userId}
-                            hitSlop={8}
-                            accessibilityLabel="View profile"
-                            style={styles.otherReactionRow}
-                        >
-                            <Avatar
-                                avatarUrl={
-                                    otherReactionProfile?.avatarUrl ?? null
-                                }
-                                displayName={
-                                    otherReactionProfile?.displayName ??
-                                    'Former user'
-                                }
-                                seedId={
-                                    otherReactionProfile?.userId ??
-                                    otherReaction.userId
-                                }
-                                size={20}
-                            />
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {(
-                                    otherReactionProfile?.displayName ??
-                                    'Former user'
-                                ).split(/\s+/)[0]}{' '}
-                                reacted
-                            </Text>
-                            {/* Emoji pop — its own content-sized wrapper, so the
-                                transform box equals the glyph and the scale
-                                blooms from its centre. 0→1 with one visible
-                                overshoot (~1.15) that settles, no bounce cycles. */}
-                            <MotiView
-                                from={
-                                    shouldAnimateReaction
-                                        ? { scale: 0 }
-                                        : { scale: 1 }
-                                }
-                                animate={{ scale: 1 }}
-                                transition={{
-                                    type: 'spring',
-                                    damping: 18,
-                                    stiffness: 280,
-                                }}
-                            >
-                                <Text style={typography.caption}>
-                                    {otherReaction.emoji}
-                                </Text>
-                            </MotiView>
-                        </UserLink>
-                        </MotiView>
+                        <ThreadIncomingReaction
+                            reaction={otherReaction}
+                            profile={otherReactionProfile}
+                            animate={shouldAnimateReaction}
+                        />
                     ) : null}
 
                     {/* Action area — RECIPIENT ONLY (Save / decline are
@@ -1751,530 +1579,60 @@ export default function RecScreen() {
                     {/* Comments — no label; the composer placeholder
                         carries the empty state. An empty list renders
                         nothing. */}
-                    <View style={styles.commentsList}>
-                            {comments.map((c) => {
-                                const isMine = c.userId === myUserId;
-                                const authorName =
-                                    c.author?.displayName ?? 'Deleted user';
-                                // Full reaction list for this comment —
-                                // rendered as a persistent badge under the
-                                // body, one chip per (user, emoji). Tap
-                                // semantics live in the long-press popover;
-                                // the badge is display-only.
-                                const cReactionList =
-                                    commentReactions.get(c.id) ?? [];
-                                // Watched-sheet comments carry the rating as a
-                                // trailing "Gave it ★★★★" line — split it out
-                                // so it renders as its own accent line (tight
-                                // gap) rather than a \n\n blank line in the body.
-                                const watchedParts = c.fromWatched
-                                    ? splitWatchedBody(c.body)
-                                    : null;
-                                // Rating-only watched comment (no note) → the
-                                // "watched" caption and the rating line would be
-                                // two near-identical accent lines, so collapse
-                                // to a single "watched · ★★★★" (glyphs only,
-                                // dropping the rating lead-in).
-                                const collapsedWatchedStars =
-                                    watchedParts &&
-                                    watchedParts.note === null &&
-                                    watchedParts.ratingLine !== null
-                                        ? watchedParts.ratingLine.slice(
-                                              (
-                                                  ratingLinePrefixOf(
-                                                      watchedParts.ratingLine,
-                                                  ) ?? ''
-                                              ).length,
-                                          )
-                                        : null;
-                                return (
-                                    <Pressable
-                                        key={c.id}
-                                        onLongPress={(e) =>
-                                            setCommentMenuFor({
-                                                commentId: c.id,
-                                                anchorY:
-                                                    e.nativeEvent.pageY,
-                                                isOwn: isMine,
-                                                authorId: c.userId,
-                                            })
-                                        }
-                                        style={styles.commentRow}
-                                    >
-                                        <UserLink
-                                            userId={c.userId}
-                                            disabled={isMine || !c.userId}
-                                            hitSlop={8}
-                                            accessibilityLabel={`View ${authorName}'s profile`}
-                                        >
-                                            <Avatar
-                                                avatarUrl={
-                                                    c.author?.avatarUrl ?? null
-                                                }
-                                                displayName={authorName}
-                                                seedId={
-                                                    c.userId ?? `deleted:${c.id}`
-                                                }
-                                                size={28}
-                                            />
-                                        </UserLink>
-                                        <View style={styles.commentText}>
-                                            <View style={styles.commentMeta}>
-                                                <Text
-                                                    style={[
-                                                        typography.caption,
-                                                        {
-                                                            color: palette.text,
-                                                            fontWeight: '600',
-                                                        },
-                                                    ]}
-                                                    onPress={
-                                                        isMine || !c.userId
-                                                            ? undefined
-                                                            : () =>
-                                                                  goToProfile({
-                                                                      userId: c.userId,
-                                                                  })
-                                                    }
-                                                >
-                                                    {isMine
-                                                        ? 'You'
-                                                        : authorName}
-                                                </Text>
-                                                <Text
-                                                    style={[
-                                                        typography.caption,
-                                                        {
-                                                            color: palette.textMuted,
-                                                        },
-                                                    ]}
-                                                >
-                                                    {relativeTimestamp(
-                                                        c.createdAt,
-                                                    )}
-                                                </Text>
-                                            </View>
-                                            {/* Quiet "watched" status for
-                                                post-watched-sheet comments — a
-                                                plum accent line under the name,
-                                                not a badge. Hidden in the no-note
-                                                case, where it merges into the
-                                                single collapsed line below. */}
-                                            {c.fromWatched &&
-                                            !collapsedWatchedStars ? (
-                                                <Text
-                                                    style={[
-                                                        typography.caption,
-                                                        { color: palette.accent },
-                                                    ]}
-                                                >
-                                                    watched
-                                                </Text>
-                                            ) : null}
-                                            {collapsedWatchedStars ? (
-                                                <Text
-                                                    style={[
-                                                        typography.caption,
-                                                        { color: palette.accent },
-                                                    ]}
-                                                >
-                                                    watched ·{' '}
-                                                    {collapsedWatchedStars}
-                                                </Text>
-                                            ) : watchedParts ? (
-                                                <>
-                                                    {watchedParts.note !==
-                                                    null ? (
-                                                        <Text
-                                                            style={[
-                                                                typography.body,
-                                                                {
-                                                                    color: palette.text,
-                                                                    // Container
-                                                                    // gap is xs;
-                                                                    // +xs = sm
-                                                                    // between the
-                                                                    // "watched"
-                                                                    // caption and
-                                                                    // the note.
-                                                                    marginTop:
-                                                                        spacing.xs,
-                                                                },
-                                                            ]}
-                                                        >
-                                                            {watchedParts.note}
-                                                        </Text>
-                                                    ) : null}
-                                                    {watchedParts.ratingLine !==
-                                                    null ? (
-                                                        <Text
-                                                            style={[
-                                                                typography.body,
-                                                                {
-                                                                    color: palette.accent,
-                                                                    // Container
-                                                                    // gap is xs;
-                                                                    // +xs = sm
-                                                                    // between note
-                                                                    // and rating.
-                                                                    marginTop:
-                                                                        spacing.xs,
-                                                                },
-                                                            ]}
-                                                        >
-                                                            {
-                                                                watchedParts.ratingLine
-                                                            }
-                                                        </Text>
-                                                    ) : null}
-                                                </>
-                                            ) : (
-                                                <Text
-                                                    style={[
-                                                        typography.body,
-                                                        { color: palette.text },
-                                                    ]}
-                                                >
-                                                    {c.body}
-                                                </Text>
-                                            )}
-                                            {cReactionList.length > 0 ? (
-                                                <View
-                                                    style={
-                                                        styles.commentReactionsBadge
-                                                    }
-                                                >
-                                                    {cReactionList.map((r) => {
-                                                        const mine =
-                                                            r.userId ===
-                                                            myUserId;
-                                                        return (
-                                                            <MotiView
-                                                                key={r.userId}
-                                                                // Spring pop as
-                                                                // a reaction
-                                                                // lands (yours
-                                                                // on tap, or a
-                                                                // new one via
-                                                                // realtime —
-                                                                // stable key so
-                                                                // only new
-                                                                // chips pop).
-                                                                from={{
-                                                                    scale: 0,
-                                                                }}
-                                                                animate={{
-                                                                    scale: 1,
-                                                                }}
-                                                                transition={{
-                                                                    type: 'spring',
-                                                                    damping: 11,
-                                                                    stiffness: 260,
-                                                                }}
-                                                                style={[
-                                                                    styles.commentReactionChip,
-                                                                    {
-                                                                        backgroundColor:
-                                                                            mine
-                                                                                ? palette.accent
-                                                                                : palette.surfaceAlt,
-                                                                    },
-                                                                ]}
-                                                            >
-                                                                <Text
-                                                                    style={
-                                                                        styles.commentReactionChipEmoji
-                                                                    }
-                                                                >
-                                                                    {r.emoji}
-                                                                </Text>
-                                                            </MotiView>
-                                                        );
-                                                    })}
-                                                </View>
-                                            ) : null}
-                                        </View>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
+                    <ThreadCommentList
+                        comments={comments}
+                        myUserId={myUserId}
+                        commentReactions={commentReactions}
+                        onLongPressComment={setCommentMenuFor}
+                    />
                     </View>
                 </ScrollView>
 
                 {/* Composer pinned to the bottom of the keyboard
-                    avoidance container. Reads as its own zone via the
-                    palette.surface fill alone (no top border/shadow — those
-                    read as a hard stroke against the plum page). Bottom
-                    padding is keyboard-aware (see inline): snug to the
-                    safe-area edge when closed, flush above the keyboard when
-                    open. Disabled state mirrors the button's enable rule so
-                    the affordance stays obvious. */}
-                <View
-                    style={[
-                        styles.composer,
-                        {
-                            backgroundColor: palette.surface,
-                            // Keyboard up → the home-indicator inset is
-                            // covered by the keyboard, so drop it to a small
-                            // gap. spacing.md (not spacing.sm) gives a little
-                            // breathing room above the keyboard's top edge so
-                            // the input doesn't sit flush against it — minimal
-                            // bump, NOT keyboardVerticalOffset (a non-zero
-                            // offset previously over-padded; see the KAV note).
-                            // Keyboard down → just the safe-area inset, so
-                            // the bar sits snug at the very bottom (no extra
-                            // gap above the home indicator).
-                            paddingBottom: keyboardOpen
-                                ? spacing.md
-                                : insets.bottom,
-                        },
-                    ]}
-                >
-                    {/* Current user's own avatar, left of the input —
-                        larger now, roughly the height of the pill field. */}
-                    <Avatar
-                        avatarUrl={
-                            (isMeSender ? sender : recipient)?.avatarUrl ?? null
-                        }
-                        displayName={
-                            (isMeSender ? sender : recipient)?.displayName ?? '?'
-                        }
-                        seedId={myUserId ?? rec.id}
-                        size={COMPOSER_AVATAR_SIZE}
-                    />
-                    {/* Soft pill field with the send arrow inside it at
-                        the right edge. */}
-                    <View
-                        style={[
-                            styles.composerFieldWrap,
-                            { backgroundColor: palette.bg },
-                        ]}
-                    >
-                        <TextInput
-                            value={composer}
-                            onChangeText={setComposer}
-                            // Fallback for the focus-without-keyboard-event
-                            // case (e.g. a hardware keyboard, where no
-                            // keyboardWillShow/DidShow fires): still pull the
-                            // latest message above the input on focus.
-                            onFocus={() => {
-                                scrollRef.current?.scrollToEnd({
-                                    animated: true,
-                                });
-                                // Correct the target after the keyboard/KAV
-                                // resize settles (see the keyboard-show
-                                // listener) — the immediate scroll lands on the
-                                // pre-shrink end.
-                                setTimeout(() => {
-                                    scrollRef.current?.scrollToEnd({
-                                        animated: true,
-                                    });
-                                }, 300);
-                            }}
-                            placeholder={
-                                comments.length === 0
-                                    ? 'Start a conversation'
-                                    : 'Add to the conversation…'
-                            }
-                            placeholderTextColor={palette.textMuted}
-                            editable={!composerBusy}
-                            multiline
-                            maxLength={COMMENT_MAX_CHARS}
-                            style={[
-                                styles.composerInput,
-                                typography.body,
-                                { color: palette.text },
-                            ]}
-                        />
-                        <Pressable
-                            onPress={handlePostComment}
-                            disabled={
-                                composerBusy ||
-                                composer.trim().length === 0 ||
-                                composer.length > COMMENT_MAX_CHARS
-                            }
-                            accessibilityRole="button"
-                            accessibilityLabel="Post comment"
-                            style={({ pressed }) => [
-                                styles.composerSendInline,
-                                {
-                                    // Solid accent circle with a white
-                                    // up-arrow; dims when there's nothing
-                                    // to send.
-                                    backgroundColor: palette.accent,
-                                    opacity:
-                                        composerBusy ||
-                                        composer.trim().length === 0
-                                            ? 0.4
-                                            : pressed
-                                                ? 0.8
-                                                : 1,
-                                },
-                            ]}
-                        >
-                            <ArrowUp
-                                color={palette.textInverse}
-                                size={20}
-                                strokeWidth={2.5}
-                            />
-                        </Pressable>
-                    </View>
-                </View>
+                    avoidance container. The screen owns the keyboard
+                    listeners (they also drive the thread scroll) and passes
+                    keyboardOpen down for the bar's bottom padding. */}
+                <ThreadComposer
+                    value={composer}
+                    onChangeText={setComposer}
+                    onSend={handlePostComment}
+                    busy={composerBusy}
+                    placeholder={
+                        comments.length === 0
+                            ? 'Start a conversation'
+                            : 'Add to the conversation…'
+                    }
+                    keyboardOpen={keyboardOpen}
+                    onFocus={handleComposerFocus}
+                    avatarUrl={
+                        (isMeSender ? sender : recipient)?.avatarUrl ?? null
+                    }
+                    avatarDisplayName={
+                        (isMeSender ? sender : recipient)?.displayName ?? '?'
+                    }
+                    avatarSeedId={myUserId ?? rec.id}
+                />
             </KeyboardAvoidingView>
             {/* Long-press popover for comment reactions + per-comment
-                actions. Lean version: no full-screen dim, no spring
-                animation, no haptics. The backdrop Pressable is a
-                sibling of the popover (NOT a parent) so taps on the
-                popover's emoji / action Pressables capture first; taps
-                outside the popover land on the backdrop and dismiss. */}
-            <Modal
-                transparent
-                visible={!!commentMenuFor}
-                animationType="none"
-                onRequestClose={() => setCommentMenuFor(null)}
-            >
-                <Pressable
-                    style={StyleSheet.absoluteFillObject}
-                    onPress={() => setCommentMenuFor(null)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close menu"
-                />
-                {commentMenuFor ? (
-                    <View
-                        pointerEvents="box-none"
-                        style={[
-                            styles.commentMenuContainer,
-                            { top: commentMenuFor.anchorY },
-                        ]}
-                    >
-                        <View
-                            style={[
-                                styles.commentMenu,
-                                {
-                                    backgroundColor: palette.surface,
-                                    borderColor: palette.border,
-                                },
-                            ]}
-                        >
-                            <View style={styles.commentMenuEmojiRow}>
-                                {REACTION_EMOJIS.map((emoji) => (
-                                    <Pressable
-                                        key={emoji}
-                                        onPress={() => {
-                                            const cid =
-                                                commentMenuFor.commentId;
-                                            setCommentMenuFor(null);
-                                            void handleCommentReactionTap(
-                                                cid,
-                                                emoji,
-                                            );
-                                        }}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`React with ${emoji}`}
-                                        style={({ pressed }) => [
-                                            styles.commentMenuEmojiCell,
-                                            {
-                                                backgroundColor:
-                                                    palette.surfaceAlt,
-                                                opacity: pressed ? 0.6 : 1,
-                                            },
-                                        ]}
-                                    >
-                                        <Text style={styles.reactionEmoji}>
-                                            {emoji}
-                                        </Text>
-                                    </Pressable>
-                                ))}
-                            </View>
-                            {/* Actions menu — only for own comments. Built
-                                as a mapped array so adding Edit (or any
-                                future item) is one line, not a refactor.
-                                Each item dismisses the popover before
-                                calling its handler so any follow-up
-                                dialog (Alert) lands on a clean screen. */}
-                            {(() => {
-                                // Own comment → Delete; someone else's →
-                                // Report (App Store 1.2). Never both — you
-                                // can't report your own comment. authorId
-                                // guards a deleted author (nothing to
-                                // attribute a report to). One shared map.
-                                const menuActions: Array<{
-                                    label: string;
-                                    destructive?: boolean;
-                                    onPress: () => void;
-                                }> = commentMenuFor.isOwn
-                                    ? [
-                                          {
-                                              label: 'Delete',
-                                              destructive: true,
-                                              onPress: () => {
-                                                  const cid =
-                                                      commentMenuFor.commentId;
-                                                  setCommentMenuFor(null);
-                                                  handleDeleteComment(cid);
-                                              },
-                                          },
-                                      ]
-                                    : commentMenuFor.authorId
-                                      ? [
-                                            {
-                                                label: 'Report',
-                                                destructive: true,
-                                                onPress: () => {
-                                                    const cid =
-                                                        commentMenuFor.commentId;
-                                                    const aid =
-                                                        commentMenuFor.authorId;
-                                                    setCommentMenuFor(null);
-                                                    promptReport({
-                                                        type: 'comment',
-                                                        id: cid,
-                                                        reportedUserId: aid,
-                                                        title: 'Report comment',
-                                                    });
-                                                },
-                                            },
-                                        ]
-                                      : [];
-                                return menuActions.length > 0 ? (
-                                    <View
-                                        style={[
-                                            styles.commentMenuActions,
-                                            { borderTopColor: palette.border },
-                                        ]}
-                                    >
-                                        {menuActions.map((action) => (
-                                            <Pressable
-                                                key={action.label}
-                                                onPress={action.onPress}
-                                                accessibilityRole="button"
-                                                accessibilityLabel={action.label}
-                                                style={({ pressed }) => [
-                                                    styles.commentMenuActionItem,
-                                                    { opacity: pressed ? 0.6 : 1 },
-                                                ]}
-                                            >
-                                                <Text
-                                                    style={[
-                                                        typography.body,
-                                                        {
-                                                            color: action.destructive
-                                                                ? palette.error
-                                                                : palette.text,
-                                                        },
-                                                    ]}
-                                                >
-                                                    {action.label}
-                                                </Text>
-                                            </Pressable>
-                                        ))}
-                                    </View>
-                                ) : null;
-                            })()}
-                        </View>
-                    </View>
-                ) : null}
-            </Modal>
+                actions — see ThreadCommentMenu. The menu dismisses itself
+                before invoking each handler; delete / report flows stay
+                here on the screen. */}
+            <ThreadCommentMenu
+                menu={commentMenuFor}
+                onClose={() => setCommentMenuFor(null)}
+                onReact={(commentId, emoji) => {
+                    void handleCommentReactionTap(commentId, emoji);
+                }}
+                onDelete={handleDeleteComment}
+                onReport={(commentId, authorId) =>
+                    promptReport({
+                        type: 'comment',
+                        id: commentId,
+                        reportedUserId: authorId,
+                        title: 'Report comment',
+                    })
+                }
+            />
 
             {/* Save sheet — Watchlist / Watching / Watched (status only;
                 "Not for me" is its own button). */}
@@ -2462,163 +1820,5 @@ const styles = StyleSheet.create({
         lineHeight: 34,
         fontStyle: 'italic',
         marginTop: spacing.sm,
-    },
-    reactionRow: {
-        flexDirection: 'row',
-        // Spread the white reaction buttons evenly across the full row
-        // width (space-between) instead of clustering them at the left.
-        justifyContent: 'space-between',
-        // Replaces the spacing the removed "Reactions" label used to give.
-        marginTop: spacing.xl,
-    },
-    reactionCell: {
-        width: REACTION_CELL_SIZE,
-        height: REACTION_CELL_SIZE,
-        borderRadius: radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    reactionEmoji: {
-        fontSize: 22,
-        lineHeight: 24,
-    },
-    otherReactionRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-        marginTop: spacing.md,
-    },
-    commentsList: {
-        gap: spacing.md,
-        // Replaces the spacing the removed "Comments" label used to give.
-        marginTop: spacing.xl,
-    },
-    commentRow: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        alignItems: 'flex-start',
-    },
-    commentText: {
-        flex: 1,
-        gap: spacing.xs,
-    },
-    commentMeta: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-    },
-    composer: {
-        flexDirection: 'row',
-        // Avatar vertically centered against the taller pill field.
-        alignItems: 'center',
-        gap: spacing.sm,
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.sm,
-        // paddingBottom is set inline (safe-area inset, keyboard-aware).
-        // No top border or shadow — the surface fill alone separates the
-        // bar from the plum page; a stroke/shadow read as a hard line.
-    },
-    composerFieldWrap: {
-        // Rounded-rectangle field holding the input + the inline filled
-        // send circle. radius.lg (not radius.full): at single-line height
-        // it clamps to ~half-height so it still reads as a rounded pill,
-        // but as the field grows to multiple lines it holds a constant
-        // gentle corner instead of an oversized half-height pill curve.
-        // The surface fill lives here (the TextInput inside is
-        // transparent).
-        flex: 1,
-        flexDirection: 'row',
-        // Center the send circle (and single-line text) vertically in the
-        // field so the arrow reads centered.
-        alignItems: 'center',
-        borderRadius: radius.lg,
-        // No border/outline — just the filled pill.
-        paddingLeft: spacing.md,
-        // Roomier right padding so the send circle sits comfortably off
-        // the field's right edge (moves the whole circle in, not the
-        // arrow within it).
-        paddingRight: spacing.sm,
-        paddingVertical: spacing.xs,
-    },
-    composerInput: {
-        flex: 1,
-        maxHeight: 120,
-        // Transparent text area inside the pill; the pill chrome lives on
-        // composerFieldWrap.
-        paddingVertical: spacing.sm,
-        // Right inset on the input itself (not a wrap gap) so long text stays
-        // inset from its own edge while typing — mirrors the wrap's
-        // paddingLeft: spacing.md on the left.
-        paddingRight: spacing.md,
-    },
-    composerSendInline: {
-        // Solid filled circle (accent set inline) with a white up-arrow,
-        // sitting at the field's right edge.
-        width: 32,
-        height: 32,
-        borderRadius: radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    // Container spans the full width at the anchored Y so its child
-    // popover can self-center horizontally. pointerEvents='box-none' on
-    // the container lets backdrop taps fall through any empty space
-    // around the popover sheet itself.
-    commentMenuContainer: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        alignItems: 'center',
-        paddingHorizontal: spacing.base,
-    },
-    commentMenu: {
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: radius.md,
-        paddingVertical: spacing.sm,
-        minWidth: 240,
-        maxWidth: 320,
-    },
-    commentMenuEmojiRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        paddingHorizontal: spacing.sm,
-    },
-    commentMenuEmojiCell: {
-        width: REACTION_PICKER_SIZE,
-        height: REACTION_PICKER_SIZE,
-        borderRadius: radius.full,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    commentMenuActions: {
-        marginTop: spacing.sm,
-        paddingTop: spacing.sm,
-        borderTopWidth: StyleSheet.hairlineWidth,
-    },
-    commentMenuActionItem: {
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-    },
-    // Resting-state badge under each comment body. `commentText` has
-    // gap: spacing.xs between siblings, so no marginTop here. flexWrap
-    // so a future widening of the emoji set or multi-party threads
-    // can grow vertically without overflowing the row.
-    commentReactionsBadge: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: spacing.xs,
-    },
-    commentReactionChip: {
-        paddingHorizontal: spacing.xs,
-        paddingVertical: 2,
-        borderRadius: radius.full,
-        minHeight: 22,
-        minWidth: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    commentReactionChipEmoji: {
-        fontSize: 14,
-        lineHeight: 16,
     },
 });
