@@ -65,6 +65,14 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 - **versionCode 5 / iOS build 22 session — growing urgent:** iOS testers are on 1.0.4 with none of this week's work; Android FCM unlocks push for Android testers.
 - Reply to Bobby: the triangulation idea is built-adjacent now — chat-about-it shipped, overlap prompt next.
 
+### 2026-07-10 (later) — overlap prompt shipped (3b)
+
+- **Overlap prompt shipped — the last piece of the chat design.** Hybrid detection: client-side banner at add-to-watchlist (extracted friend-activity lib), DB triggers both directions for the persistent rows (`watchlist_overlap` kind, 14th).
+- **Direction-dependent read-state rule:** forward rows (I added — I saw the banner) insert pre-read, never dot; reverse rows (a friend watched something on my list — no live signal existed) insert/update unread and dot; the kind is excluded from `unread_count` entirely — **dot-without-count works because the bell number (RPC) and the row dot (read_at snapshot) are separate mechanisms.**
+- Refinements from device: the rec screen's banner excludes the rec's sender (redundant on their own rec; picker keeps the full set); names-while-they-fit wording (two watchers = both names — grammar self-solving); placeholder-per-door ("Worth watching?" via overlap, "Have you seen this?" via the title page); glyph stars unified in WatchersSheet (glyphs = presentation register, compact numeric = badge register).
+- The banner is an in-screen View, not a presentation — the fullScreenModal topology trap doesn't apply, but root-mounting WOULD have (invisible under natively-presented screens); per-screen mounts.
+- **Lesson (H4 reprise):** a prior report claimed the placeholder variant was built; the trace showed it never existed. Honest traces beat quiet patches.
+
 ---
 
 ## 2026-07-09 — Post-watched sheet, push diagnosis, rec_watched trigger fix
