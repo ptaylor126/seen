@@ -56,6 +56,11 @@ function resolveNavigation(
             // No rec thread exists for a request — the inbox is the least
             // surprising landing (not the recommend composer).
             return () => router.push('/inbox');
+        case 'watchlist_overlap':
+            // Never pushes (informational kind, no buildMessage case) —
+            // mapped for completeness like chat_comment_reacted; the inbox
+            // row is the real surface.
+            return () => router.push('/inbox');
         case 'report_filed':
             return null;
         default:

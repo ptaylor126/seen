@@ -45,8 +45,15 @@ import {
     type ReactionRow,
     relativeTimestamp,
 } from '@/components/thread/shared';
+import { OverlapBanner } from '@/components/overlap-banner';
 import { UserLink } from '@/components/user-link';
+import {
+    WatchersSheet,
+    type WatcherSheetItem,
+} from '@/components/watchers-sheet';
 import { useThreadRealtime } from '@/hooks/use-thread-realtime';
+import { goToChatAboutTitle } from '@/lib/chat-nav';
+import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import {
     formatLibraryBadge,
     type ItemStatus,
@@ -224,6 +231,14 @@ export default function RecScreen() {
     // undo bar / auto-return.
     const [showDeclineSheet, setShowDeclineSheet] = useState(false);
     const [declineBusy, setDeclineBusy] = useState(false);
+    // Overlap whisper (chat-about-it 3b) after Save → Watchlist — same
+    // shape as the title page's mount (data + banner visibility separate,
+    // picker sheet consumes the same list).
+    const [overlapWatchers, setOverlapWatchers] = useState<
+        WatcherSheetItem[] | null
+    >(null);
+    const [overlapBannerVisible, setOverlapBannerVisible] = useState(false);
+    const [showOverlapPicker, setShowOverlapPicker] = useState(false);
 
     // Single loader for the whole screen — splits into three queries
     // after the rec lookup so the dependent fetches (profiles by id,
@@ -988,6 +1003,45 @@ export default function RecScreen() {
             if (isWatched) {
                 pendingRatingRef.current = true;
                 maybeOpenRatingSheet();
+            }
+
+            // Overlap whisper (chat-about-it 3b): Save → Watchlist with
+            // friends who've watched it. Fire-and-forget — the add is
+            // committed; failure or zero watchers = no banner. The banner is
+            // an in-screen View (not a presentation), so it can't fight the
+            // action sheet's dismissal; the fetch round-trip typically
+            // outlasts the ~180ms close anyway.
+            //
+            // REC-SCREEN NUANCE: the rec's SENDER is excluded from the
+            // banner decision and wording — this screen already says they
+            // recommended it, so "taylor has seen this" on taylor's own rec
+            // is redundant. Sender-only watcher set → no banner. The FULL
+            // set is still stored: the picker behind the banner (and the
+            // title page / notification rows) keeps everyone.
+            if (status === 'watchlist') {
+                void (async () => {
+                    try {
+                        const {
+                            data: { session },
+                        } = await supabase.auth.getSession();
+                        const uid = session?.user.id;
+                        if (!uid) return;
+                        const watchers = await getFriendsWhoWatched(
+                            uid,
+                            rec.tmdbId,
+                            rec.mediaType,
+                        );
+                        const nonSender = watchers.filter(
+                            (w) => w.userId !== rec.fromUserId,
+                        );
+                        if (nonSender.length > 0) {
+                            setOverlapWatchers(watchers);
+                            setOverlapBannerVisible(true);
+                        }
+                    } catch (err) {
+                        console.warn('overlap banner lookup failed:', err);
+                    }
+                })();
             }
         } catch (err) {
             // Upsert failed — abandon any pending rating open so a late
@@ -1782,6 +1836,26 @@ export default function RecScreen() {
                         </Text>
                     </Pressable>
                 ) : null}
+
+                {/* Overlap whisper after Save → Watchlist. Mounted on THIS
+                    screen (never root — presentation topology); sits at the
+                    thread area's bottom edge, above the composer. The
+                    banner's copy excludes the rec's sender (the screen
+                    already communicates their position); visibility is only
+                    ever set when the non-sender subset is non-empty, so the
+                    filter below can't render an empty banner. */}
+                {overlapBannerVisible && overlapWatchers ? (
+                    <OverlapBanner
+                        watchers={overlapWatchers.filter(
+                            (w) => w.userId !== rec.fromUserId,
+                        )}
+                        onPress={() => {
+                            setOverlapBannerVisible(false);
+                            setShowOverlapPicker(true);
+                        }}
+                        onDismiss={() => setOverlapBannerVisible(false)}
+                    />
+                ) : null}
                 </View>
 
                 {/* Composer pinned to the bottom of the keyboard
@@ -1864,6 +1938,24 @@ export default function RecScreen() {
                 busy={declineBusy}
                 onCancel={() => setShowDeclineSheet(false)}
                 onConfirm={handleConfirmDecline}
+            />
+
+            {/* Watcher-picker behind the overlap banner — selecting a friend
+                opens/starts the chat about this title. */}
+            <WatchersSheet
+                visible={showOverlapPicker}
+                watchers={overlapWatchers ?? []}
+                onClose={() => setShowOverlapPicker(false)}
+                onSelectWatcher={(w) => {
+                    setShowOverlapPicker(false);
+                    if (rec) {
+                        void goToChatAboutTitle({
+                            otherUserId: w.userId,
+                            tmdbId: rec.tmdbId,
+                            mediaType: rec.mediaType,
+                        });
+                    }
+                }}
             />
         </View>
     );

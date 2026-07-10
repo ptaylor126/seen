@@ -49,6 +49,31 @@ export async function getTitleChat(
     };
 }
 
+// The existing chat between these two users about this title, if any —
+// EITHER direction (the pair-unique is direction-agnostic). RLS scopes the
+// lookup to chats the caller is party to, so matching on the other party +
+// title is enough; both directions are filtered explicitly for clarity.
+// null = no chat yet (or not visible — indistinguishable by design).
+export async function findTitleChat(
+    userId: string,
+    otherUserId: string,
+    tmdbId: number,
+    mediaType: 'movie' | 'tv',
+): Promise<string | null> {
+    const { data, error } = await db
+        .from('title_chats')
+        .select('id')
+        .eq('tmdb_id', tmdbId)
+        .eq('media_type', mediaType)
+        .or(
+            `and(from_user_id.eq.${userId},to_user_id.eq.${otherUserId}),` +
+                `and(from_user_id.eq.${otherUserId},to_user_id.eq.${userId})`,
+        )
+        .maybeSingle();
+    if (error) throw error;
+    return data?.id ?? null;
+}
+
 // Insert a comment on a chat and return the DB-assigned id + created_at (so
 // callers can optimistically append without a refetch). Clone of
 // postRecComment minus fromWatched — chats have no watched-sheet semantics.
@@ -101,22 +126,15 @@ export async function createTitleChat(args: {
         if ((insertError as { code?: string }).code !== '23505') {
             throw insertError;
         }
-        // Chat already exists (either direction). RLS scopes the lookup to
-        // chats we're party to, so matching on the other party + title is
-        // enough — but filter both directions explicitly for clarity.
-        const { data: existing, error: lookupError } = await db
-            .from('title_chats')
-            .select('id')
-            .eq('tmdb_id', tmdbId)
-            .eq('media_type', mediaType)
-            .or(
-                `and(from_user_id.eq.${userId},to_user_id.eq.${otherUserId}),` +
-                    `and(from_user_id.eq.${otherUserId},to_user_id.eq.${userId})`,
-            )
-            .maybeSingle();
-        if (lookupError) throw lookupError;
-        if (!existing) throw insertError; // conflict but not visible — bail
-        chatId = existing.id;
+        // Chat already exists (either direction) — open it instead.
+        const existingId = await findTitleChat(
+            userId,
+            otherUserId,
+            tmdbId,
+            mediaType,
+        );
+        if (!existingId) throw insertError; // conflict but not visible — bail
+        chatId = existingId;
     } else {
         chatId = inserted.id;
     }

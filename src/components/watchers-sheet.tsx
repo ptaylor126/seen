@@ -14,7 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
-import { formatRatingStars } from '@/lib/rating';
+import { ratingGlyphs } from '@/lib/rating';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 // One friend who watched the title. `rating` is the stored 1-10 value
@@ -36,9 +36,11 @@ interface WatchersSheetProps {
     visible: boolean;
     watchers: WatcherSheetItem[];
     onClose: () => void;
-    // Tapping a watcher row → open their profile. The screen owns the
-    // actual router.push (keeps routing out of this presentational sheet).
-    onSelectWatcher: (handle: string) => void;
+    // Tapping a watcher row — the screen owns what that means (keeps routing
+    // out of this presentational sheet). The title page's cards open the
+    // watcher's profile; the overlap flows open/start a chat with them.
+    // Receives the full item so either intent has what it needs.
+    onSelectWatcher: (watcher: WatcherSheetItem) => void;
     // Sheet heading. Defaults to the original "Watched by"; the title
     // screen's Friends-watching card reuses this same sheet with
     // "Watching" (its rows simply have no rating — `rating: null` rows
@@ -155,7 +157,7 @@ export function WatchersSheet({
                         {watchers.map((w) => (
                             <Pressable
                                 key={w.userId}
-                                onPress={() => onSelectWatcher(w.handle)}
+                                onPress={() => onSelectWatcher(w)}
                                 accessibilityRole="button"
                                 accessibilityLabel={`View ${w.displayName}'s profile`}
                                 style={({ pressed }) => [
@@ -187,7 +189,7 @@ export function WatchersSheet({
                                             { color: palette.accent },
                                         ]}
                                     >
-                                        {formatRatingStars(w.rating)}
+                                        {ratingGlyphs(w.rating)}
                                     </Text>
                                 ) : null}
                             </Pressable>

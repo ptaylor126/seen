@@ -18,7 +18,13 @@ import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
 import { UserLink } from '@/components/user-link';
+import {
+    WatchersSheet,
+    type WatcherSheetItem,
+} from '@/components/watchers-sheet';
+import { goToChatAboutTitle } from '@/lib/chat-nav';
 import { getSentChats } from '@/lib/chats';
+import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptPushAtHighIntent } from '@/lib/push';
@@ -230,6 +236,27 @@ interface ChatCommentReactedItem {
     titleName: string | null;
 }
 
+// "{name} has seen {title}" — the quiet overlap row (chat-about-it 3b).
+// Ambient/informational: forward rows arrive pre-read (the user saw the
+// banner); reverse rows arrive unread and dot via the normal snapshot, but
+// the kind is excluded from unread_count so it never inflates the bell.
+// Tap → the watcher-picker for the title.
+interface WatchlistOverlapItem {
+    kind: 'notification_watchlist_overlap';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    // First watcher in the payload set leads the copy; the second is named
+    // too when there are exactly two ("{name} and {name} have seen {title}").
+    // The picker fetches the fresh full list on tap.
+    leadWatcher: ProfileSummary;
+    secondWatcher: ProfileSummary | null;
+    watcherCount: number;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+}
+
 type InboxItem =
     | IncomingRecItem
     | FriendRequestItem
@@ -243,6 +270,7 @@ type InboxItem =
     | ChatCommentedItem
     | ChatReactedItem
     | ChatCommentReactedItem
+    | WatchlistOverlapItem
     | GenericActivityItem;
 
 // Sent recs are NOT unioned into InboxItem — different render path, no
@@ -315,6 +343,7 @@ const RENDER_KINDS = [
     'chat_commented',
     'chat_reacted',
     'chat_comment_reacted',
+    'watchlist_overlap',
 ] as const;
 
 function relativeTimestamp(iso: string): string {
@@ -352,6 +381,14 @@ function pickBoolean(payload: Record<string, unknown> | null, key: string): bool
     return payload?.[key] === true;
 }
 
+function pickStringArray(
+    payload: Record<string, unknown> | null,
+    key: string,
+): string[] {
+    const v = payload?.[key];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
 function pickMediaType(
     payload: Record<string, unknown> | null,
     key: string,
@@ -379,6 +416,12 @@ export default function InboxScreen() {
     // Drives the per-row unread dot for this viewing only (option C); the
     // sweep still clears read_at, so the next visit starts clean.
     const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
+    // Watcher-picker behind an overlap row tap — fetched fresh per tap.
+    const [overlapPicker, setOverlapPicker] = useState<{
+        tmdbId: number;
+        mediaType: MediaType;
+        watchers: WatcherSheetItem[];
+    } | null>(null);
 
     // Show the full loading state only on the FIRST load (mount/focus). Later
     // re-runs — navigation-focus refocus, and especially the AppState 'active'
@@ -555,6 +598,14 @@ export default function InboxScreen() {
                         ? pickString(payload, 'to_user_id')
                         : pickString(payload, 'from_user_id');
                 if (id) otherUserIds.add(id);
+                // watchlist_overlap has no single actor — its lead watcher
+                // fronts the row copy, and the second is named in the
+                // two-watcher wording, so resolve both.
+                if (n.kind === 'watchlist_overlap') {
+                    const ids = pickStringArray(payload, 'watcher_ids');
+                    if (ids[0]) otherUserIds.add(ids[0]);
+                    if (ids[1]) otherUserIds.add(ids[1]);
+                }
             }
 
             const profilesById = new Map<string, ProfileSummary>();
@@ -610,7 +661,8 @@ export default function InboxScreen() {
                     n.kind !== 'rec_declined' &&
                     n.kind !== 'chat_commented' &&
                     n.kind !== 'chat_reacted' &&
-                    n.kind !== 'chat_comment_reacted'
+                    n.kind !== 'chat_comment_reacted' &&
+                    n.kind !== 'watchlist_overlap'
                 ) {
                     continue;
                 }
@@ -1001,6 +1053,33 @@ export default function InboxScreen() {
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
+                    });
+                } else if (n.kind === 'watchlist_overlap') {
+                    const watcherIds = pickStringArray(payload, 'watcher_ids');
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (watcherIds.length === 0 || !mt || !tid) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
+                    const count = pickNumber(payload, 'watcher_count');
+                    inboxItems.push({
+                        kind: 'notification_watchlist_overlap',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        leadWatcher:
+                            profilesById.get(watcherIds[0]) ??
+                            placeholderProfile,
+                        secondWatcher: watcherIds[1]
+                            ? profilesById.get(watcherIds[1]) ??
+                              placeholderProfile
+                            : null,
+                        watcherCount: count ?? watcherIds.length,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            titleByKey.get(`${mt}:${tid}`)?.title ?? null,
                     });
                 } else {
                     // Unhandled kind — the query filters to RENDER_KINDS so
@@ -1927,6 +2006,8 @@ export default function InboxScreen() {
             case 'notification_chat_reacted':
             case 'notification_chat_comment_reacted':
                 return renderChatReacted(item);
+            case 'notification_watchlist_overlap':
+                return renderWatchlistOverlap(item);
             case 'notification_generic':
                 return renderGenericActivity(item);
         }
@@ -1974,6 +2055,102 @@ export default function InboxScreen() {
             );
         }
         return content;
+    }
+
+    // Quiet overlap row — ambient voice, no action framing. Tap fetches the
+    // fresh watcher list and opens the picker (the payload's set can be
+    // stale; the fetch re-applies the privacy contract at read time).
+    function renderWatchlistOverlap(item: WatchlistOverlapItem) {
+        const title = item.titleName ?? 'a title';
+        const name = item.leadWatcher.displayName;
+        // Names while they fit: one → "{name} has seen"; exactly two → both
+        // names; three+ → "{name} and N others". ("and 1 other" is broken
+        // grammar.)
+        const useTwoNames = item.watcherCount === 2 && item.secondWatcher;
+        return (
+            <Pressable
+                onPress={() => void handleOverlapTap(item)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <UserLink
+                    handle={item.leadWatcher.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${name}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.leadWatcher.avatarUrl}
+                        displayName={name}
+                        seedId={item.leadWatcher.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.leadWatcher.handle })
+                            }
+                        >
+                            {name}
+                        </Text>
+                        {useTwoNames && item.secondWatcher ? (
+                            <>
+                                {' and '}
+                                <Text
+                                    style={typography.bodyEmphasis}
+                                    onPress={() =>
+                                        goToProfile({
+                                            handle: item.secondWatcher!.handle,
+                                        })
+                                    }
+                                >
+                                    {item.secondWatcher.displayName}
+                                </Text>
+                                {' have seen '}
+                            </>
+                        ) : item.watcherCount >= 3 ? (
+                            ` and ${item.watcherCount - 1} others have seen `
+                        ) : (
+                            ' has seen '
+                        )}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
+    // Overlap row tap → fresh watcher fetch → picker sheet. Fetch-first so
+    // the sheet never opens empty-then-fills; failure = no sheet (the row
+    // stays tappable to retry).
+    async function handleOverlapTap(item: WatchlistOverlapItem) {
+        if (!item.tmdbId || !item.mediaType) return;
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const uid = session?.user.id;
+            if (!uid) return;
+            const watchers = await getFriendsWhoWatched(
+                uid,
+                item.tmdbId,
+                item.mediaType,
+            );
+            setOverlapPicker({
+                tmdbId: item.tmdbId,
+                mediaType: item.mediaType,
+                watchers,
+            });
+        } catch (err) {
+            console.warn('overlap picker fetch failed:', err);
+        }
     }
 
     // One renderer for both Sent kinds — identical row anatomy (poster,
@@ -2125,6 +2302,25 @@ export default function InboxScreen() {
                     )}
                 />
             )}
+
+            {/* Watcher-picker behind an overlap row — selecting a friend
+                opens/starts the chat about that title. */}
+            <WatchersSheet
+                visible={!!overlapPicker}
+                watchers={overlapPicker?.watchers ?? []}
+                onClose={() => setOverlapPicker(null)}
+                onSelectWatcher={(w) => {
+                    const target = overlapPicker;
+                    setOverlapPicker(null);
+                    if (target) {
+                        void goToChatAboutTitle({
+                            otherUserId: w.userId,
+                            tmdbId: target.tmdbId,
+                            mediaType: target.mediaType,
+                        });
+                    }
+                }}
+            />
         </View>
     );
 }

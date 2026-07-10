@@ -19,6 +19,14 @@ export function formatRatingStars(rating: number): string {
     return `${rating / 2}★`;
 }
 
+// The rating as star glyphs: '★' repeated floor(stars) times, plus '½' for a
+// half. rating is the 1-10 half-scale (2 = 1★, 9 = 4½★), so full = floor(r/2)
+// and a half when r is odd. e.g. 8 → "★★★★", 9 → "★★★★½", 1 → "½". The app's
+// glyph-star language — watched comments and the watcher-picker both use it.
+export function ratingGlyphs(rating: number): string {
+    return '★'.repeat(Math.floor(rating / 2)) + (rating % 2 === 1 ? '½' : '');
+}
+
 // Apply a 1-10 star rating (or skip with `null`) to a watched title.
 // Updates items.rating when a value was chosen, and transitions each matching
 // open recommendation (pending | accepted) into `watched` via the

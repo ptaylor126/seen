@@ -28,7 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { postRecComment } from '@/lib/comments';
 import { setItemVisibility } from '@/lib/item-status';
-import { applyWatchedRating, type MediaType } from '@/lib/rating';
+import { applyWatchedRating, ratingGlyphs, type MediaType } from '@/lib/rating';
 import { getReceivedRecsForTitle, type ReceivedRec } from '@/lib/recs';
 import supabase from '@/lib/supabase';
 import {
@@ -95,13 +95,6 @@ const CONFIRM_COLLAPSE_MS = 600;
 function formatStarsLabel(rating: number): string {
     const stars = rating / 2;
     return Number.isInteger(stars) ? String(stars) : stars.toFixed(1);
-}
-
-// The rating as star glyphs: '★' repeated floor(stars) times, plus '½' for a
-// half. rating is the 1-10 half-scale (2 = 1★, 9 = 4½★), so full = floor(r/2)
-// and a half when r is odd. e.g. 8 → "★★★★", 9 → "★★★★½", 1 → "½".
-function ratingGlyphs(rating: number): string {
-    return '★'.repeat(Math.floor(rating / 2)) + (rating % 2 === 1 ? '½' : '');
 }
 
 // Build the rec-comment body: note text, a blank line if both are present, then

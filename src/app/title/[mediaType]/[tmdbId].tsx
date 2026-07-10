@@ -42,6 +42,9 @@ import {
     type ItemStatus,
     type ItemVisibility,
 } from '@/lib/item-status';
+import { OverlapBanner } from '@/components/overlap-banner';
+import { goToChatAboutTitle } from '@/lib/chat-nav';
+import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
 import { getReceivedRecsForTitle } from '@/lib/recs';
@@ -258,6 +261,15 @@ export default function TitleDetailScreen() {
     );
     // Watchers bottom sheet (full list behind the friends-watched card).
     const [showWatchersSheet, setShowWatchersSheet] = useState(false);
+    // Overlap whisper (chat-about-it 3b): watchers fetched fire-and-forget
+    // after a successful add-to-watchlist. Data and banner visibility are
+    // separate so tapping the banner can hide it while the picker sheet
+    // keeps consuming the same list.
+    const [overlapWatchers, setOverlapWatchers] = useState<
+        WatcherSheetItem[] | null
+    >(null);
+    const [overlapBannerVisible, setOverlapBannerVisible] = useState(false);
+    const [showOverlapPicker, setShowOverlapPicker] = useState(false);
     // Friends currently WATCHING this title (status='watching',
     // visibility='friends', excludes me) — the parallel signal to
     // friendActivity's watched set. Same WatcherSheetItem shape; `rating`
@@ -408,89 +420,28 @@ export default function TitleDetailScreen() {
                     }
                 }
 
-                // Friends-watched: pull friends' WATCHED items for this
-                // title (status='watched'), excluding mine and anything
-                // private. RLS scopes to friends; the explicit
-                // visibility='friends' filter is defence-in-depth, so a
-                // privately-watched friend is excluded from both the
-                // avatars AND the average. Failure is silent — the card
-                // simply hides. `updated_at` desc → most-recent watcher
-                // leads the stack/caption.
+                // Friends-watched: extracted to getFriendsWhoWatched (the
+                // overlap banner + watcher-picker reuse it) — same privacy
+                // contract as before (status='watched', visibility='friends',
+                // RLS friend scope; privately-watched friends excluded from
+                // avatars AND average). Failure is silent — the card simply
+                // hides. Ratings average is computed here over the SAME
+                // returned set, exactly as the inline version did.
                 if (userId) {
-                    const { data: friendRows, error: friendErr } = await supabase
-                        .from('items')
-                        .select('user_id, rating, updated_at')
-                        .eq('tmdb_id', tmdbId)
-                        .eq('media_type', mediaType)
-                        .eq('status', 'watched')
-                        .eq('visibility', 'friends')
-                        .neq('user_id', userId)
-                        .order('updated_at', { ascending: false });
-                    if (friendErr) {
-                        console.warn('friend activity fetch failed:', friendErr);
-                    } else if (active && friendRows) {
-                        // Dedupe by user (one items row per user/title by
-                        // constraint, but guard anyway), preserving the
-                        // most-recent-first order. Keep each user's rating
-                        // (for the sheet rows) AND collect ratings over the
-                        // SAME watched set for the average.
-                        const watchedIds: string[] = [];
-                        const seen = new Set<string>();
-                        const ratingByUser = new Map<string, number | null>();
-                        const ratings: number[] = [];
-                        for (const row of friendRows) {
-                            if (!row.user_id || seen.has(row.user_id)) continue;
-                            seen.add(row.user_id);
-                            watchedIds.push(row.user_id);
-                            const rating =
-                                typeof row.rating === 'number'
-                                    ? row.rating
-                                    : null;
-                            ratingByUser.set(row.user_id, rating);
-                            if (rating !== null) ratings.push(rating);
-                        }
-
-                        // Resolve profiles in one trip; merge in each
-                        // user's rating to build the full watcher list.
-                        let watchedFriends: WatcherSheetItem[] = [];
-                        if (watchedIds.length > 0) {
-                            const { data: profileRows } = await supabase
-                                .from('profiles')
-                                .select('id, handle, display_name, avatar_url')
-                                .in('id', watchedIds);
-                            const byId = new Map(
-                                (profileRows ?? []).map((p) => [p.id, p]),
-                            );
-                            // Preserve watchedIds order — DB doesn't promise
-                            // an order on .in(), so explicit mapping keeps
-                            // the stack deterministic.
-                            watchedFriends = watchedIds
-                                .map((id) => byId.get(id))
-                                .filter(
-                                    (
-                                        p,
-                                    ): p is {
-                                        id: string;
-                                        handle: string;
-                                        display_name: string;
-                                        avatar_url: string | null;
-                                    } => !!p,
-                                )
-                                .map((p) => ({
-                                    userId: p.id,
-                                    handle: p.handle,
-                                    displayName: p.display_name,
-                                    avatarUrl: p.avatar_url,
-                                    rating: ratingByUser.get(p.id) ?? null,
-                                }));
-                        }
-
+                    try {
+                        const watchedFriends = await getFriendsWhoWatched(
+                            userId,
+                            tmdbId,
+                            mediaType,
+                        );
+                        const ratings = watchedFriends
+                            .map((w) => w.rating)
+                            .filter((r): r is number => r !== null);
                         const ratingsAverage =
                             ratings.length > 0
                                 ? ratings.reduce((a, b) => a + b, 0) /
                                   ratings.length
                                 : null;
-
                         if (active) {
                             setFriendActivity({
                                 watchedFriends,
@@ -498,6 +449,8 @@ export default function TitleDetailScreen() {
                                 ratingsCount: ratings.length,
                             });
                         }
+                    } catch (err) {
+                        console.warn('friend activity fetch failed:', err);
                     }
                 }
 
@@ -785,6 +738,29 @@ export default function TitleDetailScreen() {
                 // immediately instead of carrying the stale watched
                 // rating into the new status.
                 setCurrentRating(null);
+            }
+
+            // Overlap whisper (chat-about-it 3b): the add is already
+            // committed — fire-and-forget the friends-watched lookup; ≥1
+            // watcher → banner. Failure or zero watchers = no banner, never
+            // an error. The persistent watchlist_overlap row is the DB
+            // trigger's job, independent of this.
+            if (newStatus === 'watchlist') {
+                void (async () => {
+                    try {
+                        const watchers = await getFriendsWhoWatched(
+                            userId,
+                            tmdbId,
+                            mediaType,
+                        );
+                        if (watchers.length > 0) {
+                            setOverlapWatchers(watchers);
+                            setOverlapBannerVisible(true);
+                        }
+                    } catch (err) {
+                        console.warn('overlap banner lookup failed:', err);
+                    }
+                })();
             }
         } catch (err) {
             console.error('items upsert failed:', err);
@@ -1500,11 +1476,11 @@ export default function TitleDetailScreen() {
                 visible={showWatchersSheet}
                 watchers={friendActivity?.watchedFriends ?? []}
                 onClose={() => setShowWatchersSheet(false)}
-                onSelectWatcher={(handle) => {
+                onSelectWatcher={(w) => {
                     // Close the sheet first, then open the friend's profile
                     // (avoids pushing a route underneath the open modal).
                     setShowWatchersSheet(false);
-                    router.push(`/friends/${handle}`);
+                    router.push(`/friends/${w.handle}`);
                 }}
             />
 
@@ -1517,9 +1493,44 @@ export default function TitleDetailScreen() {
                 watchers={friendsWatching ?? []}
                 title="Watching"
                 onClose={() => setShowWatchingSheet(false)}
-                onSelectWatcher={(handle) => {
+                onSelectWatcher={(w) => {
                     setShowWatchingSheet(false);
-                    router.push(`/friends/${handle}`);
+                    router.push(`/friends/${w.handle}`);
+                }}
+            />
+
+            {/* Overlap whisper after add-to-watchlist. Mounted on THIS
+                screen (never root — this page is a presented
+                fullScreenModal; a root overlay would render beneath it). */}
+            {overlapBannerVisible && overlapWatchers ? (
+                <OverlapBanner
+                    watchers={overlapWatchers}
+                    style={{ bottom: insets.bottom + spacing.lg }}
+                    onPress={() => {
+                        setOverlapBannerVisible(false);
+                        setShowOverlapPicker(true);
+                    }}
+                    onDismiss={() => setOverlapBannerVisible(false)}
+                />
+            ) : null}
+
+            {/* Watcher-picker behind the banner (and, later, the inbox
+                overlap row): same WatchersSheet, but selecting a friend
+                opens/starts the chat about this title instead of their
+                profile. */}
+            <WatchersSheet
+                visible={showOverlapPicker}
+                watchers={overlapWatchers ?? []}
+                onClose={() => setShowOverlapPicker(false)}
+                onSelectWatcher={(w) => {
+                    setShowOverlapPicker(false);
+                    if (mediaType) {
+                        void goToChatAboutTitle({
+                            otherUserId: w.userId,
+                            tmdbId,
+                            mediaType,
+                        });
+                    }
                 }}
             />
         </View>

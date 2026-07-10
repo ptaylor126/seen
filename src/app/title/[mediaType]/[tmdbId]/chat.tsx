@@ -74,6 +74,15 @@ export default function TitleChatComposeScreen() {
     const params = useLocalSearchParams<{
         mediaType: string;
         tmdbId: string;
+        // Pre-selected friend id, forwarded by the overlap flows (banner /
+        // inbox row → watcher pick) when no chat exists yet — the user
+        // lands here with the friend checked and just writes the opener.
+        preselect?: string;
+        // 'overlap' when arriving via goToChatAboutTitle (the friend has
+        // SEEN the title) — flips the message placeholder to "Worth
+        // watching?". Absent on the title page's direct "Chat about it"
+        // door, which keeps the generic placeholder.
+        intent?: string;
     }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
@@ -112,8 +121,13 @@ export default function TitleChatComposeScreen() {
     const [friends, setFriends] = useState<FriendRow[]>([]);
     // SINGLE-select: a chat is two-party (schema-enforced), so picking a
     // friend replaces any prior pick; tapping the selected row deselects.
+    // Seeds from the preselect param (never re-applied after mount — once
+    // the user picks, they own the selection; mirrors the recommend picker).
     const [selectedFriendId, setSelectedFriendId] = useState<string | null>(
-        null,
+        () =>
+            typeof params.preselect === 'string' && params.preselect.length > 0
+                ? params.preselect
+                : null,
     );
     const [message, setMessage] = useState('');
     const [loading, setLoading] = useState(true);
@@ -670,7 +684,11 @@ export default function TitleChatComposeScreen() {
                                 onChangeText={(v) =>
                                     setMessage(v.slice(0, COMMENT_MAX_CHARS))
                                 }
-                                placeholder="Have you seen this?"
+                                placeholder={
+                                    params.intent === 'overlap'
+                                        ? 'Worth watching?'
+                                        : 'Have you seen this?'
+                                }
                                 placeholderTextColor={palette.textMuted}
                                 multiline
                                 maxLength={COMMENT_MAX_CHARS}
