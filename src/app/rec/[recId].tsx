@@ -169,6 +169,20 @@ export default function RecScreen() {
     const nearBottomRef = useRef(true); // accurate until measured: short content = bottom visible
     // Previous comment count — auto-scroll/pill fire only when it GROWS.
     const prevCommentCountRef = useRef(0);
+    // State-dependent opening: accepted/watched recs open at the NEWEST
+    // comment (the conversation is the live surface there); pending and
+    // dismissed always open at the rec — Save/Decline is the point of
+    // pending. Captured into a ref at load time (not read from rec state in
+    // the comments effect — arrival is a first-load decision, and the ref is
+    // immune to setState batching order).
+    const arrivalAtNewestRef = useRef(false);
+    // Arrival pin, same mechanics as the chat screen: while set, every
+    // content-size change re-snaps to the end (a one-shot timer raced the
+    // initial many-row layout there); a real drag or the settle timer
+    // releases it. The "thread taller than one viewport" condition is
+    // PHYSICAL, not checked: on content that fits the screen, scrollToEnd is
+    // a no-op, so the pin degrades to opening at the rec by itself.
+    const pinToBottomRef = useRef(false);
     // "New comment ↓" pill — shown when someone ELSE's comment lands while
     // the user is up at the rec/hero. Tap or reaching the bottom clears it.
     const [showNewMessagePill, setShowNewMessagePill] = useState(false);
@@ -277,6 +291,9 @@ export default function RecScreen() {
                 status: recRow.status,
             };
             setRec(summary);
+            // Load-time arrival decision (see arrivalAtNewestRef).
+            arrivalAtNewestRef.current =
+                summary.status === 'accepted' || summary.status === 'watched';
 
             // Fan out: profiles (sender + recipient), reactions,
             // comments + comment author profiles, TMDB title, and a
@@ -658,6 +675,11 @@ export default function RecScreen() {
     function handleContentSizeChange(_w: number, h: number) {
         contentHeightRef.current = h;
         updateNearBottom();
+        // Arrival pin: re-snap to the end on every content growth so the
+        // opening scroll holds through the layout settle (chat mechanics).
+        if (pinToBottomRef.current) {
+            scrollRef.current?.scrollToEnd({ animated: false });
+        }
     }
 
     function handleScrollLayout(e: LayoutChangeEvent) {
@@ -670,13 +692,26 @@ export default function RecScreen() {
     // scrollToEnd while at/near the bottom; up at the rec/hero, hold
     // position and show the "New comment ↓" pill — but only for the OTHER
     // party's comments (own appends, e.g. a decline note, manage their own
-    // UX). Deliberately NO arrival behavior: on first load (count 0 → N)
-    // only the counter is recorded — this screen opens on the rec itself.
+    // UX). Arrival (count 0 → N) is STATE-DEPENDENT: accepted/watched recs
+    // open at the newest comment via the arrival pin (unanimated, holds
+    // through settle, physical no-op when the thread fits on screen);
+    // pending/dismissed open at the rec, as before.
     useEffect(() => {
         const prev = prevCommentCountRef.current;
         prevCommentCountRef.current = comments.length;
         if (comments.length <= prev) return;
-        if (prev === 0) return;
+        if (prev === 0) {
+            if (arrivalAtNewestRef.current) {
+                pinToBottomRef.current = true;
+                scrollRef.current?.scrollToEnd({ animated: false });
+                // Release once the initial layout settles; a drag inside the
+                // window also releases (onScrollBeginDrag).
+                setTimeout(() => {
+                    pinToBottomRef.current = false;
+                }, 1000);
+            }
+            return;
+        }
         const newest = comments[comments.length - 1];
         const isOwn = !!myUserId && newest?.userId === myUserId;
         if (!nearBottomRef.current) {
@@ -1299,6 +1334,11 @@ export default function RecScreen() {
                     scrollEventThrottle={100}
                     onContentSizeChange={handleContentSizeChange}
                     onLayout={handleScrollLayout}
+                    // A real user drag always releases the arrival pin — they
+                    // own the scroll position from that moment.
+                    onScrollBeginDrag={() => {
+                        pinToBottomRef.current = false;
+                    }}
                     contentContainerStyle={[
                         styles.scrollContent,
                         { paddingBottom: insets.bottom + spacing.base },
