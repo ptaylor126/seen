@@ -608,14 +608,13 @@ export default function RecScreen() {
     );
 
     // Live thread while focused: any insert/update/delete on THIS rec's
-    // comments or reactions triggers a silent load() refetch (own writes
-    // included — the reconcile is a no-op visually). Unlike the chat screen,
-    // the reactions binding is live UI here — the rec keeps its reaction
-    // picker/incoming row. Comment-reactions are deliberately not subscribed
-    // (no recommendation_id column to filter on); their chips refresh via
-    // focus/foreground/any-other-event reloads. Same hook + mechanics as the
-    // chat screen (device-proven there); the publication already carries
-    // both tables (20260710120000).
+    // comments, reactions, or comment-reactions triggers a silent load()
+    // refetch (own writes included — the reconcile is a no-op visually).
+    // Each binding gets its own channel (see the lesson in
+    // use-thread-realtime). Unlike the chat screen, the reactions binding is
+    // live UI here — the rec keeps its reaction picker/incoming row.
+    // Comment-reactions filter on the denormalized recommendation_id
+    // (20260710150000).
     useThreadRealtime({
         topic: `rec:${recId}`,
         bindings: recId
@@ -626,6 +625,10 @@ export default function RecScreen() {
                   },
                   {
                       table: 'recommendation_reactions',
+                      filter: `recommendation_id=eq.${recId}`,
+                  },
+                  {
+                      table: 'recommendation_comment_reactions',
                       filter: `recommendation_id=eq.${recId}`,
                   },
               ]
@@ -1072,11 +1075,16 @@ export default function RecScreen() {
                 const { error: upsertErr } = await supabase
                     .from('recommendation_comment_reactions')
                     .upsert(
+                        // reason: recommendation_id (denormalized thread id
+                        // for the realtime filter, 20260710150000) isn't in
+                        // the generated types yet — cast the row, same
+                        // pattern as items.note.
                         {
                             comment_id: commentId,
                             user_id: myUserId,
                             emoji,
-                        },
+                            recommendation_id: rec.id,
+                        } as never,
                         { onConflict: 'comment_id,user_id' },
                     );
                 if (upsertErr) throw upsertErr;

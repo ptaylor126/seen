@@ -232,6 +232,7 @@ export async function getChatCommentReactions(
 }
 
 export async function setChatCommentReaction(
+    chatId: string,
     commentId: string,
     userId: string,
     emoji: string,
@@ -241,6 +242,9 @@ export async function setChatCommentReaction(
             comment_id: commentId,
             user_id: userId,
             emoji,
+            // Denormalized thread id (20260710150000) — gives the realtime
+            // subscription a filterable column.
+            chat_id: chatId,
         },
         { onConflict: 'comment_id,user_id' },
     );

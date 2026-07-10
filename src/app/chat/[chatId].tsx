@@ -344,15 +344,22 @@ export default function ChatScreen() {
     }, [comments]);
 
     // Live thread while focused: any insert/update/delete on THIS chat's
-    // comments triggers a silent load() refetch (own writes included — the
-    // reconcile is a no-op visually). No chat_reactions binding: nothing
-    // renders chat-level reactions anymore (message-level only). Comment-
-    // reactions are deliberately not subscribed (no chat_id column to filter
-    // on); their chips refresh via focus/foreground/any-other-event reloads.
+    // comments or comment-reactions triggers a silent load() refetch (own
+    // writes included — the reconcile is a no-op visually). Each binding
+    // gets its own channel (see the lesson in use-thread-realtime). Comment-
+    // reactions filter on the denormalized chat_id (20260710150000). No
+    // chat_reactions binding: nothing renders chat-level reactions
+    // (message-level only).
     useThreadRealtime({
         topic: `chat:${chatId}`,
         bindings: chatId
-            ? [{ table: 'chat_comments', filter: `chat_id=eq.${chatId}` }]
+            ? [
+                  { table: 'chat_comments', filter: `chat_id=eq.${chatId}` },
+                  {
+                      table: 'chat_comment_reactions',
+                      filter: `chat_id=eq.${chatId}`,
+                  },
+              ]
             : [],
         onEvent: load,
         enabled: !!chatId,
@@ -409,7 +416,12 @@ export default function ChatScreen() {
                     return next;
                 });
             } else {
-                await setChatCommentReaction(commentId, myUserId, emoji);
+                await setChatCommentReaction(
+                    chat.id,
+                    commentId,
+                    myUserId,
+                    emoji,
+                );
                 setCommentReactions((prev) => {
                     const next = new Map(prev);
                     const withoutMine = (next.get(commentId) ?? []).filter(
