@@ -93,6 +93,18 @@ _Continues the snapshot above; the sheet and its notification/routing work lande
 - Android FCM push registration + monochrome icon = versionCode 5; iOS build 22 unfreezes iOS OTAs (iOS users are behind on all the July 8–9 JS work).
 - Overlap-aware send + "already seen it" response (Bobby's triangulation idea) — designed, banked, needs a few days of watched-data first.
 
+### Chat about it — design + architecture decided
+
+**Feature shape (designed, agreed)**
+
+- "Chat about it": a lightweight conversation thread about a title between two friends, no recommendation implied. Reuses the rec-thread interaction model with quieter styling, less imagery.
+- Entry points: (1) "Chat about it" action on the title page, sibling to Recommend, anyone pickable; (2) the overlap prompt.
+- Overlap prompt: when adding a title to the watchlist that friends have watched, a gentle dismissible in-app banner — "Bobby and 2 others have seen this" — which also persists as a quiet informational (non-actionable, no push) row in the notification list. Tapping shows the watchers with their ratings; pick who to chat with. Reverse direction (a friend watches something already on your watchlist) gets the quiet row only, no banner. Only the watchlist-holder is ever notified — they choose whether to hear an opinion before watching.
+
+**Architecture decision: SEPARATE `title_chats` table, NOT a kind flag on recommendations.** Two killer reasons from the coupling investigation: (1) `recommendations_pair_unique` means a chat row would permanently block a real rec of that title between that pair; (2) `applyWatchedRating` sweeps all open recs by title — it would transition chat rows to watched, stamp `rating_thumb`, and mis-fire `rec_watched` pushes to chat partners. Plus a kind filter would need adding to 12 existing query sites and every future one, with silent user-visible failures when missed. Separate table = one mechanical migration cloning the proven rec-thread pattern; client work is identical under either approach.
+
+**Build order**: (1) extract thread UI from `rec/[recId].tsx` into shared components — pure refactor; (2) `title_chats` migration cluster (table, pair-unique, `is_party_to_chat`, `chat_comments`/`reactions`, notify triggers, new notification kinds); (3) `/chat/[chatId]` screen + "Chat about it" entry point + overlap banner/picker; (4) inbox/push/`usePushNavigation` entries for the new kinds; (5) overlap detection trigger creating the quiet notification.
+
 ---
 
 ## 2026-07-08 — Android versionCode 4 to closed testing; splash/env lessons; polish OTA
