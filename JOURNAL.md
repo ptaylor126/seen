@@ -62,6 +62,39 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+### 2026-07-09 (later) — post-watched sheet shipped end-to-end + notification/routing polish
+
+_Continues the snapshot above; the sheet and its notification/routing work landed and OTA'd to Android over the rest of the day._
+
+**Done**
+
+- Shipped the post-watched sheet end to end (Android OTA). Marking a title watched now opens a medium bottom sheet: stars, a one-line note, and — when the title was recommended by friends — the option to tell those friends what you thought. Rec case posts the note as a comment on each sender's rec thread with the rating; no-rec case saves the note privately to `items.note`. Hidden-from-friends toggle collapses the whole rec framing (private includes the recommender). Skip marks watched and notifies the sender but posts nothing.
+- Notification pipeline rework so one action = one notification: new `mark_recommendation_watched` RPC with a transaction-local suppress flag; the `rec_watched` trigger now also respects item visibility (private suppresses it). When the sheet sends a comment, `rec_watched` is suppressed and the comment IS the announcement.
+- Watched-sheet comments now notify as "watched", not "commented" (`from_watched` flag threaded through the payload to inbox + push).
+- Comment render polish: split the rating onto its own plum line, "Gave it ★★★★" (dropped the leading "I" to avoid a double-I with notes starting "I..."), no-note comments collapse to a single "watched · ★★★★" line, gaps tuned.
+- Rec screen and inbox now refresh after the sheet / on foreground (inbox got an AppState listener mirroring `use-unread-count`, with a `hasLoadedOnce` ref to avoid a spinner flash on every foreground).
+- Push-notification tap routing: new `usePushNavigation` hook routes a tapped notification to the relevant screen (six rec kinds → the rec thread, `friend_request` → requests, `friend_accepted` → profile), gated behind the launch/auth sequence so cold-start taps don't wedge the launch overlay.
+- Diagnosed Android push: `push_tokens` is 100% iOS — Android registration has never worked (no FCM). iOS send path confirmed healthy. Android FCM is versionCode 5 work; the routing hook is already in place for when pushes start arriving.
+
+**Lessons**
+
+- `create or replace` on a live DB function ERASES the live body — diff `pg_proc.prosrc` (what's actually live) before replacing, not just the original migration. Hand-applied SQL isn't in the repo, so the migration file can lie.
+- `set_config` / a function with a DIFFERENT arg list creates an OVERLOAD, not a replace — drop the old signature first (`mark_recommendation_watched` went from 2 args to 3).
+- Extracting `supabase.rpc` into a local (`const x = supabase.rpc`) UNBINDS `this` — rpc reads `this.rest`, so it throws "Cannot read property 'rest' of undefined". Always call `supabase.rpc(...)` as a direct member expression; cast the result type only.
+- Sheet/modal open felt clunky when content resolved after the open animation (height jump). Fix: fetch-before-open — resolve the data, THEN trigger the slide, with a 150ms cap so a slow fetch can't hang the open. Reads as responsiveness, not jank.
+- `useFocusEffect` only fires on navigation focus, NOT on AppState background→foreground when the same screen stays mounted. A push tap that foregrounds onto the already-focused inbox produces no focus event — needs its own AppState 'active' listener.
+- Pushing a deep route while the launch overlay is still up flips `inTabsGroup` false, which un-satisfies the overlay's dismiss gate and can wedge it. Gate push-nav on `launchDone` (overlay dismissed) so cold-start taps land after the launch sequence completes.
+
+**Open questions / known gaps** (banked, not bugs to fix blind)
+
+- **SYSTEMIC:** the Supabase client has `autoRefreshToken:true` but no `AppState → startAutoRefresh/stopAutoRefresh` wiring (the official RN setup requires it). Token-refresh timer suspends while backgrounded, so the JWT can expire; on foreground a burst of authed queries can race the refresh and 401. Surfaced as an intermittent "unread count fetch failed" (self-healing — count keeps last value, recovers next refresh). This is the next task: wire `startAutoRefresh`/`stopAutoRefresh`. Fixes every authed query on foreground, not just the badge.
+- `items.note` is stored but nothing surfaces it in the UI yet (title page / library) — future tweak.
+- Realtime cluster: rec screen, inbox list, and push-tap routing all lack live-update / full deep-linking (push only arrives on iOS). Fold into one realtime/notifications pass.
+- Android FCM push registration + monochrome icon = versionCode 5; iOS build 22 unfreezes iOS OTAs (iOS users are behind on all the July 8–9 JS work).
+- Overlap-aware send + "already seen it" response (Bobby's triangulation idea) — designed, banked, needs a few days of watched-data first.
+
+---
+
 ## 2026-07-08 — Android versionCode 4 to closed testing; splash/env lessons; polish OTA
 
 **Done**
