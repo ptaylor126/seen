@@ -18,6 +18,7 @@ import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
 import { UserLink } from '@/components/user-link';
+import { getSentChats } from '@/lib/chats';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptPushAtHighIntent } from '@/lib/push';
@@ -183,6 +184,52 @@ interface GenericActivityItem {
     recId: string | null;
 }
 
+// "Chat about a title" notifications — same row anatomy as the rec kinds
+// (actor + title + timestamp, tap into the thread) with chat voice. All
+// three route to /chat/{chatId}.
+interface ChatCommentedItem {
+    kind: 'notification_chat_commented';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    sender: ProfileSummary;
+    chatId: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+    // True for the OLDEST chat_commented we fetched for this chat — rendered
+    // as "wants to chat about" (the invite); later messages read as plain
+    // messages. Heuristic: the true first message's notification can age out
+    // of the capped read fetch, promoting a later one — harmless.
+    isOpener: boolean;
+}
+
+interface ChatReactedItem {
+    kind: 'notification_chat_reacted';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    reactor: ProfileSummary;
+    chatId: string;
+    emoji: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+}
+
+interface ChatCommentReactedItem {
+    kind: 'notification_chat_comment_reacted';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    reactor: ProfileSummary;
+    chatId: string;
+    emoji: string;
+    tmdbId: number | null;
+    mediaType: MediaType | null;
+    titleName: string | null;
+}
+
 type InboxItem =
     | IncomingRecItem
     | FriendRequestItem
@@ -193,6 +240,9 @@ type InboxItem =
     | RecCommentedItem
     | RecDeclinedItem
     | RecRequestedItem
+    | ChatCommentedItem
+    | ChatReactedItem
+    | ChatCommentReactedItem
     | GenericActivityItem;
 
 // Sent recs are NOT unioned into InboxItem — different render path, no
@@ -200,6 +250,7 @@ type InboxItem =
 // one recommendations row per recipient, which surfaces here as one row
 // per recipient by design (no grouping by title).
 interface SentRecItem {
+    kind: 'sent_rec';
     id: string;
     sentAt: string;
     recId: string;
@@ -209,6 +260,22 @@ interface SentRecItem {
     posterPath: string | null;
     recipient: ProfileSummary;
 }
+
+// A chat the current user STARTED (title_chats.from_user_id = me) — shown in
+// Sent alongside sent recs, with chat framing. Tap opens the thread.
+interface SentChatItem {
+    kind: 'sent_chat';
+    id: string;
+    sentAt: string;
+    chatId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    titleName: string | null;
+    posterPath: string | null;
+    recipient: ProfileSummary;
+}
+
+type SentItem = SentRecItem | SentChatItem;
 
 // titleByKey holds title + poster path so Sent rows can render a poster
 // thumbnail. Received call sites only read .title — they're updated in
@@ -245,6 +312,9 @@ const RENDER_KINDS = [
     'rec_commented',
     'rec_declined',
     'rec_requested',
+    'chat_commented',
+    'chat_reacted',
+    'chat_comment_reacted',
 ] as const;
 
 function relativeTimestamp(iso: string): string {
@@ -298,7 +368,7 @@ export default function InboxScreen() {
     const bottomInset = useBottomInset(spacing.lg);
 
     const [items, setItems] = useState<InboxItem[]>([]);
-    const [sentItems, setSentItems] = useState<SentRecItem[]>([]);
+    const [sentItems, setSentItems] = useState<SentItem[]>([]);
     const [view, setView] = useState<InboxView>('received');
     const [loading, setLoading] = useState(true);
     const showLoader = useDeferredLoading(loading);
@@ -342,6 +412,7 @@ export default function InboxScreen() {
                 unreadNotifsResult,
                 readNotifsResult,
                 sentRecsResult,
+                sentChats,
             ] = await Promise.all([
                 // Pending recs — UNCAPPED. The bell counts this exact set, so
                 // any cap re-creates a counted-but-unreachable class at cap+1.
@@ -402,6 +473,9 @@ export default function InboxScreen() {
                     .eq('from_user_id', userId)
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
+                // Chats the user started — merged into Sent alongside sent
+                // recs (chat framing). One per (pair, title) by construction.
+                getSentChats(userId, MAX_ITEMS),
             ]);
 
             if (pendingRecsResult.error) throw pendingRecsResult.error;
@@ -467,6 +541,9 @@ export default function InboxScreen() {
             for (const r of sentRecs) {
                 otherUserIds.add(r.to_user_id);
             }
+            for (const c of sentChats) {
+                otherUserIds.add(c.toUserId);
+            }
             for (const n of notifications) {
                 const payload = asRecord(n.payload);
                 // rec_watched carries the watcher as to_user_id; every other
@@ -523,13 +600,17 @@ export default function InboxScreen() {
             };
             for (const r of recs) addTitleItem(r.media_type, r.tmdb_id);
             for (const r of sentRecs) addTitleItem(r.media_type, r.tmdb_id);
+            for (const c of sentChats) addTitleItem(c.mediaType, c.tmdbId);
             for (const n of notifications) {
                 if (
                     n.kind !== 'rec_watched' &&
                     n.kind !== 'rec_reacted' &&
                     n.kind !== 'comment_reacted' &&
                     n.kind !== 'rec_commented' &&
-                    n.kind !== 'rec_declined'
+                    n.kind !== 'rec_declined' &&
+                    n.kind !== 'chat_commented' &&
+                    n.kind !== 'chat_reacted' &&
+                    n.kind !== 'chat_comment_reacted'
                 ) {
                     continue;
                 }
@@ -669,6 +750,34 @@ export default function InboxScreen() {
                     recId: pickString(p, 'recommendation_id'),
                 };
             };
+
+            // The chat "opener" — the OLDEST chat_commented we fetched per
+            // chat_id — renders as "wants to chat about" (the invite); later
+            // messages read as plain messages. Window heuristic: if the true
+            // first message's notification has aged out of the capped read
+            // fetch, the oldest-in-window is promoted — harmless.
+            const chatOpenerNotifIds = new Set<string>();
+            {
+                const oldestByChat = new Map<
+                    string,
+                    { id: string; createdAt: string }
+                >();
+                for (const n of notifications) {
+                    if (n.kind !== 'chat_commented') continue;
+                    const chatId = pickString(asRecord(n.payload), 'chat_id');
+                    if (!chatId) continue;
+                    const current = oldestByChat.get(chatId);
+                    if (!current || n.created_at < current.createdAt) {
+                        oldestByChat.set(chatId, {
+                            id: n.id,
+                            createdAt: n.created_at,
+                        });
+                    }
+                }
+                for (const v of oldestByChat.values()) {
+                    chatOpenerNotifIds.add(v.id);
+                }
+            }
 
             for (const n of notifications) {
                 const payload = asRecord(n.payload);
@@ -834,6 +943,65 @@ export default function InboxScreen() {
                         requester,
                         note: pickString(payload, 'note'),
                     });
+                } else if (n.kind === 'chat_commented') {
+                    const senderId = pickString(payload, 'from_user_id');
+                    const chatId = pickString(payload, 'chat_id');
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (!chatId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
+                    inboxItems.push({
+                        kind: 'notification_chat_commented',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        sender: senderId
+                            ? profilesById.get(senderId) ?? placeholderProfile
+                            : placeholderProfile,
+                        chatId,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
+                                : null,
+                        isOpener: chatOpenerNotifIds.has(n.id),
+                    });
+                } else if (
+                    n.kind === 'chat_reacted' ||
+                    n.kind === 'chat_comment_reacted'
+                ) {
+                    const reactorId = pickString(payload, 'from_user_id');
+                    const chatId = pickString(payload, 'chat_id');
+                    const emoji = pickString(payload, 'emoji') ?? '';
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    if (!chatId) {
+                        inboxItems.push(buildGeneric(n));
+                        continue;
+                    }
+                    inboxItems.push({
+                        kind:
+                            n.kind === 'chat_reacted'
+                                ? 'notification_chat_reacted'
+                                : 'notification_chat_comment_reacted',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        reactor: reactorId
+                            ? profilesById.get(reactorId) ?? placeholderProfile
+                            : placeholderProfile,
+                        chatId,
+                        emoji,
+                        tmdbId: tid,
+                        mediaType: mt,
+                        titleName:
+                            mt && tid
+                                ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
+                                : null,
+                    });
                 } else {
                     // Unhandled kind — the query filters to RENDER_KINDS so
                     // this shouldn't fire, but future-proof: render the
@@ -890,7 +1058,7 @@ export default function InboxScreen() {
             // ALWAYS resolvable for sent rows: to_user_id is non-null
             // per schema, and friends are RLS-readable; missing profile
             // means the recipient was deleted.
-            const sentList: SentRecItem[] = [];
+            const sentList: SentItem[] = [];
             for (const r of sentRecs) {
                 const meta = titleByKey.get(`${r.media_type}:${r.tmdb_id}`);
                 const recipient =
@@ -899,6 +1067,7 @@ export default function InboxScreen() {
                         displayName: 'Former user',
                     };
                 sentList.push({
+                    kind: 'sent_rec',
                     id: `sent:${r.id}`,
                     sentAt: r.sent_at,
                     recId: r.id,
@@ -909,6 +1078,29 @@ export default function InboxScreen() {
                     recipient,
                 });
             }
+            // Chats the user started, merged in with chat framing. Both
+            // source queries are newest-first; the combined sort interleaves
+            // them chronologically before the window.
+            for (const c of sentChats) {
+                const meta = titleByKey.get(`${c.mediaType}:${c.tmdbId}`);
+                const recipient =
+                    profilesById.get(c.toUserId) ?? {
+                        ...placeholderProfile,
+                        displayName: 'Former user',
+                    };
+                sentList.push({
+                    kind: 'sent_chat',
+                    id: `sentchat:${c.id}`,
+                    sentAt: c.createdAt,
+                    chatId: c.id,
+                    tmdbId: c.tmdbId,
+                    mediaType: c.mediaType,
+                    titleName: meta?.title ?? null,
+                    posterPath: meta?.posterPath ?? null,
+                    recipient,
+                });
+            }
+            sentList.sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1));
             setSentItems(sentList.slice(0, MAX_ITEMS));
             // First successful load done → subsequent re-runs refresh silently.
             hasLoadedOnce.current = true;
@@ -1447,6 +1639,102 @@ export default function InboxScreen() {
         );
     }
 
+    // Chat notifications — same row anatomy as the rec kinds, chat voice.
+    // The opener (first fetched message per chat) reads as the invite.
+    function renderChatCommented(item: ChatCommentedItem) {
+        const title = item.titleName ?? 'a title';
+        return (
+            <Pressable
+                onPress={() => router.push(`/chat/${item.chatId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <UserLink
+                    handle={item.sender.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.sender.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.sender.avatarUrl}
+                        displayName={item.sender.displayName}
+                        seedId={item.sender.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.sender.handle })
+                            }
+                        >
+                            {item.sender.displayName}
+                        </Text>{' '}
+                        {item.isOpener
+                            ? 'wants to chat about'
+                            : 'sent a message about'}{' '}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
+    function renderChatReacted(item: ChatReactedItem | ChatCommentReactedItem) {
+        const title = item.titleName ?? 'a title';
+        // chat_reacted = a reaction on the chat itself; chat_comment_reacted
+        // = a reaction on one of your messages in it. Both open the thread.
+        const target =
+            item.kind === 'notification_chat_reacted'
+                ? 'your chat about'
+                : 'your message about';
+        return (
+            <Pressable
+                onPress={() => router.push(`/chat/${item.chatId}`)}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <UserLink
+                    handle={item.reactor.handle}
+                    hitSlop={8}
+                    accessibilityLabel={`View ${item.reactor.displayName}'s profile`}
+                >
+                    <Avatar
+                        avatarUrl={item.reactor.avatarUrl}
+                        displayName={item.reactor.displayName}
+                        seedId={item.reactor.userId}
+                        size={AVATAR_SIZE}
+                    />
+                </UserLink>
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text
+                            style={typography.bodyEmphasis}
+                            onPress={() =>
+                                goToProfile({ handle: item.reactor.handle })
+                            }
+                        >
+                            {item.reactor.displayName}
+                        </Text>{' '}
+                        reacted {item.emoji} to {target}{' '}
+                        <Text style={typography.bodyEmphasis}>{title}</Text>
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRecDeclined(item: RecDeclinedItem) {
         const title = item.titleName ?? 'your recommendation';
         return (
@@ -1634,6 +1922,11 @@ export default function InboxScreen() {
                 return renderRecDeclined(item);
             case 'notification_rec_requested':
                 return renderRecRequested(item);
+            case 'notification_chat_commented':
+                return renderChatCommented(item);
+            case 'notification_chat_reacted':
+            case 'notification_chat_comment_reacted':
+                return renderChatReacted(item);
             case 'notification_generic':
                 return renderGenericActivity(item);
         }
@@ -1683,11 +1976,19 @@ export default function InboxScreen() {
         return content;
     }
 
-    function renderSentRec({ item }: { item: SentRecItem }) {
+    // One renderer for both Sent kinds — identical row anatomy (poster,
+    // title, recipient, timestamp); the framing line and tap target differ:
+    // recs read "To {name}" and open the rec thread, chats read "Chat with
+    // {name}" and open the chat thread.
+    function renderSentItem({ item }: { item: SentItem }) {
         const title = item.titleName ?? 'Untitled';
         return (
             <Pressable
-                onPress={() => router.push(`/rec/${item.recId}`)}
+                onPress={() =>
+                    item.kind === 'sent_rec'
+                        ? router.push(`/rec/${item.recId}`)
+                        : router.push(`/chat/${item.chatId}`)
+                }
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
             >
                 {item.posterPath ? (
@@ -1716,7 +2017,7 @@ export default function InboxScreen() {
                         style={[typography.caption, { color: palette.textMuted }]}
                         numberOfLines={1}
                     >
-                        To{' '}
+                        {item.kind === 'sent_rec' ? 'To' : 'Chat with'}{' '}
                         <Text
                             style={{ color: palette.text }}
                             onPress={() =>
@@ -1809,7 +2110,7 @@ export default function InboxScreen() {
                 <FlatList
                     data={sentItems}
                     keyExtractor={(item) => item.id}
-                    renderItem={renderSentRec}
+                    renderItem={renderSentItem}
                     contentContainerStyle={[
                         styles.listContent,
                         { paddingBottom: bottomInset },

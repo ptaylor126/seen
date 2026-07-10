@@ -54,7 +54,10 @@ type NotificationKind =
     | 'rec_commented'
     | 'rec_declined'
     | 'rec_requested'
-    | 'report_filed';
+    | 'report_filed'
+    | 'chat_commented'
+    | 'chat_reacted'
+    | 'chat_comment_reacted';
 
 interface NotificationRow {
     id: string;
@@ -516,6 +519,72 @@ async function buildMessage(
                 data,
             };
         }
+        case 'chat_commented': {
+            // A message in a "chat about a title". The chat's FIRST message
+            // is the invite → "wants to chat about"; later messages read as
+            // plain messages. Body carries the message preview (same 80-char
+            // truncation as rec_commented). service_role SELECT on
+            // chat_comments is granted by the title_chats migration.
+            const senderId = stringField(notif.payload, 'from_user_id');
+            const chatId = stringField(notif.payload, 'chat_id');
+            const commentId = stringField(notif.payload, 'comment_id');
+            const tmdbId = numberField(notif.payload, 'tmdb_id');
+            const mediaType = stringField(notif.payload, 'media_type');
+            if (!senderId || !chatId || !commentId) return null;
+
+            const [senderName, title, body, isFirst] = await Promise.all([
+                fetchDisplayName(supabase, senderId),
+                tmdbId !== null && mediaType
+                    ? fetchTmdbTitle(tmdbId, mediaType)
+                    : Promise.resolve(null),
+                fetchChatCommentBody(supabase, commentId),
+                isFirstChatComment(supabase, chatId, commentId),
+            ]);
+            if (!senderName) return null;
+            const bodyPreview = body
+                ? body.length > 80
+                    ? `${body.slice(0, 80)}…`
+                    : body
+                : undefined;
+            const verbed = isFirst
+                ? title
+                    ? `${senderName} wants to chat about ${title}`
+                    : `${senderName} wants to chat`
+                : title
+                  ? `${senderName} sent a message about ${title}`
+                  : `${senderName} sent you a message`;
+            return {
+                title: verbed,
+                body: bodyPreview,
+                data,
+            };
+        }
+        case 'chat_reacted': {
+            // Reaction on the chat itself, from the other party.
+            const reactorId = stringField(notif.payload, 'from_user_id');
+            const emoji = stringField(notif.payload, 'emoji');
+            const tmdbId = numberField(notif.payload, 'tmdb_id');
+            const mediaType = stringField(notif.payload, 'media_type');
+            if (!reactorId || !emoji) return null;
+
+            const [reactorName, title] = await Promise.all([
+                fetchDisplayName(supabase, reactorId),
+                tmdbId !== null && mediaType
+                    ? fetchTmdbTitle(tmdbId, mediaType)
+                    : Promise.resolve(null),
+            ]);
+            if (!reactorName) return null;
+            return {
+                title: title
+                    ? `${reactorName} reacted ${emoji} to your chat about ${title}`
+                    : `${reactorName} reacted ${emoji} to your chat`,
+                data,
+            };
+        }
+        // NB: no 'chat_comment_reacted' case — comment-reactions are
+        // inbox-only, matching the rec side ('comment_reacted' has no case
+        // either). The kind stays in NotificationKind for typing; buildMessage
+        // returns null via the default and no push is sent.
         case 'report_filed': {
             // Maintainer alert for a new content report. Payload carries only
             // the reason + reported_type — NO reporter identity, so neither the
@@ -597,6 +666,40 @@ async function fetchCommentBody(
     if (error) return null;
     const body = (data as { body?: string | null } | null)?.body;
     return typeof body === 'string' && body.length > 0 ? body : null;
+}
+
+// Chat-comment analog of fetchCommentBody. service_role SELECT on
+// chat_comments is granted by the title_chats migration (20260709180000).
+async function fetchChatCommentBody(
+    supabase: SupabaseClient,
+    commentId: string,
+): Promise<string | null> {
+    const { data, error } = await supabase
+        .from('chat_comments')
+        .select('body')
+        .eq('id', commentId)
+        .maybeSingle();
+    if (error) return null;
+    const body = (data as { body?: string | null } | null)?.body;
+    return typeof body === 'string' && body.length > 0 ? body : null;
+}
+
+// Is this comment the chat's FIRST message (the invite)? Best-effort: any
+// query error → false (plain-message wording), never a dropped push.
+async function isFirstChatComment(
+    supabase: SupabaseClient,
+    chatId: string,
+    commentId: string,
+): Promise<boolean> {
+    const { data, error } = await supabase
+        .from('chat_comments')
+        .select('id')
+        .eq('chat_id', chatId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+    if (error) return false;
+    return (data as { id?: string } | null)?.id === commentId;
 }
 
 async function fetchTmdbTitle(

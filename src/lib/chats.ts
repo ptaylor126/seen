@@ -125,6 +125,49 @@ export async function createTitleChat(args: {
     return chatId;
 }
 
+// Chats the user STARTED (from_user_id = me), newest first — the inbox's
+// Sent tab merges these alongside sent recs.
+export async function getSentChats(
+    userId: string,
+    limit: number,
+): Promise<
+    Array<{
+        id: string;
+        toUserId: string;
+        tmdbId: number;
+        mediaType: 'movie' | 'tv';
+        createdAt: string;
+    }>
+> {
+    const { data, error } = await db
+        .from('title_chats')
+        .select('id, to_user_id, tmdb_id, media_type, created_at')
+        .eq('from_user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+    if (error) throw error;
+    return (data ?? [])
+        .filter(
+            (c: { media_type: string }) =>
+                c.media_type === 'movie' || c.media_type === 'tv',
+        )
+        .map(
+            (c: {
+                id: string;
+                to_user_id: string;
+                tmdb_id: number;
+                media_type: 'movie' | 'tv';
+                created_at: string;
+            }) => ({
+                id: c.id,
+                toUserId: c.to_user_id,
+                tmdbId: c.tmdb_id,
+                mediaType: c.media_type,
+                createdAt: c.created_at,
+            }),
+        );
+}
+
 export async function deleteChatComment(commentId: string): Promise<void> {
     const { error } = await db
         .from('chat_comments')

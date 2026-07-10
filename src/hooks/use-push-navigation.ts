@@ -21,6 +21,7 @@ function resolveNavigation(
         typeof data.recommendation_id === 'string'
             ? data.recommendation_id
             : null;
+    const chatId = typeof data.chat_id === 'string' ? data.chat_id : null;
 
     switch (kind) {
         case 'rec_received':
@@ -31,6 +32,12 @@ function resolveNavigation(
         case 'rec_declined':
             return recId
                 ? () => router.push(`/rec/${recId}`)
+                : () => router.push('/inbox');
+        case 'chat_commented':
+        case 'chat_reacted':
+        case 'chat_comment_reacted':
+            return chatId
+                ? () => router.push(`/chat/${chatId}`)
                 : () => router.push('/inbox');
         case 'friend_request':
             return () => router.push('/friends/requests');
