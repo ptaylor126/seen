@@ -15,6 +15,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LaunchSequence } from '@/components/launch-sequence';
 import { LaunchReadyContext } from '@/hooks/use-launch-ready';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
+import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
 
 // Pin the root navigator's initial/anchor route to (tabs). With three root
@@ -181,6 +182,11 @@ function RootLayoutInner() {
     // dismisses once (ready + intro done, or the safety timeout). It does not
     // return for later in-app transitions.
     const [launchActive, setLaunchActive] = useState(true);
+
+    // Deep-link a tapped push notification to the relevant screen. launchDone
+    // gates cold-start navigation until the launch overlay has dismissed (see
+    // the hook — navigating earlier wedges the launch-`ready` condition).
+    usePushNavigation({ session, profile, launchDone: !launchActive });
 
     return (
         <LaunchReadyContext.Provider value={{ markDestinationReady }}>
