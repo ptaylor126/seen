@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -31,10 +30,8 @@ import { RecActionSheet } from '@/components/rec-action-sheet';
 import { ThreadCommentList } from '@/components/thread/comment-list';
 import { ThreadCommentMenu } from '@/components/thread/comment-menu';
 import { ThreadComposer } from '@/components/thread/composer';
-import {
-    ThreadIncomingReaction,
-    ThreadReactionPicker,
-} from '@/components/thread/reactions';
+import { ReactionBadge } from '@/components/thread/reaction-badge';
+import { ThreadReactionPicker } from '@/components/thread/reactions';
 import {
     COMMENT_MAX_CHARS,
     type CommentMenuTarget,
@@ -76,11 +73,23 @@ import {
     typography,
 } from '@/theme/theme';
 
-// Small avatar on the recommender line above the note.
-const REC_LINE_AVATAR_SIZE = 28;
 // Immersive backdrop header — the hero of the screen (~50% of height).
 // Read once at module load (same pattern as the home hero / Top 5 row).
 const HEADER_HEIGHT = Math.round(Dimensions.get('window').height * 0.5);
+// Identity-overlay poster (the hero's bottom-left title block). Also fixes
+// the block's height: the title column beside it is 2-line-clamped and
+// stays shorter, so the recommendation pill can anchor a fixed distance
+// above the block (see recPill).
+const IDENTITY_POSTER_HEIGHT = 120;
+// Recommendation pill on the hero: small avatar + attribution caption.
+const REC_PILL_AVATAR_SIZE = 20;
+// Pill fill — the home hero's dark-plum on-image pill family
+// (rgba(36,26,32,…)), a touch more transparent. Dark enough that the white
+// caption reads over ANY backdrop: over a pure-white worst case the
+// composite is still ~(69,60,65) → ~9.5:1 against the white name text and
+// ~6:1 against the 0.78-alpha muted text; over a dark backdrop the text
+// carries (the pill edge may melt into the image, which is fine).
+const REC_PILL_FILL = 'rgba(36, 26, 32, 0.85)';
 
 interface RecSummary {
     id: string;
@@ -110,15 +119,6 @@ interface TitleMeta {
     genreIds: number[];
 }
 
-// Stable identity for the incoming reaction, persisted per-rec in AsyncStorage
-// so the soft pop fires once per NEW reaction. Emoji + created_at means a
-// changed emoji (or a removed-then-re-added reaction) reads as new and pops
-// again — desired. The reactions table has no single-column id (PK is
-// recommendation_id + user_id), hence the composite string.
-function reactionIdentity(r: ReactionRow): string {
-    return `${r.userId}:${r.emoji}:${r.createdAt ?? ''}`;
-}
-
 export default function RecScreen() {
     const params = useLocalSearchParams<{ recId: string }>();
     const router = useRouter();
@@ -140,11 +140,6 @@ export default function RecScreen() {
     const [sender, setSender] = useState<PartyProfile | null>(null);
     const [recipient, setRecipient] = useState<PartyProfile | null>(null);
     const [reactions, setReactions] = useState<ReactionRow[]>([]);
-    // True only when the incoming reaction is NEW vs the local last-seen marker
-    // (reactionSeen:<recId> in AsyncStorage) — gates the one-time soft pop on
-    // the incoming (otherReaction) reaction so it animates when new, not on
-    // every mount/focus return. Decided in load(), persisted after render.
-    const [shouldAnimateReaction, setShouldAnimateReaction] = useState(false);
     const [comments, setComments] = useState<CommentRow[]>([]);
     // commentReactions: comment_id → reactions on that comment.
     // Stored as a Map so per-comment lookups in the render path are O(1).
@@ -424,26 +419,6 @@ export default function RecScreen() {
                 }
             }
 
-            // Decide the one-time incoming-reaction pop from a LOCAL last-seen
-            // marker (not notifications). Animate only if the other party's
-            // current reaction identity differs from what we last stored for
-            // this rec (a new reaction, or a changed emoji); no stored key →
-            // first view → animate. Read BEFORE setState so the flag and
-            // reactions land in the SAME render (moti reads `from` at mount).
-            // Best-effort: any storage error → no animation.
-            const incoming = validReactions.find((r) => r.userId !== userId);
-            let animate = false;
-            if (incoming) {
-                try {
-                    const seen = await AsyncStorage.getItem(
-                        `reactionSeen:${recId}`,
-                    );
-                    animate = seen !== reactionIdentity(incoming);
-                } catch {
-                    animate = false;
-                }
-            }
-            setShouldAnimateReaction(animate);
             setReactions(validReactions);
 
             // Resolve comment authors. May include user_ids we don't
@@ -748,12 +723,6 @@ export default function RecScreen() {
         myUserId !== null
             ? reactions.find((r) => r.userId !== myUserId) ?? null
             : null;
-    const otherReactionProfile: PartyProfile | null = (() => {
-        if (!otherReaction || !rec) return null;
-        if (otherReaction.userId === rec.fromUserId) return sender;
-        if (otherReaction.userId === rec.toUserId) return recipient;
-        return null;
-    })();
     // Only the recipient can write a reaction (RLS in
     // 20260607120000_restrict_rec_reactions_writes_to_recipient enforces
     // the same rule server-side). The sender still sees the full row +
@@ -767,19 +736,6 @@ export default function RecScreen() {
     useEffect(() => {
         if (isRecipient) void maybeRequestReview();
     }, [isRecipient]);
-
-    // Persist the last-seen incoming-reaction identity AFTER render, so the
-    // next visit renders it static (the pop is one-time per new reaction).
-    // Keyed on otherReaction's ref: it changes on load (fresh objects) but
-    // survives the viewer's own optimistic taps (filter preserves the other
-    // party's object ref), so own taps neither re-pop nor rewrite the marker.
-    useEffect(() => {
-        if (!otherReaction) return;
-        void AsyncStorage.setItem(
-            `reactionSeen:${recId}`,
-            reactionIdentity(otherReaction),
-        );
-    }, [otherReaction, recId]);
 
     // Track keyboard visibility so the composer can drop its bottom
     // safe-area inset while typing (the keyboard covers the home-indicator
@@ -1451,6 +1407,104 @@ export default function RecScreen() {
                             style={StyleSheet.absoluteFill}
                             pointerEvents="none"
                         />
+                        {/* Recommendation pill — the attribution, ON the
+                            hero: small avatar + "{You/First}
+                            recommend(s|ed) · {when}" over a dark plum
+                            scrim so it reads on any backdrop. Anchored a
+                            fixed md gap above the identity block (whose
+                            height is the poster's — the title column
+                            beside it is 2-line-clamped and shorter). The
+                            other party's rec-level reaction rides the
+                            pill's top-right corner as the shared badge;
+                            the recipient's Report ⋯ lives on the pill
+                            (the note's long-press-to-report remains
+                            too). */}
+                        <View
+                            style={[
+                                styles.recPill,
+                                { backgroundColor: REC_PILL_FILL },
+                                otherReaction
+                                    ? styles.recPillReacted
+                                    : null,
+                            ]}
+                        >
+                            <UserLink
+                                userId={rec.fromUserId}
+                                disabled={isMeSender}
+                                hitSlop={8}
+                                accessibilityLabel={`View ${senderName}'s profile`}
+                            >
+                                <Avatar
+                                    avatarUrl={sender?.avatarUrl ?? null}
+                                    displayName={senderName}
+                                    seedId={
+                                        rec.fromUserId ??
+                                        sender?.userId ??
+                                        rec.id
+                                    }
+                                    size={REC_PILL_AVATAR_SIZE}
+                                />
+                            </UserLink>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.recPillCaption,
+                                ]}
+                                numberOfLines={1}
+                            >
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.recommenderName,
+                                        { color: '#FFFFFF' },
+                                    ]}
+                                    onPress={
+                                        isMeSender
+                                            ? undefined
+                                            : () =>
+                                                  goToProfile({
+                                                      userId: rec.fromUserId,
+                                                  })
+                                    }
+                                >
+                                    {pillName}
+                                </Text>{' '}
+                                {pillVerb} · {relativeTimestamp(rec.sentAt)}
+                            </Text>
+                            {!isMeSender && rec.fromUserId ? (
+                                <Pressable
+                                    onPress={() =>
+                                        promptReport({
+                                            type: 'recommendation',
+                                            id: rec.id,
+                                            reportedUserId: rec.fromUserId,
+                                            title: 'Report recommendation',
+                                        })
+                                    }
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Report recommendation"
+                                    style={({ pressed }) => [
+                                        styles.recReportButton,
+                                        pressed && { opacity: 0.5 },
+                                    ]}
+                                >
+                                    <MoreHorizontal
+                                        color="rgba(255,255,255,0.78)"
+                                        size={16}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                </Pressable>
+                            ) : null}
+                            {otherReaction ? (
+                                <ReactionBadge
+                                    reactions={[otherReaction]}
+                                    palette={palette}
+                                    style={styles.recPillBadge}
+                                />
+                            ) : null}
+                        </View>
+
                         {/* Title block, bottom-left — the whole block is
                             the tappable bridge to the title page. Poster +
                             title/meta + a quiet chevron affordance. Lifted
@@ -1550,86 +1604,12 @@ export default function RecScreen() {
                     {/* Padded body. */}
                     <View style={styles.bodyPad}>
 
-                    {/* Recommender line — small avatar + "{name} recommends
-                        · {when}", directly above the note so the note reads
-                        as that person's words. */}
-                    <View style={styles.recLine}>
-                        <UserLink
-                            userId={rec.fromUserId}
-                            disabled={isMeSender}
-                            hitSlop={8}
-                            accessibilityLabel={`View ${senderName}'s profile`}
-                        >
-                            <Avatar
-                                avatarUrl={sender?.avatarUrl ?? null}
-                                displayName={senderName}
-                                seedId={rec.fromUserId ?? sender?.userId ?? rec.id}
-                                size={REC_LINE_AVATAR_SIZE}
-                            />
-                        </UserLink>
-                        <Text
-                            style={[
-                                typography.caption,
-                                { color: palette.textMuted },
-                            ]}
-                            numberOfLines={1}
-                        >
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    styles.recommenderName,
-                                    { color: palette.accent },
-                                ]}
-                                onPress={
-                                    isMeSender
-                                        ? undefined
-                                        : () =>
-                                              goToProfile({
-                                                  userId: rec.fromUserId,
-                                              })
-                                }
-                            >
-                                {pillName}
-                            </Text>{' '}
-                            {pillVerb} · {relativeTimestamp(rec.sentAt)}
-                        </Text>
-                        {/* Visible Report affordance (App Store 1.2) — primary
-                            path; the note also long-presses. Recipient only
-                            (can't report your own note), with a sender to
-                            attribute it to. */}
-                        {!isMeSender && rec.fromUserId ? (
-                            <Pressable
-                                onPress={() =>
-                                    promptReport({
-                                        type: 'recommendation',
-                                        id: rec.id,
-                                        reportedUserId: rec.fromUserId,
-                                        title: 'Report recommendation',
-                                    })
-                                }
-                                hitSlop={spacing.sm}
-                                accessibilityRole="button"
-                                accessibilityLabel="Report recommendation"
-                                style={({ pressed }) => [
-                                    styles.recReportButton,
-                                    pressed && { opacity: 0.5 },
-                                ]}
-                            >
-                                <MoreHorizontal
-                                    color={palette.textMuted}
-                                    size={18}
-                                    strokeWidth={ICON_STROKE_WIDTH}
-                                />
-                            </Pressable>
-                        ) : null}
-                    </View>
-
-                    {/* The note — the hero of the screen. Large quote
-                        treatment, full text (no truncation), wraps for
-                        long notes. Long-press to Report the recommendation
-                        (App Store 1.2) — only for the recipient (you can't
-                        report your own note), and only when there's a sender
-                        to attribute it to. */}
+                    {/* The note — the sender's words, leading the body
+                        directly under the hero (the pill on the hero
+                        carries the attribution now). Large pull-quote,
+                        full text; recipient long-press to Report. No note
+                        → no rec content in the body at all: straight to
+                        the picker / thread. */}
                     {rec.note ? (
                         !isMeSender && rec.fromUserId ? (
                             <Pressable
@@ -1656,7 +1636,10 @@ export default function RecScreen() {
                             </Pressable>
                         ) : (
                             <Text
-                                style={[styles.noteHero, { color: palette.text }]}
+                                style={[
+                                    styles.noteHero,
+                                    { color: palette.text },
+                                ]}
                             >
                                 “{rec.note}”
                             </Text>
@@ -1665,20 +1648,13 @@ export default function RecScreen() {
 
                     {/* Reactions — curated emoji picker (no label). Recipient
                         only: reacting is a recipient action, so the sender
-                        doesn't see the picker (they still see the recipient's
-                        reaction read-only below). */}
+                        doesn't see the picker (they see the recipient's
+                        reaction as the badge on the hero pill). */}
                     {isRecipient ? (
                         <ThreadReactionPicker
                             selected={myReaction}
                             busy={reactionBusy}
                             onTap={handleReactionTap}
-                        />
-                    ) : null}
-                    {otherReaction ? (
-                        <ThreadIncomingReaction
-                            reaction={otherReaction}
-                            profile={otherReactionProfile}
-                            animate={shouldAnimateReaction}
                         />
                     ) : null}
 
@@ -1796,12 +1772,22 @@ export default function RecScreen() {
 
                     {/* Comments — no label; the composer placeholder
                         carries the empty state. An empty list renders
-                        nothing. */}
+                        nothing. When NOTHING renders above the thread
+                        (sender view + no note — the recipient always has
+                        the picker/action area, a note always leads), the
+                        default xl top margin plus the first separator's
+                        own base margin left a 48pt hole under the hero, so
+                        tighten the container margin to sm (24pt total). */}
                     <ThreadCommentList
                         comments={comments}
                         myUserId={myUserId}
                         commentReactions={commentReactions}
                         onLongPressComment={setCommentMenuFor}
+                        style={
+                            !rec.note && !isRecipient
+                                ? styles.threadUnderHero
+                                : undefined
+                        }
                     />
                     </View>
                 </ScrollView>
@@ -2041,9 +2027,11 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     identityPoster: {
-        // Larger poster thumbnail on the overlay.
+        // Larger poster thumbnail on the overlay. Height doubles as the
+        // block height the rec pill anchors above — keep the constant in
+        // sync.
         width: 80,
-        height: 120,
+        height: IDENTITY_POSTER_HEIGHT,
         borderRadius: radius.sm,
     },
     identityTitleText: {
@@ -2085,21 +2073,51 @@ const styles = StyleSheet.create({
         fontSize: 26,
         lineHeight: 30,
     },
-    recLine: {
-        // Recommender attribution row above the note: small avatar + the
-        // "{name} recommends · {when}" line. Modest gap above (below the
-        // image) so the title block and recommender read as one connected
-        // unit; tight tie to the note below.
+    // Recommendation pill on the hero — attribution row on a dark plum
+    // scrim (fill inline: REC_PILL_FILL). Content-sized, left-aligned at
+    // the identity block's inset; anchored a fixed distance above it (the
+    // block is bottom: xl and IDENTITY_POSTER_HEIGHT tall) with a md gap.
+    // ~32pt tall: 20pt avatar + 6pt vertical padding. NO overflow:hidden
+    // anywhere in this chain — the reaction badge overhangs the pill's
+    // top-right (top -3 / right -12) and must not be clipped.
+    recPill: {
+        position: 'absolute',
+        left: spacing.base,
+        bottom: spacing.xl + IDENTITY_POSTER_HEIGHT + spacing.md,
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
-        marginTop: spacing.md,
+        paddingVertical: spacing.xs + 2,
+        paddingLeft: spacing.sm,
+        paddingRight: spacing.md,
+        borderRadius: radius.full,
+    },
+    recPillCaption: {
+        // Muted white for the verb + timeago (the name inside is full
+        // white via recommenderName). Shrinks before the ⋯ if the row is
+        // tight.
+        color: 'rgba(255,255,255,0.78)',
+        flexShrink: 1,
     },
     recReportButton: {
-        // Trailing "⋯" on the recommender line — pushed to the row's far
-        // edge, quiet (textMuted) so it doesn't compete with the note.
-        marginLeft: 'auto',
+        // Trailing "⋯" on the pill — quiet, white-muted (color inline) so
+        // it doesn't compete with the caption.
         padding: spacing.xs,
+    },
+    // Extra right padding when the reaction badge is present: the badge
+    // intrudes ~14pt into the pill (26pt wide at right -12), and the pill
+    // is short enough that the badge's lower half sits at caption height —
+    // 20pt of padding ends the timestamp 6pt clear of it. Unreacted pills
+    // keep the tidy 12pt.
+    recPillReacted: {
+        paddingRight: 20,
+    },
+    // Badge anchor on the pill: top-right corner, same overhang the
+    // bubbles use (-12; the shared badge supplies top -3). It overlaps
+    // the corner — the caption clearance comes from recPillReacted's
+    // padding, not from pushing the badge out.
+    recPillBadge: {
+        right: -12,
     },
     newMessagePill: {
         // Floating over the scroll area's bottom edge, self-centered.
@@ -2116,13 +2134,22 @@ const styles = StyleSheet.create({
         // The hero note — large pull-quote. Geist regular at a generous
         // size + line height, italic to read as a quote. No numberOfLines
         // — the full note wraps, however long (~500-char composer cap).
-        // Tight marginTop ties it to the recommender line above (his
-        // attribution → his words).
+        // Leads the body directly under the hero (attribution lives on
+        // the hero pill), so it takes a full base gap rather than the old
+        // tight tie to a recommender line.
         fontFamily: fontFamily.default,
         fontWeight: '400',
         fontSize: 25,
         lineHeight: 34,
         fontStyle: 'italic',
+        marginTop: spacing.base,
+    },
+    // Thread top margin when the thread sits DIRECTLY under the hero
+    // (sender + no note): sm instead of the list's default xl. With the
+    // first separator's own base marginTop, the visual gap is 8+16=24pt —
+    // close under the image without jamming. All other cases (note,
+    // picker, action area above) keep the default.
+    threadUnderHero: {
         marginTop: spacing.sm,
     },
 });
