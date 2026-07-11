@@ -1,4 +1,3 @@
-import { MotiView } from 'moti';
 import { Fragment, useState } from 'react';
 import {
     Pressable,
@@ -6,8 +5,11 @@ import {
     Text,
     useColorScheme,
     View,
+    type StyleProp,
+    type ViewStyle,
 } from 'react-native';
 
+import { ReactionBadge } from '@/components/thread/reaction-badge';
 import {
     type CommentMenuTarget,
     type CommentRow,
@@ -27,12 +29,6 @@ import { getPalette, radius, spacing, typography } from '@/theme/theme';
 //
 // Both lead-ins are recognised: "Gave it " (current) and "I gave it " (older
 // comments stored before the wording change) so already-posted rows still split.
-// Fixed width per emoji in the reaction badge — generous enough that any
-// emoji's drawn bitmap (which iOS can render wider than its measured
-// advance) fits with room to centre. See reactionEmoji for why the Text
-// must not self-size.
-const EMOJI_CELL_WIDTH = 18;
-
 const RATING_LINE_PREFIXES = ['Gave it ', 'I gave it '];
 function ratingLinePrefixOf(line: string): string | null {
     return RATING_LINE_PREFIXES.find((p) => line.startsWith(p)) ?? null;
@@ -70,6 +66,7 @@ export function ThreadCommentList({
     myUserId,
     commentReactions,
     onLongPressComment,
+    style,
 }: {
     comments: CommentRow[];
     myUserId: string | null;
@@ -77,6 +74,11 @@ export function ThreadCommentList({
     commentReactions: Map<string, ReactionRow[]>;
     // Long-press → the screen opens the comment menu popover at this anchor.
     onLongPressComment: (target: CommentMenuTarget) => void;
+    // Container override, merged AFTER the default. Used by the rec screen
+    // to tighten the thread's top margin when nothing renders above it
+    // (sender view, no note) so the first time separator sits close under
+    // the hero. Layout only — rows are untouched.
+    style?: StyleProp<ViewStyle>;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -85,7 +87,7 @@ export function ThreadCommentList({
     const [expandedTimeId, setExpandedTimeId] = useState<string | null>(null);
 
     return (
-        <View style={styles.commentsList}>
+        <View style={[styles.commentsList, style]}>
             {comments.map((c, i) => {
                 const isMine = !!myUserId && c.userId === myUserId;
                 // Time separator between message groups: before the first
@@ -263,46 +265,20 @@ export function ThreadCommentList({
                                 )}
                                 {/* Reaction badge overlapping the bubble's
                                     INNER top corner (facing the screen's
-                                    centre). A 1:1 thread holds at most one
-                                    reaction per party, so the badge renders
-                                    one — rarely two — emojis. */}
-                                {cReactionList.length > 0 ? (
-                                    <MotiView
-                                        from={{ scale: 0 }}
-                                        animate={{ scale: 1 }}
-                                        transition={{
-                                            type: 'spring',
-                                            damping: 11,
-                                            stiffness: 260,
-                                        }}
-                                        style={[
-                                            styles.reactionBadge,
-                                            isMine
-                                                ? styles.badgeMine
-                                                : styles.badgeTheirs,
-                                            {
-                                                backgroundColor:
-                                                    palette.surface,
-                                                borderColor: palette.border,
-                                            },
-                                        ]}
-                                    >
-                                        <Text
-                                            style={[
-                                                styles.reactionEmoji,
-                                                {
-                                                    width:
-                                                        cReactionList.length *
-                                                        EMOJI_CELL_WIDTH,
-                                                },
-                                            ]}
-                                        >
-                                            {cReactionList
-                                                .map((r) => r.emoji)
-                                                .join('')}
-                                        </Text>
-                                    </MotiView>
-                                ) : null}
+                                    centre). Shared pill (ReactionBadge) —
+                                    only the horizontal anchoring is ours. A
+                                    1:1 thread holds at most one reaction per
+                                    party, so the badge renders one — rarely
+                                    two — emojis. */}
+                                <ReactionBadge
+                                    reactions={cReactionList}
+                                    palette={palette}
+                                    style={
+                                        isMine
+                                            ? styles.badgeMine
+                                            : styles.badgeTheirs
+                                    }
+                                />
                             </Pressable>
                         </View>
                         {expandedTimeId === c.id ? (
@@ -369,25 +345,6 @@ const styles = StyleSheet.create({
     bubbleTheirs: {
         borderBottomLeftRadius: radius.sm / 2,
     },
-    reactionBadge: {
-        // Pure overlay: absolute, floats half-on/half-off its OWN bubble's
-        // top corner — never reserves layout space, so reacted and plain
-        // messages share the same vertical footprint. top: -3 keeps clear
-        // daylight from the previous row even in a clustered 6px gap
-        // (-10 climbed into the previous bubble; -6 still crowded it).
-        position: 'absolute',
-        top: -3,
-        // The badge must paint OVER its bubble in full — a device pass
-        // caught the bubble fill biting a corner off the badge. zIndex +
-        // elevation pin it to the top of the stacking order on both
-        // platforms.
-        zIndex: 1,
-        elevation: 1,
-        borderRadius: radius.full,
-        borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 4,
-        paddingVertical: 2,
-    },
     // Inner-corner anchoring: the badge hangs off the bubble's top corner
     // on the side facing the screen's CENTRE (own bubbles sit right →
     // badge off the top-left; theirs → off the top-right). -12 pushes it
@@ -401,19 +358,6 @@ const styles = StyleSheet.create({
     },
     badgeTheirs: {
         right: -12,
-    },
-    // Small emoji text metrics on iOS are unreliable: the measured advance
-    // differs from the drawn bitmap width, and the mismatch VARIES BY
-    // EMOJI (a self-sized Text clipped the ❤️'s right edge; letterSpacing/
-    // margin compensation centred one emoji and skewed another). So the
-    // Text doesn't self-size at all: it gets a fixed EMOJI_CELL_WIDTH per
-    // emoji (inline, from the reaction count) and textAlign centres the
-    // glyph run inside it — per-emoji metric quirks land as symmetric
-    // slack instead of a lopsided/clipped edge.
-    reactionEmoji: {
-        fontSize: 12,
-        lineHeight: 16,
-        textAlign: 'center',
     },
     expandedTime: {
         marginTop: 2,
