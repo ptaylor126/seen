@@ -673,10 +673,7 @@ export default function TitleChatComposeScreen() {
                         <View
                             style={[
                                 styles.messageBox,
-                                {
-                                    backgroundColor: palette.surface,
-                                    borderColor: palette.border,
-                                },
+                                { backgroundColor: palette.surface },
                             ]}
                         >
                             <TextInput
@@ -846,8 +843,10 @@ const styles = StyleSheet.create({
         maxWidth: 200,
     },
     messageBox: {
+        // Borderless surface fill, matching the "Search friends" field above
+        // (surface-vs-bg is the separation) — taller/multi-line stays, only
+        // the stroke goes.
         borderRadius: radius.sm,
-        borderWidth: 1,
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
         minHeight: 80,
