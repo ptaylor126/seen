@@ -1,4 +1,5 @@
 import { MotiView } from 'moti';
+import { Fragment, useState } from 'react';
 import {
     Pressable,
     StyleSheet,
@@ -7,15 +8,13 @@ import {
     View,
 } from 'react-native';
 
-import { Avatar } from '@/components/avatar';
 import {
     type CommentMenuTarget,
     type CommentRow,
+    formatMessageTime,
     type ReactionRow,
-    relativeTimestamp,
+    TIME_SEPARATOR_GAP_MS,
 } from '@/components/thread/shared';
-import { UserLink } from '@/components/user-link';
-import { goToProfile } from '@/lib/profile-nav';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 // A post-watched comment's body is `${note}\n\nGave it ★★★★` (or just the
@@ -28,6 +27,12 @@ import { getPalette, radius, spacing, typography } from '@/theme/theme';
 //
 // Both lead-ins are recognised: "Gave it " (current) and "I gave it " (older
 // comments stored before the wording change) so already-posted rows still split.
+// Fixed width per emoji in the reaction badge — generous enough that any
+// emoji's drawn bitmap (which iOS can render wider than its measured
+// advance) fits with room to centre. See reactionEmoji for why the Text
+// must not self-size.
+const EMOJI_CELL_WIDTH = 18;
+
 const RATING_LINE_PREFIXES = ['Gave it ', 'I gave it '];
 function ratingLinePrefixOf(line: string): string | null {
     return RATING_LINE_PREFIXES.find((p) => line.startsWith(p)) ?? null;
@@ -50,9 +55,16 @@ function splitWatchedBody(body: string): {
     return { note: body, ratingLine: null };
 }
 
-// The flat chronological comment list of a thread. Extracted verbatim from
-// rec/[recId].tsx — no label; the composer placeholder carries the empty
-// state; an empty list renders nothing (just the container).
+// Chat-bubble thread rendering (shared by the chat screen and the rec
+// page's comment thread). Own messages: right-aligned, accent fill, white
+// text. The other party's: left-aligned, surface fill, dark text. NO
+// avatars/names on bubbles — alignment + color carry identity. No always-on
+// timestamps: a centered time separator appears between messages more than
+// TIME_SEPARATOR_GAP_MS apart (and before the first); tapping a bubble
+// toggles its exact send time; long-press opens the menu as before.
+// Reactions render as a small badge overlapping the bubble's inner top
+// corner (iMessage-style) instead of the old below-body chips — same data,
+// same live updates, visual only.
 export function ThreadCommentList({
     comments,
     myUserId,
@@ -68,30 +80,57 @@ export function ThreadCommentList({
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
+    // Which bubble has its exact send time revealed (tap toggles; tapping
+    // another bubble moves the reveal there).
+    const [expandedTimeId, setExpandedTimeId] = useState<string | null>(null);
 
     return (
         <View style={styles.commentsList}>
-            {comments.map((c) => {
-                const isMine = c.userId === myUserId;
-                const authorName = c.author?.displayName ?? 'Deleted user';
-                // Full reaction list for this comment —
-                // rendered as a persistent badge under the
-                // body, one chip per (user, emoji). Tap
-                // semantics live in the long-press popover;
-                // the badge is display-only.
+            {comments.map((c, i) => {
+                const isMine = !!myUserId && c.userId === myUserId;
+                // Time separator between message groups: before the first
+                // message, and whenever the gap from the previous one is
+                // meaningful.
+                const prev = i > 0 ? comments[i - 1] : null;
+                const showSeparator =
+                    !prev ||
+                    new Date(c.createdAt).getTime() -
+                        new Date(prev.createdAt).getTime() >=
+                        TIME_SEPARATOR_GAP_MS;
                 const cReactionList = commentReactions.get(c.id) ?? [];
-                // Watched-sheet comments carry the rating as a
-                // trailing "Gave it ★★★★" line — split it out
-                // so it renders as its own accent line (tight
-                // gap) rather than a \n\n blank line in the body.
+                // Same-sender clustering: consecutive messages from one
+                // sender sit close (a run reads as one turn — but each
+                // message keeps its own beat; 2px merged runs into a dense
+                // block, 12px dissolved them), and the gap widens when the
+                // sender changes or a time separator intervenes. The
+                // reaction badge deliberately does NOT affect these margins:
+                // it's an absolute overlay that floats into the existing
+                // gap (iMessage-style), so a reacted message has the same
+                // vertical footprint as a plain one.
+                const clustered =
+                    !!prev && prev.userId === c.userId && !showSeparator;
+                // 6 = the beat between xs(4) and sm(8) — deliberate
+                // in-between rhythm value. Rows directly under a time
+                // separator (the thread's first message always is) get
+                // base(16) instead of md(12): explicit headroom for the
+                // reaction badge's upward overhang, so a badge on the
+                // first message has clear space above its bubble.
+                const rowMarginTop = showSeparator
+                    ? spacing.base
+                    : clustered
+                      ? 6
+                      : spacing.md;
+                // Watched-sheet comments carry the rating as a trailing
+                // "Gave it ★★★★" line — split it out so it renders as its
+                // own styled line inside the bubble rather than a \n\n
+                // blank gap.
                 const watchedParts = c.fromWatched
                     ? splitWatchedBody(c.body)
                     : null;
-                // Rating-only watched comment (no note) → the
-                // "watched" caption and the rating line would be
-                // two near-identical accent lines, so collapse
-                // to a single "watched · ★★★★" (glyphs only,
-                // dropping the rating lead-in).
+                // Rating-only watched comment (no note) → the "watched"
+                // caption and the rating line would be two near-identical
+                // lines, so collapse to a single "watched · ★★★★" (glyphs
+                // only, dropping the rating lead-in).
                 const collapsedWatchedStars =
                     watchedParts &&
                     watchedParts.note === null &&
@@ -103,190 +142,184 @@ export function ThreadCommentList({
                               ).length,
                           )
                         : null;
+                // Side-dependent colors: the plum accent lines are invisible
+                // on an own (accent-filled) bubble, so own bubbles render
+                // body AND the watched/rating lines in the inverse color.
+                const bodyColor = isMine ? palette.textInverse : palette.text;
+                const specialColor = isMine
+                    ? palette.textInverse
+                    : palette.accent;
                 return (
-                    <Pressable
-                        key={c.id}
-                        onLongPress={(e) =>
-                            onLongPressComment({
-                                commentId: c.id,
-                                anchorY: e.nativeEvent.pageY,
-                                isOwn: isMine,
-                                authorId: c.userId,
-                            })
-                        }
-                        style={styles.commentRow}
-                    >
-                        <UserLink
-                            userId={c.userId}
-                            disabled={isMine || !c.userId}
-                            hitSlop={8}
-                            accessibilityLabel={`View ${authorName}'s profile`}
+                    <Fragment key={c.id}>
+                        {showSeparator ? (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.timeSeparator,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {formatMessageTime(c.createdAt)}
+                            </Text>
+                        ) : null}
+                        <View
+                            style={[
+                                styles.bubbleRow,
+                                isMine ? styles.rowMine : styles.rowTheirs,
+                                { marginTop: rowMarginTop },
+                            ]}
                         >
-                            <Avatar
-                                avatarUrl={c.author?.avatarUrl ?? null}
-                                displayName={authorName}
-                                seedId={c.userId ?? `deleted:${c.id}`}
-                                size={28}
-                            />
-                        </UserLink>
-                        <View style={styles.commentText}>
-                            <View style={styles.commentMeta}>
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        {
-                                            color: palette.text,
-                                            fontWeight: '600',
-                                        },
-                                    ]}
-                                    onPress={
-                                        isMine || !c.userId
-                                            ? undefined
-                                            : () =>
-                                                  goToProfile({
-                                                      userId: c.userId,
-                                                  })
-                                    }
-                                >
-                                    {isMine ? 'You' : authorName}
-                                </Text>
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        {
-                                            color: palette.textMuted,
-                                        },
-                                    ]}
-                                >
-                                    {relativeTimestamp(c.createdAt)}
-                                </Text>
-                            </View>
-                            {/* Quiet "watched" status for
-                                post-watched-sheet comments — a
-                                plum accent line under the name,
-                                not a badge. Hidden in the no-note
-                                case, where it merges into the
-                                single collapsed line below. */}
-                            {c.fromWatched && !collapsedWatchedStars ? (
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        { color: palette.accent },
-                                    ]}
-                                >
-                                    watched
-                                </Text>
-                            ) : null}
-                            {collapsedWatchedStars ? (
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        { color: palette.accent },
-                                    ]}
-                                >
-                                    watched · {collapsedWatchedStars}
-                                </Text>
-                            ) : watchedParts ? (
-                                <>
-                                    {watchedParts.note !== null ? (
-                                        <Text
-                                            style={[
-                                                typography.body,
-                                                {
-                                                    color: palette.text,
-                                                    // Container
-                                                    // gap is xs;
-                                                    // +xs = sm
-                                                    // between the
-                                                    // "watched"
-                                                    // caption and
-                                                    // the note.
-                                                    marginTop: spacing.xs,
-                                                },
-                                            ]}
-                                        >
-                                            {watchedParts.note}
-                                        </Text>
-                                    ) : null}
-                                    {watchedParts.ratingLine !== null ? (
-                                        <Text
-                                            style={[
-                                                typography.body,
-                                                {
-                                                    color: palette.accent,
-                                                    // Container
-                                                    // gap is xs;
-                                                    // +xs = sm
-                                                    // between note
-                                                    // and rating.
-                                                    marginTop: spacing.xs,
-                                                },
-                                            ]}
-                                        >
-                                            {watchedParts.ratingLine}
-                                        </Text>
-                                    ) : null}
-                                </>
-                            ) : (
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        { color: palette.text },
-                                    ]}
-                                >
-                                    {c.body}
-                                </Text>
-                            )}
-                            {cReactionList.length > 0 ? (
-                                <View style={styles.commentReactionsBadge}>
-                                    {cReactionList.map((r) => {
-                                        const mine = r.userId === myUserId;
-                                        return (
-                                            <MotiView
-                                                key={r.userId}
-                                                // Spring pop as
-                                                // a reaction
-                                                // lands (yours
-                                                // on tap, or a
-                                                // new one via
-                                                // realtime —
-                                                // stable key so
-                                                // only new
-                                                // chips pop).
-                                                from={{
-                                                    scale: 0,
-                                                }}
-                                                animate={{
-                                                    scale: 1,
-                                                }}
-                                                transition={{
-                                                    type: 'spring',
-                                                    damping: 11,
-                                                    stiffness: 260,
-                                                }}
+                            <Pressable
+                                onPress={() =>
+                                    setExpandedTimeId((cur) =>
+                                        cur === c.id ? null : c.id,
+                                    )
+                                }
+                                onLongPress={(e) =>
+                                    onLongPressComment({
+                                        commentId: c.id,
+                                        anchorY: e.nativeEvent.pageY,
+                                        isOwn: isMine,
+                                        authorId: c.userId,
+                                    })
+                                }
+                                style={[
+                                    styles.bubble,
+                                    isMine
+                                        ? styles.bubbleMine
+                                        : styles.bubbleTheirs,
+                                    {
+                                        backgroundColor: isMine
+                                            ? palette.accent
+                                            : palette.surface,
+                                    },
+                                ]}
+                            >
+                                {/* Quiet "watched" caption for post-watched-
+                                    sheet comments — hidden in the no-note
+                                    case, where it merges into the single
+                                    collapsed line below. */}
+                                {c.fromWatched && !collapsedWatchedStars ? (
+                                    <Text
+                                        style={[
+                                            typography.caption,
+                                            { color: specialColor },
+                                        ]}
+                                    >
+                                        watched
+                                    </Text>
+                                ) : null}
+                                {collapsedWatchedStars ? (
+                                    <Text
+                                        style={[
+                                            typography.caption,
+                                            { color: specialColor },
+                                        ]}
+                                    >
+                                        watched · {collapsedWatchedStars}
+                                    </Text>
+                                ) : watchedParts ? (
+                                    <>
+                                        {watchedParts.note !== null ? (
+                                            <Text
                                                 style={[
-                                                    styles.commentReactionChip,
+                                                    typography.body,
                                                     {
-                                                        backgroundColor: mine
-                                                            ? palette.accent
-                                                            : palette.surfaceAlt,
+                                                        color: bodyColor,
+                                                        // Bubble gap is xs;
+                                                        // +xs = sm between
+                                                        // the caption and
+                                                        // the note.
+                                                        marginTop: spacing.xs,
                                                     },
                                                 ]}
                                             >
-                                                <Text
-                                                    style={
-                                                        styles.commentReactionChipEmoji
-                                                    }
-                                                >
-                                                    {r.emoji}
-                                                </Text>
-                                            </MotiView>
-                                        );
-                                    })}
-                                </View>
-                            ) : null}
+                                                {watchedParts.note}
+                                            </Text>
+                                        ) : null}
+                                        {watchedParts.ratingLine !== null ? (
+                                            <Text
+                                                style={[
+                                                    typography.body,
+                                                    {
+                                                        color: specialColor,
+                                                        marginTop: spacing.xs,
+                                                    },
+                                                ]}
+                                            >
+                                                {watchedParts.ratingLine}
+                                            </Text>
+                                        ) : null}
+                                    </>
+                                ) : (
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: bodyColor },
+                                        ]}
+                                    >
+                                        {c.body}
+                                    </Text>
+                                )}
+                                {/* Reaction badge overlapping the bubble's
+                                    INNER top corner (facing the screen's
+                                    centre). A 1:1 thread holds at most one
+                                    reaction per party, so the badge renders
+                                    one — rarely two — emojis. */}
+                                {cReactionList.length > 0 ? (
+                                    <MotiView
+                                        from={{ scale: 0 }}
+                                        animate={{ scale: 1 }}
+                                        transition={{
+                                            type: 'spring',
+                                            damping: 11,
+                                            stiffness: 260,
+                                        }}
+                                        style={[
+                                            styles.reactionBadge,
+                                            isMine
+                                                ? styles.badgeMine
+                                                : styles.badgeTheirs,
+                                            {
+                                                backgroundColor:
+                                                    palette.surface,
+                                                borderColor: palette.border,
+                                            },
+                                        ]}
+                                    >
+                                        <Text
+                                            style={[
+                                                styles.reactionEmoji,
+                                                {
+                                                    width:
+                                                        cReactionList.length *
+                                                        EMOJI_CELL_WIDTH,
+                                                },
+                                            ]}
+                                        >
+                                            {cReactionList
+                                                .map((r) => r.emoji)
+                                                .join('')}
+                                        </Text>
+                                    </MotiView>
+                                ) : null}
+                            </Pressable>
                         </View>
-                    </Pressable>
+                        {expandedTimeId === c.id ? (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.expandedTime,
+                                    isMine
+                                        ? styles.expandedTimeMine
+                                        : styles.expandedTimeTheirs,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {formatMessageTime(c.createdAt)}
+                            </Text>
+                        ) : null}
+                    </Fragment>
                 );
             })}
         </View>
@@ -295,44 +328,102 @@ export function ThreadCommentList({
 
 const styles = StyleSheet.create({
     commentsList: {
-        gap: spacing.md,
-        // Replaces the spacing the removed "Comments" label used to give.
+        // NO uniform gap — vertical rhythm is per-row (see rowMarginTop):
+        // tight within a same-sender run, wider between senders, wider
+        // still above a bubble carrying a reaction badge.
         marginTop: spacing.xl,
     },
-    commentRow: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        alignItems: 'flex-start',
+    timeSeparator: {
+        alignSelf: 'center',
+        marginTop: spacing.base,
+        marginBottom: spacing.xs,
     },
-    commentText: {
-        flex: 1,
+    bubbleRow: {
+        flexDirection: 'row',
+        // marginTop applied per-row (clustering + badge headroom).
+        // The reaction badge overhangs the bubble (and the row's top edge);
+        // explicit visible overflow so no ancestor clips it — Android in
+        // particular clips children more eagerly than iOS.
+        overflow: 'visible',
+    },
+    rowMine: {
+        justifyContent: 'flex-end',
+    },
+    rowTheirs: {
+        justifyContent: 'flex-start',
+    },
+    bubble: {
+        maxWidth: '78%',
+        paddingHorizontal: spacing.base,
+        paddingVertical: spacing.sm + 2,
+        borderRadius: radius.lg,
         gap: spacing.xs,
+        // The reaction badge hangs past the top corner.
+        overflow: 'visible',
     },
-    commentMeta: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
+    bubbleMine: {
+        // Tighter corner on the anchor (bottom-trailing) side — the
+        // screenshot's bubble shape.
+        borderBottomRightRadius: radius.sm / 2,
     },
-    // Resting-state badge under each comment body. `commentText` has
-    // gap: spacing.xs between siblings, so no marginTop here. flexWrap
-    // so a future widening of the emoji set or multi-party threads
-    // can grow vertically without overflowing the row.
-    commentReactionsBadge: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: spacing.xs,
+    bubbleTheirs: {
+        borderBottomLeftRadius: radius.sm / 2,
     },
-    commentReactionChip: {
-        paddingHorizontal: spacing.xs,
-        paddingVertical: 2,
+    reactionBadge: {
+        // Pure overlay: absolute, floats half-on/half-off its OWN bubble's
+        // top corner — never reserves layout space, so reacted and plain
+        // messages share the same vertical footprint. top: -3 keeps clear
+        // daylight from the previous row even in a clustered 6px gap
+        // (-10 climbed into the previous bubble; -6 still crowded it).
+        position: 'absolute',
+        top: -3,
+        // The badge must paint OVER its bubble in full — a device pass
+        // caught the bubble fill biting a corner off the badge. zIndex +
+        // elevation pin it to the top of the stacking order on both
+        // platforms.
+        zIndex: 1,
+        elevation: 1,
         borderRadius: radius.full,
-        minHeight: 22,
-        minWidth: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 4,
+        paddingVertical: 2,
     },
-    commentReactionChipEmoji: {
-        fontSize: 14,
+    // Inner-corner anchoring: the badge hangs off the bubble's top corner
+    // on the side facing the screen's CENTRE (own bubbles sit right →
+    // badge off the top-left; theirs → off the top-right). -12 pushes it
+    // further centre-ward than the original -8 so most of the badge
+    // (~26pt wide for one emoji) floats in the open space beside the
+    // bubble, intruding only ~14pt — inside the bubble's 16pt text inset,
+    // so it clears the word beneath. The centre side has the whole
+    // conversation width to spare, so no edge/clipping risk.
+    badgeMine: {
+        left: -12,
+    },
+    badgeTheirs: {
+        right: -12,
+    },
+    // Small emoji text metrics on iOS are unreliable: the measured advance
+    // differs from the drawn bitmap width, and the mismatch VARIES BY
+    // EMOJI (a self-sized Text clipped the ❤️'s right edge; letterSpacing/
+    // margin compensation centred one emoji and skewed another). So the
+    // Text doesn't self-size at all: it gets a fixed EMOJI_CELL_WIDTH per
+    // emoji (inline, from the reaction count) and textAlign centres the
+    // glyph run inside it — per-emoji metric quirks land as symmetric
+    // slack instead of a lopsided/clipped edge.
+    reactionEmoji: {
+        fontSize: 12,
         lineHeight: 16,
+        textAlign: 'center',
+    },
+    expandedTime: {
+        marginTop: 2,
+    },
+    expandedTimeMine: {
+        alignSelf: 'flex-end',
+        marginRight: spacing.sm,
+    },
+    expandedTimeTheirs: {
+        alignSelf: 'flex-start',
+        marginLeft: spacing.sm,
     },
 });

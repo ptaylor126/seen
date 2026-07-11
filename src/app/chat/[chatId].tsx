@@ -46,12 +46,10 @@ import {
     type TitleChatRow,
 } from '@/lib/chats';
 import { useThreadRealtime } from '@/hooks/use-thread-realtime';
-import { goToProfile } from '@/lib/profile-nav';
 import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
-    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -59,8 +57,8 @@ import {
     typography,
 } from '@/theme/theme';
 
-// Small avatar on the "Chat with {name}" line above the thread.
-const WITH_LINE_AVATAR_SIZE = 28;
+// The other party's avatar in the centered identity header.
+const IDENTITY_AVATAR_SIZE = 56;
 
 interface ChatTitleMeta {
     title: string;
@@ -600,6 +598,33 @@ export default function ChatScreen() {
                     ]}
                     keyboardShouldPersistTaps="handled"
                 >
+                    {/* Centered identity header (iMessage-style): the OTHER
+                        party's avatar + "You & {name}" — perspective-shifts
+                        by viewer, never shows your own avatar. */}
+                    <View style={styles.identityHeader}>
+                        <UserLink
+                            userId={otherProfile?.userId ?? null}
+                            disabled={!otherProfile}
+                            hitSlop={8}
+                            accessibilityLabel={`View ${otherName}'s profile`}
+                        >
+                            <Avatar
+                                avatarUrl={otherProfile?.avatarUrl ?? null}
+                                displayName={otherName}
+                                seedId={otherProfile?.userId ?? chat.id}
+                                size={IDENTITY_AVATAR_SIZE}
+                            />
+                        </UserLink>
+                        <Text
+                            style={[
+                                typography.heading,
+                                { color: palette.text },
+                            ]}
+                        >
+                            You & {otherFirstName}
+                        </Text>
+                    </View>
+
                     {/* Compact title header — small poster + title/year,
                         tappable through to the full title page. No hero,
                         no status chrome: a chat has no lifecycle. */}
@@ -668,52 +693,6 @@ export default function ChatScreen() {
                     </Pressable>
 
                     <View style={styles.bodyPad}>
-                        {/* Light framing of who this thread is with — small
-                            avatar + "Chat with {name}", mirroring the rec
-                            screen's attribution-line voice without any
-                            "recommends" verb. */}
-                        <View style={styles.withLine}>
-                            <UserLink
-                                userId={otherProfile?.userId ?? null}
-                                disabled={!otherProfile}
-                                hitSlop={8}
-                                accessibilityLabel={`View ${otherName}'s profile`}
-                            >
-                                <Avatar
-                                    avatarUrl={otherProfile?.avatarUrl ?? null}
-                                    displayName={otherName}
-                                    seedId={otherProfile?.userId ?? chat.id}
-                                    size={WITH_LINE_AVATAR_SIZE}
-                                />
-                            </UserLink>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                                numberOfLines={1}
-                            >
-                                Chat with{' '}
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        styles.withName,
-                                        { color: palette.accent },
-                                    ]}
-                                    onPress={
-                                        otherProfile
-                                            ? () =>
-                                                  goToProfile({
-                                                      userId: otherProfile.userId,
-                                                  })
-                                            : undefined
-                                    }
-                                >
-                                    {otherFirstName}
-                                </Text>
-                            </Text>
-                        </View>
-
                         <ThreadCommentList
                             comments={comments}
                             myUserId={myUserId}
@@ -814,8 +793,9 @@ const styles = StyleSheet.create({
         // paddingTop/Bottom applied inline (safe-area + close-button
         // clearance).
     },
-    // Compact tappable title card: poster thumb + title/year + chevron.
-    // Surface-filled so it reads as one control, inset from the edges.
+    // Compact tappable title card: poster + title/year + chevron. Surface-
+    // filled with a soft shadow so it reads as the conversation's anchor,
+    // gently lifted off the wash rather than flat against it.
     titleHeader: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -823,10 +803,18 @@ const styles = StyleSheet.create({
         marginHorizontal: spacing.base,
         padding: spacing.sm,
         borderRadius: radius.md,
+        // Subtle elevation — iOS shadow + Android elevation pair.
+        shadowColor: '#000',
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 3,
     },
     titlePoster: {
-        width: 48,
-        height: 72,
+        // Larger than the original 48×72 thumb — the poster is the
+        // conversation's visual anchor.
+        width: 68,
+        height: 102,
         borderRadius: radius.sm,
     },
     titleHeaderText: {
@@ -836,17 +824,11 @@ const styles = StyleSheet.create({
     bodyPad: {
         paddingHorizontal: spacing.base,
     },
-    withLine: {
-        flexDirection: 'row',
+    identityHeader: {
         alignItems: 'center',
         gap: spacing.sm,
-        marginTop: spacing.md,
-    },
-    withName: {
-        // Bold Geist on the name chunk — mirrors the rec screen's
-        // attribution-line name treatment.
-        fontFamily: fontFamily.bold,
-        fontWeight: '700',
+        marginBottom: spacing.base,
+        paddingHorizontal: spacing.base,
     },
     newMessagePill: {
         // Floating over the thread's bottom edge, self-centered. Full-radius

@@ -53,6 +53,43 @@ export interface CommentMenuTarget {
     authorId: string | null;
 }
 
+// Minimum gap between consecutive messages before the thread renders a
+// centered time separator between them (iMessage-style). Messages closer
+// together read as one exchange and get no marker. Three hours: title
+// conversations here are slow-cadence (spanning evenings/days), so an
+// evening's exchange reads as one block and a new day/session always gets
+// its marker — 30 minutes produced near-hourly noise.
+export const TIME_SEPARATOR_GAP_MS = 3 * 60 * 60 * 1000;
+
+// Contextual absolute time for thread separators and the tap-to-reveal
+// exact send time: "Today 2:47 PM", "Yesterday 2:47 PM", a weekday within
+// the last six days ("Tuesday 2:47 PM"), else a date ("Jul 3, 2:47 PM").
+export function formatMessageTime(iso: string): string {
+    const date = new Date(iso);
+    const now = new Date();
+    const time = date.toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+    const startOfDay = (d: Date) =>
+        new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayDiff = Math.round(
+        (startOfDay(now) - startOfDay(date)) / (24 * 60 * 60 * 1000),
+    );
+    if (dayDiff <= 0) return `Today ${time}`;
+    if (dayDiff === 1) return `Yesterday ${time}`;
+    if (dayDiff < 7) {
+        return `${date.toLocaleDateString([], { weekday: 'long' })} ${time}`;
+    }
+    return `${date.toLocaleDateString([], {
+        month: 'short',
+        day: 'numeric',
+        ...(date.getFullYear() !== now.getFullYear()
+            ? { year: 'numeric' }
+            : {}),
+    })}, ${time}`;
+}
+
 export function relativeTimestamp(iso: string): string {
     const date = new Date(iso);
     const diffMs = Date.now() - date.getTime();
