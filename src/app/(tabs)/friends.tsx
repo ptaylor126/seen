@@ -276,18 +276,21 @@ export default function FriendsScreen() {
                         accessibilityLabel="Add friend by handle"
                         style={({ pressed }) => [
                             styles.addAction,
-                            pressed && { opacity: 0.6 },
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: pressed ? 0.8 : 1,
+                            },
                         ]}
                     >
                         <Plus
-                            color={palette.accent}
+                            color={palette.textInverse}
                             size={20}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
                                 typography.bodyEmphasis,
-                                { color: palette.accent },
+                                { color: palette.textInverse },
                             ]}
                         >
                             Add
@@ -542,13 +545,19 @@ export default function FriendsScreen() {
 const styles = StyleSheet.create({
     root: { flex: 1 },
     addAction: {
-        // Header-right "+ Add" — icon + label so it reads as a clear
-        // action rather than a bare ambiguous "+". Accent-coloured to
-        // mark it as the primary affordance (matches the accent "Add by
-        // handle" / Cancel text used elsewhere). Routes to /friends/add.
+        // Header-right "+ Add" — a compact filled plum pill (fill inline),
+        // matching the chat/recommend header Send buttons: the shared
+        // button radius at header scale, white icon + label. Vertical
+        // padding is 7 (NOT spacing.sm/8): 22pt line + 14 = exactly the
+        // header bar's pinned 36pt content region, preserving the
+        // "bell at the same Y on every tab" invariant (see the bar height
+        // comment in screen-header.tsx). Routes to /friends/add.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.xs,
+        paddingVertical: 7,
+        paddingHorizontal: spacing.base,
+        borderRadius: button.borderRadius,
     },
     fillCenter: {
         flex: 1,

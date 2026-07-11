@@ -32,6 +32,7 @@ import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -659,17 +660,27 @@ export default function RecommendScreen() {
                             : `Send to ${selectedCount}`
                     }
                     style={({ pressed }) => [
-                        pressed && { opacity: 0.6 },
-                        !canSend && { opacity: 0.4 },
+                        styles.sendButton,
+                        {
+                            backgroundColor:
+                                canSend || sending
+                                    ? palette.accent
+                                    : palette.surfaceAlt,
+                            opacity: pressed && canSend ? 0.8 : 1,
+                        },
                     ]}
                 >
                     {sending ? (
-                        <ActivityIndicator color={palette.accent} />
+                        <ActivityIndicator color={palette.textInverse} />
                     ) : (
                         <Text
                             style={[
                                 typography.bodyEmphasis,
-                                { color: palette.accent },
+                                {
+                                    color: canSend
+                                        ? palette.textInverse
+                                        : palette.textMuted,
+                                },
                             ]}
                         >
                             {selectedCount === 0
@@ -1034,6 +1045,21 @@ const styles = StyleSheet.create({
         // stays tight so the title row that follows isn't oversized.
         paddingTop: spacing.base,
         paddingBottom: spacing.sm,
+    },
+    sendButton: {
+        // Compact filled header button — the app's button radius (the
+        // shared geometry token) at header scale, matching the chat
+        // screen's header Send exactly; fill/label colors resolve per
+        // state inline (plum/white actionable, surfaceAlt/muted disabled).
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.base,
+        borderRadius: button.borderRadius,
+        alignItems: 'center',
+        justifyContent: 'center',
+        // Pinned to roughly the "Send to 1" width so the pill doesn't
+        // visibly jump between the disabled "Send" state and the active
+        // counted label as the selection changes.
+        minWidth: 104,
     },
     scrollContent: {
         paddingBottom: spacing.xl,
