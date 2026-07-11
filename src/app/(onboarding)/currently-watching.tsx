@@ -31,6 +31,7 @@ import {
 import { setOnboardingItemStatus } from '@/lib/onboarding-utils';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -329,8 +330,8 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

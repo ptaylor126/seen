@@ -13,7 +13,7 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import { button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 const logoSource = require('../../../assets/logo.png');
 
@@ -309,8 +309,8 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.md,
     },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

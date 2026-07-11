@@ -16,7 +16,7 @@ import {
     View,
 } from 'react-native';
 
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import { button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface LoadErrorProps {
     title?: string;
@@ -90,9 +90,9 @@ const styles = StyleSheet.create({
     message: { textAlign: 'center', marginTop: spacing.xs },
     retryButton: {
         marginTop: spacing.lg,
-        paddingVertical: spacing.md,
+        paddingVertical: button.paddingVertical,
         paddingHorizontal: spacing.xl,
-        borderRadius: radius.sm,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

@@ -21,6 +21,7 @@ import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -385,9 +386,9 @@ const styles = StyleSheet.create({
         // the nav list above; radius.sm matches the app's button shape.
         marginTop: spacing.lg,
         marginHorizontal: spacing.base,
-        paddingVertical: spacing.md,
+        paddingVertical: button.paddingVertical,
         borderWidth: 1,
-        borderRadius: radius.sm,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

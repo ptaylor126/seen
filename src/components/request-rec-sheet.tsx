@@ -20,7 +20,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import { button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface RequestRecSheetProps {
     visible: boolean;
@@ -275,8 +275,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: spacing.md,
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
     },
     cancelButton: {
         alignSelf: 'center',

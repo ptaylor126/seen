@@ -68,6 +68,7 @@ import {
     type TMDBWatchProvidersRegion,
 } from '@/lib/tmdb';
 import {
+    button,
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
@@ -2902,18 +2903,21 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         marginHorizontal: spacing.base,
         marginTop: spacing.md,
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
     },
     chatButton: {
         // Ghost secondary beneath Recommend: icon + muted label, no
-        // fill/border — quiet by design (see the JSX comment).
+        // fill/border — quiet by design (see the JSX comment). md (not xs)
+        // above so it reads as its own distinct action rather than crowding
+        // the filled Recommend — more noticeable since the buttons got
+        // taller.
         flexDirection: 'row',
         gap: spacing.xs,
         alignItems: 'center',
         justifyContent: 'center',
         marginHorizontal: spacing.base,
-        marginTop: spacing.xs,
+        marginTop: spacing.md,
         paddingVertical: spacing.sm,
     },
     closeButton: {

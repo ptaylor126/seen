@@ -36,6 +36,7 @@ import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    button,
     fontFamily,
     getPalette,
     radius,
@@ -1848,14 +1849,14 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },
     secondaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',

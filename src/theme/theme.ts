@@ -250,6 +250,20 @@ export const chip = {
     borderWidth: StyleSheet.hairlineWidth,
 } as const;
 
+// Button — the canonical full-width CTA (the filled plum Recommend / Save /
+// Send primaries AND their outlined secondary siblings, which share rows and
+// must match heights). Geometry only; fills/borders resolve from the palette
+// at render. 14 vertical padding + the md radius reads a touch taller and
+// clearly rounder than the old spacing.md/radius.sm pair (~50pt tall,
+// radius:height ≈ 0.36) while staying well clear of the RN half-height pill
+// clamp (25 at this height). Deliberately NOT applied to compact row-buttons,
+// existing pills, ghost/text buttons, icon circles, the tab bar, segmented
+// controls, or chips.
+export const button = {
+    paddingVertical: 14,
+    borderRadius: radius.md,
+} as const;
+
 export const motion = {
     duration: {
         fast: 150,

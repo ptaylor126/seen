@@ -17,6 +17,7 @@ import { Avatar } from '@/components/avatar';
 import { shareInvite } from '@/lib/invite';
 import supabase from '@/lib/supabase';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -496,8 +497,8 @@ const styles = StyleSheet.create({
     atPrefix: { fontWeight: '600' },
     input: { flex: 1, height: '100%' },
     submitButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import supabase from '@/lib/supabase';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -305,8 +306,8 @@ const styles = StyleSheet.create({
     },
     primaryButton: {
         flex: 1,
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

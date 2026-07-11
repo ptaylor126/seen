@@ -25,6 +25,7 @@ import { useUnreadCount } from '@/hooks/use-unread-count';
 import { shareInvite } from '@/lib/invite';
 import supabase from '@/lib/supabase';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -668,14 +669,14 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },
     secondaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',

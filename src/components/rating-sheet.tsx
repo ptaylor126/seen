@@ -32,6 +32,7 @@ import { applyWatchedRating, ratingGlyphs, type MediaType } from '@/lib/rating';
 import { getReceivedRecsForTitle, type ReceivedRec } from '@/lib/recs';
 import supabase from '@/lib/supabase';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -1152,8 +1153,8 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
         marginTop: spacing.md,
         paddingHorizontal: spacing.xl,
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
     },
     skipButton: {
         alignSelf: 'center',

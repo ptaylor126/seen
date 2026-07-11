@@ -21,6 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { pickFeedbackImage, uploadFeedbackScreenshot } from '@/lib/feedback-upload';
 import supabase from '@/lib/supabase';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -568,8 +569,8 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.lg,
     },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

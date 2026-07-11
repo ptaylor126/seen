@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -152,8 +153,8 @@ const styles = StyleSheet.create({
     body: { flex: 1, justifyContent: 'center', gap: spacing.md },
     footer: { gap: spacing.sm, paddingBottom: spacing.md },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

@@ -27,6 +27,7 @@ import { useProfile } from '@/hooks/use-profile';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -326,8 +327,8 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

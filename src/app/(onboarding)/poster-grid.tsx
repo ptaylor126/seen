@@ -35,6 +35,7 @@ import {
     type TMDBTVSummary,
 } from '@/lib/tmdb';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -544,8 +545,8 @@ const styles = StyleSheet.create({
     },
     footer: { gap: spacing.sm, paddingTop: spacing.sm },
     primaryButton: {
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

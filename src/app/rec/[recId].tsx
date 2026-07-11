@@ -67,6 +67,7 @@ import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    button,
     fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
@@ -1968,14 +1969,18 @@ const styles = StyleSheet.create({
     // and the composer. The note hero stays the largest element above.
     actionArea: {
         marginTop: spacing.lg,
-        gap: spacing.xs,
+        // md (not xs) between Save and "Not for me" — the same primary/ghost
+        // pairing as the title page's Recommend/Chat-about-it row, same
+        // breathing-room fix (crowding got more noticeable with the taller
+        // buttons).
+        gap: spacing.md,
     },
     saveButton: {
         // Primary, filled accent — the prominent action.
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
     },
     notForMeButton: {
         // Secondary, understated — muted text, no fill/border, so it's
