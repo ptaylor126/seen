@@ -22,6 +22,11 @@ interface ScreenHeaderProps {
     hideBell?: boolean;
     /** Extra right-side actions rendered before the Mail bell. */
     rightActions?: ReactNode;
+    /** Renders the header on a plum (accent) background with inverse
+     *  chrome — title, back chevron, and bell go white; the unread badge
+     *  flips to white-on-plum so it doesn't vanish accent-on-accent. Used
+     *  by the profile screens' plum banner headers. */
+    onAccent?: boolean;
 }
 
 export function ScreenHeader({
@@ -31,15 +36,19 @@ export function ScreenHeader({
     unreadCount = 0,
     hideBell = false,
     rightActions,
+    onAccent = false,
 }: ScreenHeaderProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
+    const chromeColor = onAccent ? palette.textInverse : palette.text;
 
     return (
         <SafeAreaView
             edges={['top']}
-            style={{ backgroundColor: palette.bg }}
+            style={{
+                backgroundColor: onAccent ? palette.accent : palette.bg,
+            }}
         >
             <View style={styles.bar}>
                 {showBackButton && (
@@ -49,7 +58,7 @@ export function ScreenHeader({
                         style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                     >
                         <ChevronLeft
-                            color={palette.accent}
+                            color={onAccent ? palette.textInverse : palette.accent}
                             size={28}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
@@ -60,7 +69,7 @@ export function ScreenHeader({
                     <View style={styles.title}>{leading}</View>
                 ) : title ? (
                     <Text
-                        style={[typography.display, styles.title, { color: palette.text }]}
+                        style={[typography.display, styles.title, { color: chromeColor }]}
                         numberOfLines={1}
                     >
                         {title}
@@ -79,7 +88,7 @@ export function ScreenHeader({
                         >
                             <View>
                                 <NotificationsIcon
-                                    color={palette.text}
+                                    color={chromeColor}
                                     width={26}
                                     height={26}
                                 />
@@ -87,13 +96,21 @@ export function ScreenHeader({
                                     <View
                                         style={[
                                             styles.badge,
-                                            { backgroundColor: palette.accent },
+                                            {
+                                                backgroundColor: onAccent
+                                                    ? palette.textInverse
+                                                    : palette.accent,
+                                            },
                                         ]}
                                     >
                                         <Text
                                             style={[
                                                 styles.badgeText,
-                                                { color: palette.textInverse },
+                                                {
+                                                    color: onAccent
+                                                        ? palette.accent
+                                                        : palette.textInverse,
+                                                },
                                             ]}
                                         >
                                             {unreadCount > 9

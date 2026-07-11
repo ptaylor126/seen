@@ -18,6 +18,7 @@ import {
     FlatList,
     Pressable,
     ScrollView,
+    StatusBar,
     StyleSheet,
     Text,
     TextInput,
@@ -28,6 +29,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { ArchCap } from '@/components/profile-arch';
 import { SegmentedControl } from '@/components/segmented-control';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { ViewControls } from '@/components/view-controls';
@@ -53,6 +55,7 @@ import { LibraryFilterControls } from '@/components/library-filter-controls';
 import { RequestRecSheet } from '@/components/request-rec-sheet';
 import { useRequestRec } from '@/hooks/use-request-rec';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -216,6 +219,14 @@ const TAB_OPTIONS: ReadonlyArray<{ value: ItemStatus; label: string }> =
 const POSTER_W = 56;
 const POSTER_H = 84;
 const AVATAR_SIZE = 80;
+// Plum banner zone inside the list header (below the fixed bar, down to the
+// arch crest). Taller than the own profile's 74 — the avatar/name sit a
+// little lower here so the extra elements (friends-since line, action
+// buttons) fit on the sheet with the same arch treatment.
+const BANNER_ZONE = 96;
+// Avatar straddles the crest, centre a hair above it — same placement rule
+// as the own profile, scaled to this screen's 80pt avatar.
+const AVATAR_TOP = BANNER_ZONE - AVATAR_SIZE / 2 - 4;
 
 // Grid sizing — mirrors the Library tab so a friend's grid looks
 // identical to your own at the same density setting. Kept locally
@@ -311,6 +322,19 @@ export default function FriendDetailScreen() {
 
     const [state, setState] = useState<ResolvedState>({ kind: 'loading' });
     const showLoader = useDeferredLoading(state.kind === 'loading');
+
+    // Light status-bar content while the plum banner header is on screen
+    // (main friends branch only — loader/error branches keep the standard
+    // bg chrome). Restored to dark on blur so screens navigated to (or
+    // back to) never end up with invisible status-bar icons.
+    const isFriendsBranch = state.kind === 'friends';
+    useFocusEffect(
+        useCallback(() => {
+            if (!isFriendsBranch) return;
+            StatusBar.setBarStyle('light-content');
+            return () => StatusBar.setBarStyle('dark-content');
+        }, [isFriendsBranch]),
+    );
     const [activeTab, setActiveTab] = useState<ItemStatus>('watched');
     const [items, setItems] = useState<ItemRow[]>([]);
     const [itemsLoading, setItemsLoading] = useState(false);
@@ -818,14 +842,16 @@ export default function FriendDetailScreen() {
 
     // ---- Render branches per state.
 
-    const backButton = (
+    // Parameterized: the loader/error branches render it accent-on-bg as
+    // before; the main friends branch renders it white on the plum banner.
+    const backButton = (color: string) => (
         <Pressable
             onPress={() => router.back()}
             hitSlop={spacing.sm}
             style={({ pressed }) => [pressed && { opacity: 0.6 }]}
         >
             <ChevronLeft
-                color={palette.accent}
+                color={color}
                 size={28}
                 strokeWidth={ICON_STROKE_WIDTH}
             />
@@ -838,7 +864,7 @@ export default function FriendDetailScreen() {
                 style={[styles.root, { backgroundColor: palette.bg }]}
                 edges={['top']}
             >
-                <View style={styles.headerBar}>{backButton}</View>
+                <View style={styles.headerBar}>{backButton(palette.accent)}</View>
                 <FullScreenLoader />
             </SafeAreaView>
         );
@@ -854,7 +880,7 @@ export default function FriendDetailScreen() {
                 style={[styles.root, { backgroundColor: palette.bg }]}
                 edges={['top']}
             >
-                <View style={styles.headerBar}>{backButton}</View>
+                <View style={styles.headerBar}>{backButton(palette.accent)}</View>
                 <View style={styles.fillCenter}>
                     <Text
                         style={[
@@ -887,7 +913,7 @@ export default function FriendDetailScreen() {
                 style={[styles.root, { backgroundColor: palette.bg }]}
                 edges={['top']}
             >
-                <View style={styles.headerBar}>{backButton}</View>
+                <View style={styles.headerBar}>{backButton(palette.accent)}</View>
                 <View style={styles.profileBlock}>
                     <Avatar
                         avatarUrl={state.profile.avatarUrl}
@@ -1088,15 +1114,31 @@ export default function FriendDetailScreen() {
     const listData: LibraryListItem[] = [{ type: 'filters' }, ...bodyItems];
 
     // Profile info — scrolls away with the list (ListHeaderComponent).
+    // Plum banner + arched sheet: the banner continues the fixed bar's plum
+    // down to the arch crest; the avatar straddles the crest; name, handle,
+    // friends-since and the action buttons sit on the sheet below.
     const listHeader = (
         <>
-            <View style={styles.profileBlock}>
+            {/* Top-bounce cap: plum extended above the header so an iOS
+                overscroll at the top shows plum, never a bg seam. */}
+            <View
+                style={[styles.bounceCap, { backgroundColor: palette.accent }]}
+            />
+            <View
+                style={[styles.bannerZone, { backgroundColor: palette.accent }]}
+            />
+            <ArchCap />
+            {/* Avatar straddling the crest — absolute over the banner/sheet
+                boundary. */}
+            <View style={styles.archAvatar} pointerEvents="box-none">
                 <Avatar
                     avatarUrl={profile.avatarUrl}
                     displayName={profile.displayName}
                     seedId={profile.id}
                     size={AVATAR_SIZE}
                 />
+            </View>
+            <View style={styles.profileBlock}>
                 <Text
                     style={[typography.heading, { color: palette.text }]}
                     numberOfLines={1}
@@ -1143,27 +1185,29 @@ export default function FriendDetailScreen() {
                         Recommend something
                     </Text>
                 </Pressable>
-                {/* Untied request: nudges this friend to send a rec. The
-                    secondary (outlined) sibling to the filled "Recommend
-                    something" primary — the lighter-weight ask. */}
+                {/* Untied request: nudges this friend to send a rec. Ghost
+                    row (matching the title page's "Chat about it") — muted
+                    icon + label, no fill/border, so "Recommend something"
+                    is the single clear primary and this is the quiet
+                    secondary. */}
                 <Pressable
                     onPress={() =>
                         requestRec.open(profile.id, profile.displayName)
                     }
                     style={({ pressed }) => [
                         styles.requestButton,
-                        { borderColor: palette.border, opacity: pressed ? 0.6 : 1 },
+                        { opacity: pressed ? 0.6 : 1 },
                     ]}
                 >
                     <MessageSquarePlus
-                        color={palette.text}
+                        color={palette.textMuted}
                         size={16}
                         strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
                         style={[
                             typography.bodyEmphasis,
-                            { color: palette.text },
+                            { color: palette.textMuted },
                         ]}
                     >
                         Request a recommendation
@@ -1582,9 +1626,16 @@ export default function FriendDetailScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <SafeAreaView edges={['top']} style={{ backgroundColor: palette.bg }}>
+            {/* Fixed chrome on the plum banner — the plum reaches the
+                physical top of the screen (safe area included); chevron and
+                overflow go white. ViewControls keeps its own light
+                surfaceAlt container, legible on plum unchanged. */}
+            <SafeAreaView
+                edges={['top']}
+                style={{ backgroundColor: palette.accent }}
+            >
                 <View style={styles.headerBar}>
-                    {backButton}
+                    {backButton(palette.textInverse)}
                     <View style={styles.headerBarRight}>
                         <ViewControls
                             mode={mode}
@@ -1606,7 +1657,7 @@ export default function FriendDetailScreen() {
                         >
                             <MoreVertical
                                 size={22}
-                                color={palette.text}
+                                color={palette.textInverse}
                                 strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
@@ -1696,10 +1747,39 @@ const styles = StyleSheet.create({
     overflowButton: {
         padding: spacing.xs,
     },
+    // Top-bounce cap: plum extended 600pt above the list header so an iOS
+    // overscroll never exposes a bg seam above the banner.
+    bounceCap: {
+        position: 'absolute',
+        top: -600,
+        left: 0,
+        right: 0,
+        height: 600,
+    },
+    // Plum banner zone inside the list header — from below the fixed bar
+    // down to the arch crest.
+    bannerZone: {
+        width: '100%',
+        height: BANNER_ZONE,
+    },
+    // Avatar straddling the banner/sheet boundary. box-none so the
+    // full-width wrapper doesn't eat taps beside the avatar.
+    archAvatar: {
+        position: 'absolute',
+        top: AVATAR_TOP,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 2,
+    },
     profileBlock: {
         alignItems: 'center',
         paddingHorizontal: spacing.base,
-        paddingTop: spacing.md,
+        // On the sheet, directly after the arch cap; xs (was base) pulls
+        // the name up closer under the avatar — ~21pt from its bottom edge
+        // (this avatar clears the cap higher than the own profile's, so
+        // the smaller pad here lands the SAME visual gap as its md there).
+        paddingTop: spacing.xs,
         paddingBottom: spacing.lg,
         gap: spacing.xs,
     },
@@ -1866,28 +1946,27 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignSelf: 'stretch',
         gap: spacing.sm,
-        paddingVertical: spacing.md,
+        // Shared button geometry token — this block was missed by the
+        // original 19-site sweep; adopted here.
+        paddingVertical: button.paddingVertical,
         paddingHorizontal: spacing.base,
-        borderRadius: radius.sm,
+        borderRadius: button.borderRadius,
         borderWidth: 1.5,
         marginTop: spacing.md,
     },
-    // Secondary action — outlined (bordered, no fill) per our convention
-    // (filled = no border, outlined = bordered). Same width / height /
-    // radius as the primary above so they read as one matched pair;
-    // borderColor applied inline. The small marginTop is the gap between
-    // the two buttons.
+    // Quiet secondary — GHOST row (no fill/border, muted icon + label),
+    // matching the title page's "Chat about it" treatment, so the filled
+    // "Recommend something" above is the single clear primary. md gap
+    // below the primary = the standardized primary/ghost breathing room.
     requestButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'stretch',
-        gap: spacing.sm,
-        paddingVertical: spacing.md,
+        gap: spacing.xs,
+        paddingVertical: spacing.sm,
         paddingHorizontal: spacing.base,
-        borderRadius: radius.sm,
-        borderWidth: 1.5,
-        marginTop: spacing.sm,
+        marginTop: spacing.md,
     },
     filterZone: {
         // No shaded band — the controls sit on the page background (fill

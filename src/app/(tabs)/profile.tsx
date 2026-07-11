@@ -6,6 +6,7 @@ import {
     Alert,
     Pressable,
     ScrollView,
+    StatusBar,
     StyleSheet,
     Text,
     useColorScheme,
@@ -14,6 +15,7 @@ import {
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
+import { ArchCap, ARCH_DEPTH } from '@/components/profile-arch';
 import { ScreenHeader } from '@/components/screen-header';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { useProfile } from '@/hooks/use-profile';
@@ -30,6 +32,15 @@ import {
 } from '@/theme/theme';
 
 const AVATAR_SIZE = 96;
+// Plum banner zone inside the scroll content: from below the fixed header
+// row down to the arch crest (measured off the profile mockup). The plum
+// additionally fills the whole fixed-chrome area above via the onAccent
+// ScreenHeader, so it reaches the physical top of the screen.
+const BANNER_ZONE = 74;
+// Avatar straddles the arch crest — its centre sits a hair ABOVE the crest
+// (the mockup's placement: centre 189pt vs crest 193pt on a 393pt frame),
+// half over plum, half over the sheet.
+const AVATAR_TOP = BANNER_ZONE - AVATAR_SIZE / 2 - 4;
 
 export default function ProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -48,6 +59,19 @@ export default function ProfileScreen() {
         movies: [],
         tv: [],
     });
+
+    // Light status-bar content while the plum banner is on screen (the
+    // banner reaches the physical top, behind the clock/battery), restored
+    // to dark on blur so light-background screens (inbox, library, a pushed
+    // title page) never end up with invisible status-bar icons. Gated on
+    // `profile` — the loading/error branches render the standard bg header.
+    useFocusEffect(
+        useCallback(() => {
+            if (!profile) return;
+            StatusBar.setBarStyle('light-content');
+            return () => StatusBar.setBarStyle('dark-content');
+        }, [profile]),
+    );
 
     // Re-fetch on focus so the section refreshes when the editor (Layer 3)
     // ships and the user returns from it. Today it just loads once per
@@ -146,13 +170,16 @@ export default function ProfileScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader title="Profile" unreadCount={unreadCount} />
+            {/* Plum header chrome — the banner fills the fixed top area
+                (safe area + header row) via onAccent and continues into the
+                scroll content below, so the plum reaches the physical top
+                edge of the screen behind the status bar. */}
+            <ScreenHeader title="Profile" unreadCount={unreadCount} onAccent />
             {/* Scroll wrapper: the screen was previously flat (card + settings
                 rows) and fit comfortably on a phone. Adding the top-5
                 sections can push content past the viewport on small devices
                 and once the editor lands the section can grow further, so
-                everything below the header is scrollable now. Pure layout
-                change — no visual difference when content fits on screen. */}
+                everything below the header is scrollable now. */}
             <ScrollView
                 contentContainerStyle={[
                     styles.scrollContent,
@@ -165,7 +192,34 @@ export default function ProfileScreen() {
                     { paddingBottom: tabBarInset + spacing.xl },
                 ]}
             >
-                <View style={styles.card}>
+                {/* Top-bounce cap: extends the plum above the content so an
+                    iOS overscroll at the top shows plum, never a bg seam. */}
+                <View
+                    style={[styles.bounceCap, { backgroundColor: palette.accent }]}
+                />
+                {/* Plum banner zone (scrolls with content), then the arched
+                    top of the sheet. The avatar straddles the crest via the
+                    absolute cluster below. */}
+                <View
+                    style={[
+                        styles.bannerZone,
+                        { backgroundColor: palette.accent },
+                    ]}
+                />
+                <ArchCap />
+                {/* Name + handle on the sheet, clear of the arch curve. */}
+                <View style={styles.nameBlock}>
+                    <Text style={[typography.display, { color: palette.text }]}>
+                        {profile.displayName}
+                    </Text>
+                    <Text style={[typography.body, { color: palette.textMuted }]}>
+                        @{profile.handle}
+                    </Text>
+                </View>
+                {/* Avatar cluster — absolute over the banner/sheet boundary,
+                    half on the plum, half on the arch. Keeps the edit
+                    pencil badge. */}
+                <View style={styles.archAvatar} pointerEvents="box-none">
                     <View style={styles.avatarWrapper}>
                         {profile.avatarUrl ? (
                             <Image
@@ -188,10 +242,9 @@ export default function ProfileScreen() {
                             </View>
                         )}
                         {/* Edit badge — bottom-right of the avatar, the
-                            standard profile-edit affordance. Replaces the
-                            removed "Edit profile" list row; routes to the
-                            same /profile/edit screen. palette.bg ring so
-                            the plum badge separates from the avatar. */}
+                            standard profile-edit affordance. The badge sits
+                            on the sheet side of the straddle, so the
+                            palette.bg ring still separates it correctly. */}
                         <Pressable
                             onPress={() => router.push('/profile/edit')}
                             accessibilityRole="button"
@@ -212,16 +265,6 @@ export default function ProfileScreen() {
                                 strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
-                    </View>
-                    {/* Name + handle grouped tight so they read as one
-                        unit (the card's old uniform gap spread them out). */}
-                    <View style={styles.nameBlock}>
-                        <Text style={[typography.display, { color: palette.text }]}>
-                            {profile.displayName}
-                        </Text>
-                        <Text style={[typography.body, { color: palette.textMuted }]}>
-                            @{profile.handle}
-                        </Text>
                     </View>
                 </View>
 
@@ -326,14 +369,30 @@ const styles = StyleSheet.create({
         // saves a conditional wrapper.
         paddingBottom: spacing.lg,
     },
-    card: {
-        // No uniform `gap` — the avatar→name and name↔handle gaps are
-        // set explicitly (nameBlock.marginTop / nameBlock natural line
-        // spacing) so the name + handle can sit tight as one unit.
+    // Top-bounce cap: plum extended 600pt above the scroll content so an
+    // iOS overscroll never exposes a bg seam above the banner.
+    bounceCap: {
+        position: 'absolute',
+        top: -600,
+        left: 0,
+        right: 0,
+        height: 600,
+    },
+    // Plum banner zone inside the scroll content — from below the fixed
+    // header row to the arch crest.
+    bannerZone: {
+        width: '100%',
+        height: BANNER_ZONE,
+    },
+    // Avatar cluster straddling the banner/sheet boundary. box-none so the
+    // full-width wrapper doesn't eat taps beside the avatar.
+    archAvatar: {
+        position: 'absolute',
+        top: AVATAR_TOP,
+        left: 0,
+        right: 0,
         alignItems: 'center',
-        paddingTop: spacing.xl,
-        paddingBottom: spacing.xl,
-        paddingHorizontal: spacing.base,
+        zIndex: 2,
     },
     avatarWrapper: {
         // Relative box sized to the avatar so the edit badge can anchor
@@ -363,10 +422,14 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     nameBlock: {
-        // Gap from the avatar; name + handle inside stack at natural
-        // line spacing (no extra gap) so they read as one unit.
+        // On the sheet, below the straddling avatar: md (was lg) pulls the
+        // name up closer under the image — ~21pt from the avatar's bottom
+        // edge, accounting for the avatar's descent past the arch cap. Name
+        // + handle stack at natural line spacing so they read as one unit.
+        // paddingBottom is the old card's gap before the Top 5 sections.
         alignItems: 'center',
         marginTop: spacing.md,
+        paddingBottom: spacing.xl,
     },
     settingsRow: {
         flexDirection: 'row',
