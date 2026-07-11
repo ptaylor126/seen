@@ -4,11 +4,9 @@ import * as Linking from 'expo-linking';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
     ExternalLink,
-    Lock,
-    LockOpen,
     MessageCircle,
     MoreHorizontal,
-    Pencil,
+    Play,
     Send,
     X,
 } from 'lucide-react-native';
@@ -31,7 +29,7 @@ import { LoadError } from '@/components/load-error';
 import { AvatarStack } from '@/components/avatar-stack';
 import { EpisodeProgress } from '@/components/episode-progress';
 import { RatingSheet } from '@/components/rating-sheet';
-import { TitleTrailer } from '@/components/title-trailer';
+import { Toggle } from '@/components/toggle';
 import {
     WatchersSheet,
     type WatcherSheetItem,
@@ -48,7 +46,7 @@ import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
 import { getReceivedRecsForTitle } from '@/lib/recs';
-import { formatRatingStars, type MediaType } from '@/lib/rating';
+import { formatRatingStars, ratingGlyphs, type MediaType } from '@/lib/rating';
 import { UserLink } from '@/components/user-link';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptReport } from '@/lib/report';
@@ -57,6 +55,7 @@ import { ensureTitle } from '@/lib/titles';
 import {
     getMovie,
     getMovieWatchProviders,
+    selectTrailerKey,
     getTV,
     getTVWatchProviders,
     imageUrl,
@@ -89,13 +88,20 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
     watching: 'Watching',
     watched: 'Watched',
 };
-// Backdrop band — ~32% of screen height. Deliberately SHORTER than the
-// rec view's full-bleed ~50% header so the two heroes read as distinct:
-// there the title sits ON the image; here the image is a band the poster
-// straddles, with the title beside it on the plum page.
-const BACKDROP_HEIGHT = Math.round(Dimensions.get('window').height * 0.32);
+// Backdrop band — ~36% of screen height (up from 32%: the art was cropped
+// tight, with the poster row sitting high over it). Still deliberately
+// SHORTER than the rec view's full-bleed ~50% header so the two heroes read
+// as distinct: there the title sits ON the image; here the image is a band
+// the poster straddles, with the title beside it on the plum page.
+const BACKDROP_HEIGHT = Math.round(Dimensions.get('window').height * 0.36);
 const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
+// Trailer play badge on the hero: an invitation to tap the image, not a
+// button sitting on top of it — small, and translucent so the art shows
+// through. PLAY_BADGE_ALPHA is a hex-alpha suffix appended to the accent
+// (both schemes' accents are 6-digit hex): 'B3' ≈ 70%. Tune size/alpha here.
+const PLAY_BADGE_SIZE = 40;
+const PLAY_BADGE_ALPHA = 'B3';
 // Backdrop fade stops, derived from the same geometry as the hero row: the
 // title block is top-aligned with the poster, whose top edge sits
 // POSTER_HEIGHT/2 above the band's bottom (the straddle offset). END places
@@ -964,6 +970,11 @@ export default function TitleDetailScreen() {
         code && code !== 'en' ? LANGUAGE_NAMES.get(code) ?? '' : '';
     const metaLine = [year, extraMeta, languageName].filter(Boolean).join(' · ');
 
+    // Trailer lives ON the hero now (badge + whole-band tap) instead of a
+    // separate row below the meta. Same selection + deep-link behaviour the
+    // old TitleTrailer row had; no trailer → plain non-interactive backdrop.
+    const trailerKey = selectTrailerKey(detail.data.videos?.results);
+
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             <ScrollView
@@ -990,8 +1001,30 @@ export default function TitleDetailScreen() {
                     HERO_GRADIENT_END — just above the poster's TOP edge —
                     so the top-aligned title beside the poster always sits
                     on solid page bg, and the poster's upper half straddles
-                    the fade rather than a hard image edge. */}
-                <View style={styles.backdropContainer}>
+                    the fade rather than a hard image edge.
+
+                    When a trailer exists the band doubles as the play
+                    control: a 56pt accent badge in the upper region (above
+                    the gradient fade and the poster overlap) and the WHOLE
+                    band tappable → YouTube deep-link. No trailer → plain
+                    View, no affordance. */}
+                <Pressable
+                    onPress={
+                        trailerKey
+                            ? () =>
+                                  Linking.openURL(
+                                      'https://www.youtube.com/watch?v=' +
+                                          trailerKey,
+                                  )
+                            : undefined
+                    }
+                    disabled={!trailerKey}
+                    accessibilityRole={trailerKey ? 'button' : undefined}
+                    accessibilityLabel={
+                        trailerKey ? 'Play trailer on YouTube' : undefined
+                    }
+                    style={styles.backdropContainer}
+                >
                     {detail.data.backdrop_path ? (
                         <Image
                             source={{
@@ -1014,7 +1047,26 @@ export default function TitleDetailScreen() {
                         locations={[HERO_GRADIENT_START, HERO_GRADIENT_END]}
                         style={StyleSheet.absoluteFill}
                     />
-                </View>
+                    {trailerKey ? (
+                        <View
+                            style={[
+                                styles.playBadge,
+                                {
+                                    backgroundColor:
+                                        palette.accent + PLAY_BADGE_ALPHA,
+                                },
+                            ]}
+                            pointerEvents="none"
+                        >
+                            <Play
+                                color={palette.textInverse}
+                                size={18}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                                fill={palette.textInverse}
+                            />
+                        </View>
+                    ) : null}
+                </Pressable>
 
                 {/* Poster overlaps the backdrop bottom; the title block
                     sits next to it. negative marginTop pulls the row up
@@ -1058,26 +1110,26 @@ export default function TitleDetailScreen() {
                                 {metaLine}
                             </Text>
                         ) : null}
-                        {/* "Your relationship to this title" line, under
-                            the meta — shown whenever the title is in the
-                            library. Carries TWO separate tap targets:
-                            (left) the status/rating, which for a watched
-                            item is tappable to (re)open the rating sheet —
-                            in plum accent with a pencil icon so the edit
-                            affordance is unambiguous (no "Tap to edit"
-                            text); for watchlist/watching it's plain
-                            informational text. (right) the quiet privacy
-                            lock toggle — Lock/accent = private, LockOpen/
-                            muted = friends — flips via setItemVisibility
-                            (optimistic, reverts on failure). 'private'
-                            hides this item's activity from friends; it does
-                            NOT remove the title. */}
+                        {/* YOUR rating — prominent, directly under the meta
+                            line and ABOVE the genre chips (the chips are
+                            the footnote, not a divider between metadata
+                            and rating). Watched + rated: accent glyph
+                            stars (the ★★★½ language used app-wide), the
+                            stars themselves tappable to re-rate — no
+                            pencil; tapping your own rating to change it is
+                            the universal pattern. Watched, unrated: five
+                            muted stars as the tap-to-rate affordance — an
+                            "empty rating" in the same glyph language.
+                            Watchlist/watching: the quiet informational
+                            caption, unchanged. Deliberately no aggregate/
+                            community rating — friends' ratings live in the
+                            friends-watched cards only. */}
                         {currentStatus !== null && (
                             <View style={styles.statusLine}>
                                 {currentStatus === 'watched' ? (
                                     <Pressable
                                         onPress={() => setShowRatingSheet(true)}
-                                        hitSlop={spacing.xs}
+                                        hitSlop={spacing.sm}
                                         accessibilityRole="button"
                                         accessibilityLabel={
                                             currentRating !== null
@@ -1092,20 +1144,19 @@ export default function TitleDetailScreen() {
                                         <Text
                                             numberOfLines={1}
                                             style={[
-                                                typography.caption,
-                                                { color: palette.accent },
+                                                styles.ratingStars,
+                                                {
+                                                    color:
+                                                        currentRating !== null
+                                                            ? palette.accent
+                                                            : palette.textMuted,
+                                                },
                                             ]}
                                         >
-                                            {formatYourMarker(
-                                                currentStatus,
-                                                currentRating,
-                                            ) ?? ''}
+                                            {currentRating !== null
+                                                ? ratingGlyphs(currentRating)
+                                                : '★★★★★'}
                                         </Text>
-                                        <Pencil
-                                            color={palette.accent}
-                                            size={12}
-                                            strokeWidth={ICON_STROKE_WIDTH}
-                                        />
                                     </Pressable>
                                 ) : (
                                     <Text
@@ -1121,71 +1172,11 @@ export default function TitleDetailScreen() {
                                         ) ?? ''}
                                     </Text>
                                 )}
-
-                                <Pressable
-                                    onPress={() =>
-                                        handleSetVisibility(
-                                            currentVisibility === 'private'
-                                                ? 'friends'
-                                                : 'private',
-                                        )
-                                    }
-                                    disabled={visibilityBusy}
-                                    hitSlop={spacing.sm}
-                                    accessibilityRole="button"
-                                    accessibilityState={{
-                                        selected:
-                                            currentVisibility === 'private',
-                                    }}
-                                    accessibilityLabel={
-                                        currentVisibility === 'private'
-                                            ? 'Private — only you can see your activity. Tap to let friends see it.'
-                                            : 'Visible to friends. Tap to make private.'
-                                    }
-                                    style={({ pressed }) => [
-                                        styles.privacyToggle,
-                                        pressed && { opacity: 0.6 },
-                                    ]}
-                                >
-                                    {currentVisibility === 'private' ? (
-                                        <Lock
-                                            color={palette.accent}
-                                            size={12}
-                                            strokeWidth={ICON_STROKE_WIDTH}
-                                        />
-                                    ) : (
-                                        <LockOpen
-                                            color={palette.textMuted}
-                                            size={12}
-                                            strokeWidth={ICON_STROKE_WIDTH}
-                                        />
-                                    )}
-                                    <Text
-                                        style={[
-                                            styles.privacyToggleText,
-                                            {
-                                                color:
-                                                    currentVisibility ===
-                                                    'private'
-                                                        ? palette.accent
-                                                        : palette.textMuted,
-                                            },
-                                        ]}
-                                    >
-                                        {currentVisibility === 'private'
-                                            ? 'Private'
-                                            : 'Friends'}
-                                    </Text>
-                                </Pressable>
                             </View>
                         )}
-                        {/* Genre chips — last child of the title column so
-                            they sit DIRECTLY under the "You rated this"
-                            line (column gap = spacing.xs), grouped with the
-                            title/year/rating as one metadata unit rather
-                            than a separated block below the poster row.
-                            Non-interactive labels, distinct from the status
-                            chips below. */}
+                        {/* Genre chips — the title column's last line,
+                            under the rating. Non-interactive labels,
+                            distinct from the status chips below. */}
                         {detail.data.genres.length > 0 && (
                             <View style={styles.genres}>
                                 {detail.data.genres.map((g) => (
@@ -1244,12 +1235,6 @@ export default function TitleDetailScreen() {
                         }
                     />
                 )}
-
-                {/* Trailer — a light play affordance under the meta block,
-                    above the synopsis. Renders nothing when no YouTube
-                    trailer/teaser is available. Deep-links to YouTube; no
-                    in-app embed. */}
-                <TitleTrailer videos={detail.data.videos?.results} />
 
                 {/* Synopsis — "what is this", placed ABOVE the cast
                     ("who's in it"). */}
@@ -1328,67 +1313,116 @@ export default function TitleDetailScreen() {
                     />
                 )}
 
-                {/* Recommend — a primary outgoing action. Filled accent
-                    (vs. the outlined status pills above) so the visual
-                    hierarchy reads "pick where this sits in your
-                    library, then send it to a friend". */}
-                <Pressable
-                    onPress={() =>
-                        router.push(`/title/${mediaType}/${tmdbId}/recommend`)
-                    }
-                    style={({ pressed }) => [
-                        styles.recommendButton,
-                        {
-                            backgroundColor: palette.accent,
-                            opacity: pressed ? 0.6 : 1,
-                        },
+                {/* Sharing card — the sharing group as one semantic unit:
+                    who can see this (Visible to friends), and how you
+                    share it (Recommend, Chat about it). Same card
+                    treatment as the "recommended by"/"watched by" social
+                    cards below (surfaceElevated fill, radius.md, no
+                    shadow) — NOT white/surface. The status pills above
+                    stay OUTSIDE on the wash: they're the user's own
+                    private state, not a sharing action. */}
+                <View
+                    style={[
+                        styles.sharingCard,
+                        { backgroundColor: palette.surfaceElevated },
                     ]}
                 >
-                    <Send
-                        color={palette.textInverse}
-                        size={18}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            { color: palette.textInverse },
-                        ]}
-                    >
-                        Recommend to a friend
-                    </Text>
-                </Pressable>
+                    {/* Visible to friends — the privacy control, an
+                        explicit labeled row. Same Toggle component and
+                        polarity as the rating sheet: ON = friends can see
+                        this title in your activity, OFF = private. Only
+                        meaningful once the title is in the library.
+                        Optimistic via handleSetVisibility (reverts on
+                        failure); toggling to private hides activity, it
+                        does NOT remove the title. */}
+                    {currentStatus !== null && (
+                        <View style={styles.visibilityRow}>
+                            <Text
+                                style={[
+                                    typography.body,
+                                    { color: palette.text },
+                                ]}
+                            >
+                                Visible to friends
+                            </Text>
+                            <Toggle
+                                value={currentVisibility !== 'private'}
+                                onValueChange={(v) =>
+                                    handleSetVisibility(
+                                        v ? 'friends' : 'private',
+                                    )
+                                }
+                                palette={palette}
+                                disabled={visibilityBusy}
+                            />
+                        </View>
+                    )}
 
-                {/* Chat about it — the casual sibling beneath Recommend.
-                    Ghost row (muted, no fill/border) so the hierarchy reads
-                    Recommend = the committed act, Chat = the light one —
-                    the same primary/secondary pairing as the rec screen's
-                    Save over "Not for me". */}
-                <Pressable
-                    onPress={() =>
-                        router.push(`/title/${mediaType}/${tmdbId}/chat`)
-                    }
-                    accessibilityRole="button"
-                    accessibilityLabel="Chat about it with a friend"
-                    style={({ pressed }) => [
-                        styles.chatButton,
-                        { opacity: pressed ? 0.6 : 1 },
-                    ]}
-                >
-                    <MessageCircle
-                        color={palette.textMuted}
-                        size={18}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            { color: palette.textMuted },
+                    {/* Recommend — a primary outgoing action. Filled accent
+                        (vs. the outlined status pills above) so the visual
+                        hierarchy reads "pick where this sits in your
+                        library, then send it to a friend". */}
+                    <Pressable
+                        onPress={() =>
+                            router.push(
+                                `/title/${mediaType}/${tmdbId}/recommend`,
+                            )
+                        }
+                        style={({ pressed }) => [
+                            styles.recommendButton,
+                            {
+                                backgroundColor: palette.accent,
+                                opacity: pressed ? 0.6 : 1,
+                            },
                         ]}
                     >
-                        Chat about it
-                    </Text>
-                </Pressable>
+                        <Send
+                            color={palette.textInverse}
+                            size={18}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.textInverse },
+                            ]}
+                        >
+                            Recommend to a friend
+                        </Text>
+                    </Pressable>
+
+                    {/* Chat about it — the casual sibling beneath
+                        Recommend. Ghost row (muted, no fill/border) so
+                        the hierarchy reads Recommend = the committed act,
+                        Chat = the light one — the same primary/secondary
+                        pairing as the rec screen's Save over "Not for
+                        me". */}
+                    <Pressable
+                        onPress={() =>
+                            router.push(`/title/${mediaType}/${tmdbId}/chat`)
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Chat about it with a friend"
+                        style={({ pressed }) => [
+                            styles.chatButton,
+                            { opacity: pressed ? 0.6 : 1 },
+                        ]}
+                    >
+                        <MessageCircle
+                            color={palette.textMuted}
+                            size={18}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            Chat about it
+                        </Text>
+                    </Pressable>
+                </View>
 
                 {/* Cast — top ~10 by billing order. Tapping any card
                     routes to the existing /person/[personId] screen so
@@ -2574,6 +2608,21 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
+    // Trailer play badge on the hero. Centred horizontally; vertically in
+    // the band's upper region (badge centre at ~38% of the band height) so
+    // it clears both the gradient fade and the poster overlap below, and
+    // reads as "on the image" rather than floating between sections.
+    // Size/alpha via PLAY_BADGE_* consts by the other hero constants.
+    playBadge: {
+        position: 'absolute',
+        alignSelf: 'center',
+        top: Math.round(BACKDROP_HEIGHT * 0.38) - PLAY_BADGE_SIZE / 2,
+        width: PLAY_BADGE_SIZE,
+        height: PLAY_BADGE_SIZE,
+        borderRadius: PLAY_BADGE_SIZE / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     titleBlock: {
         flexDirection: 'row',
         gap: spacing.base,
@@ -2631,21 +2680,6 @@ const styles = StyleSheet.create({
     },
     statusChipText: {
         // 14/Medium — same label treatment as the Library chips.
-        ...typography.caption,
-        fontFamily: fontFamily.medium,
-        fontWeight: '500',
-    },
-    // Quiet lock toggle on the "your relationship" line, after the
-    // status/rating text. Icon + short label, no background/border — a
-    // minor inline control. flexShrink 0 so it keeps its size; the status
-    // text shrinks first if the line is tight.
-    privacyToggle: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.xs,
-        flexShrink: 0,
-    },
-    privacyToggleText: {
         ...typography.caption,
         fontFamily: fontFamily.medium,
         fontWeight: '500',
@@ -2827,24 +2861,29 @@ const styles = StyleSheet.create({
         flex: 1,
         gap: spacing.xs,
     },
-    // "Your relationship" line, nested in the title column directly under
-    // the meta line: status/rating (left) + privacy lock (right) as two
-    // separate tap targets on one row. gap separates the two; flexWrap lets
-    // the lock drop below on a very tight title column. minHeight reserves
-    // one caption line so toggling state never shifts the surrounding layout.
+    // "Your relationship" line — last child of the title column, under the
+    // genre chips: the star-glyph rating row (watched) or a quiet status
+    // caption (watchlist/watching). The privacy lock that used to share
+    // this row moved to the visibilityRow above Recommend.
     statusLine: {
         flexDirection: 'row',
         alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: spacing.md,
         minHeight: 18,
     },
-    // Tappable status/rating (watched only): text + pencil edit affordance.
+    // Tappable rating (watched only): star glyphs + pencil edit affordance.
     statusEdit: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.xs,
         flexShrink: 1,
+    },
+    // Glyph stars at display size — deliberately larger than the caption
+    // metadata around them so YOUR verdict is the loudest line in the title
+    // column. Line-height pinned so the tall glyphs don't stretch the row.
+    ratingStars: {
+        fontSize: 22,
+        lineHeight: 26,
+        letterSpacing: 1,
     },
     // Reviews section — sits between FriendActivity and WhereToWatch
     // so the "social text content" sits with the "social numbers"
@@ -2893,31 +2932,47 @@ const styles = StyleSheet.create({
     reviewSpoilerCover: {
         fontStyle: 'italic',
     },
+    // Sharing group card: visibility toggle + Recommend + Chat as one
+    // unit. Same treatment as the recBy/friends-watched card family
+    // (surfaceElevated inline, radius.md, fill-only). The card owns the
+    // horizontal inset and the md rhythm between its children — the
+    // children carry no margins of their own.
+    sharingCard: {
+        marginHorizontal: spacing.base,
+        marginTop: spacing.lg,
+        borderRadius: radius.md,
+        padding: spacing.md,
+        gap: spacing.md,
+    },
+    // "Visible to friends" label + switch, full-width row at the card's
+    // top. Plain row (no fill/border) — a setting, not a button; the
+    // Toggle itself is the visual state.
+    visibilityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: spacing.xs,
+    },
     recommendButton: {
         // Filled accent — the border that lived here when the button
         // was outlined is gone; the background colour now defines the
-        // edge.
+        // edge. Full card width; the sharingCard supplies inset + rhythm.
         flexDirection: 'row',
         gap: spacing.sm,
         alignItems: 'center',
         justifyContent: 'center',
-        marginHorizontal: spacing.base,
-        marginTop: spacing.md,
         paddingVertical: button.paddingVertical,
         borderRadius: button.borderRadius,
     },
     chatButton: {
         // Ghost secondary beneath Recommend: icon + muted label, no
-        // fill/border — quiet by design (see the JSX comment). md (not xs)
-        // above so it reads as its own distinct action rather than crowding
-        // the filled Recommend — more noticeable since the buttons got
-        // taller.
+        // fill/border — quiet by design (see the JSX comment). The card's
+        // md gap keeps it its own distinct action rather than crowding
+        // the filled Recommend.
         flexDirection: 'row',
         gap: spacing.xs,
         alignItems: 'center',
         justifyContent: 'center',
-        marginHorizontal: spacing.base,
-        marginTop: spacing.md,
         paddingVertical: spacing.sm,
     },
     closeButton: {

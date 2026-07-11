@@ -33,6 +33,7 @@ import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
+    button,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -425,25 +426,41 @@ export default function TitleChatComposeScreen() {
                 </Text>
                 {/* Send in the header (opposite Cancel) so it never moves
                     with the keyboard — same reachability rationale as the
-                    recommend picker. */}
+                    recommend picker. FILLED primary (vs Cancel's text-link):
+                    plum + white when actionable (kept plum while the send is
+                    in flight — spinner on the fill), muted surfaceAlt +
+                    textMuted when Send isn't available so it clearly reads
+                    non-tappable rather than a bright button that does
+                    nothing. */}
                 <Pressable
                     onPress={handleSend}
                     disabled={!canSend}
                     hitSlop={spacing.sm}
                     accessibilityRole="button"
                     accessibilityLabel="Send"
+                    accessibilityState={{ disabled: !canSend }}
                     style={({ pressed }) => [
-                        pressed && { opacity: 0.6 },
-                        !canSend && { opacity: 0.4 },
+                        styles.sendButton,
+                        {
+                            backgroundColor:
+                                canSend || sending
+                                    ? palette.accent
+                                    : palette.surfaceAlt,
+                            opacity: pressed && canSend ? 0.8 : 1,
+                        },
                     ]}
                 >
                     {sending ? (
-                        <ActivityIndicator color={palette.accent} />
+                        <ActivityIndicator color={palette.textInverse} />
                     ) : (
                         <Text
                             style={[
                                 typography.bodyEmphasis,
-                                { color: palette.accent },
+                                {
+                                    color: canSend
+                                        ? palette.textInverse
+                                        : palette.textMuted,
+                                },
                             ]}
                         >
                             Send
@@ -792,6 +809,17 @@ const styles = StyleSheet.create({
     },
     cancelButton: {
         paddingHorizontal: spacing.xs,
+    },
+    sendButton: {
+        // Compact filled header button — the app's button radius (the
+        // shared geometry token) at header scale; fill/label colors resolve
+        // per state inline (plum/white actionable, surfaceAlt/muted
+        // disabled).
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.base,
+        borderRadius: button.borderRadius,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     searchInput: {
         flex: 1,

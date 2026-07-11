@@ -26,6 +26,7 @@ import Reanimated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { Toggle } from '@/components/toggle';
 import { postRecComment } from '@/lib/comments';
 import { setItemVisibility } from '@/lib/item-status';
 import { applyWatchedRating, ratingGlyphs, type MediaType } from '@/lib/rating';
@@ -932,11 +933,19 @@ export function RatingSheet({
                                         { color: palette.text },
                                     ]}
                                 >
-                                    Hidden from friends
+                                    Visible to friends
                                 </Text>
+                                {/* Unified polarity app-wide: ON = shared,
+                                    OFF = private — same phrasing + switch
+                                    direction as the title page's row. The
+                                    internal state (hiddenFromFriends) and
+                                    the write path are unchanged; only the
+                                    label and switch direction flipped. */}
                                 <Toggle
-                                    value={hiddenFromFriends}
-                                    onValueChange={setHiddenFromFriends}
+                                    value={!hiddenFromFriends}
+                                    onValueChange={(v) =>
+                                        setHiddenFromFriends(!v)
+                                    }
                                     palette={palette}
                                     disabled={busy}
                                 />
@@ -995,45 +1004,6 @@ export function RatingSheet({
     );
 }
 
-// Small on/off switch (track + sliding thumb). Used for the share-rating
-// toggle (and the privacy toggle in the next step).
-function Toggle({
-    value,
-    onValueChange,
-    palette,
-    disabled,
-}: {
-    value: boolean;
-    onValueChange: (next: boolean) => void;
-    palette: ReturnType<typeof getPalette>;
-    disabled?: boolean;
-}) {
-    return (
-        <Pressable
-            onPress={() => onValueChange(!value)}
-            disabled={disabled}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: value, disabled }}
-            hitSlop={spacing.sm}
-            style={[
-                styles.toggleTrack,
-                {
-                    backgroundColor: value ? palette.accent : palette.border,
-                    justifyContent: value ? 'flex-end' : 'flex-start',
-                    opacity: disabled ? 0.6 : 1,
-                },
-            ]}
-        >
-            <View
-                style={[
-                    styles.toggleThumb,
-                    { backgroundColor: palette.surface },
-                ]}
-            />
-        </Pressable>
-    );
-}
-
 const STAR_CELL_SIZE = 44;
 
 const styles = StyleSheet.create({
@@ -1074,19 +1044,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         marginTop: spacing.md,
-    },
-    toggleTrack: {
-        width: 46,
-        height: 28,
-        borderRadius: 14,
-        padding: 2,
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    toggleThumb: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
     },
     noteInput: {
         minHeight: 72,
