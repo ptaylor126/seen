@@ -398,12 +398,17 @@ async function buildMessage(
         case 'friend_accepted': {
             // payload.from_user_id is the accepter (or invite-link
             // claimer) — see TECHNICAL §1 and the notify migration.
+            // invite_link:true marks a claim_invite_link friendship:
+            // there was no request to accept, so the copy forks.
             const accepterId = stringField(notif.payload, 'from_user_id');
             if (!accepterId) return null;
             const accepterName = await fetchDisplayName(supabase, accepterId);
             if (!accepterName) return null;
+            const viaInvite = booleanField(notif.payload, 'invite_link');
             return {
-                title: `${accepterName} accepted your request`,
+                title: viaInvite
+                    ? `${accepterName} joined you on Seen`
+                    : `${accepterName} accepted your request`,
                 data,
             };
         }

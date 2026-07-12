@@ -1,9 +1,7 @@
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import {
-    Platform,
     Pressable,
-    Share,
     StyleSheet,
     Text,
     useColorScheme,
@@ -13,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ClaimInvite } from '@/components/claim-invite';
 import { useProfile } from '@/hooks/use-profile';
+import { shareInvite } from '@/lib/invite';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import {
     button,
@@ -30,8 +29,6 @@ import {
 // invite action, and BOTH paths call finishOnboarding (the onboarded flip
 // moved here from currently-watching), so either way onboarding completes and
 // the root layout redirects to /(tabs).
-const APP_STORE_URL = 'https://apps.apple.com/app/id6775920785';
-
 export default function InviteScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -51,28 +48,17 @@ export default function InviteScreen() {
     }
 
     async function handleInvite() {
-        try {
-            // iOS: link as a separate `url` item → rich App Store preview in
-            // the share sheet. Android ignores `url`, so the link goes inline
-            // in the message there. Mirrors friends/add.tsx.
-            const result = await Share.share(
-                Platform.OS === 'ios'
-                    ? { message: pitch, url: APP_STORE_URL }
-                    : { message: `${pitch} ${APP_STORE_URL}` },
-            );
-            // Complete onboarding ONLY on a clear share. Share.share can't
-            // reliably tell "sent" from "cancelled" on iOS, so anything that
-            // isn't an explicit sharedAction — dismissedAction, or an
-            // ambiguous/undefined result — leaves the user on this screen to
-            // retry or tap "Skip for now" deliberately. The invite moment is
-            // high-value; better to occasionally keep someone here than to
-            // boot them out on an accidental cancel.
-            if (result?.action === Share.sharedAction) {
-                await finish();
-            }
-        } catch (err) {
-            // Sheet failed to open / rejected — stay on the screen.
-            console.error('onboarding invite share failed:', err);
+        // shareInvite shares the user's TOKENIZED seenrecs.com/i/ link (the
+        // landing page + claim auto-friend both sides) with this screen's
+        // handle-carrying pitch, and returns true only on an explicit share.
+        // Complete onboarding ONLY on that clear share: Share can't reliably
+        // tell "sent" from "cancelled" on iOS, so a dismissal leaves the
+        // user here to retry or tap "Skip for now" deliberately. The invite
+        // moment is high-value; better to occasionally keep someone here
+        // than to boot them out on an accidental cancel.
+        const shared = await shareInvite(pitch);
+        if (shared) {
+            await finish();
         }
     }
 
@@ -154,12 +140,15 @@ export default function InviteScreen() {
                     if the effect wins, ours follows to the same route
                     carrying the param. Either order converges. */}
                 <ClaimInvite
-                    onClaimed={(recId) => {
+                    onClaimed={(target) => {
                         void (async () => {
                             await finish();
                             router.replace({
                                 pathname: '/(tabs)',
-                                params: { claimedRec: recId },
+                                params:
+                                    target.type === 'rec'
+                                        ? { claimedRec: target.recId }
+                                        : { claimedFriend: target.userId },
                             });
                         })();
                     }}

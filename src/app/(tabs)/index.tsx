@@ -30,6 +30,7 @@ import {
 } from '@/components/search-bar';
 import { useLaunchReady } from '@/hooks/use-launch-ready';
 import { useUnreadCount } from '@/hooks/use-unread-count';
+import { goToProfile } from '@/lib/profile-nav';
 import { type MediaType } from '@/lib/rating';
 import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
@@ -610,22 +611,32 @@ export default function HomeScreen() {
     const { markDestinationReady } = useLaunchReady();
     const reportedReadyRef = useRef(false);
 
-    // Onboarding-claim handoff: when the user claims a rec invite during
-    // onboarding, the claim handler replaces into (tabs) with the new
-    // rec's id as a param (see (onboarding)/invite.tsx). Home pushes it
-    // once mounted — param-carried, no timers, so it can't race the root
-    // layout's onboarded-redirect (both replaces converge on this route;
-    // whichever runs last, the param is in the URL). Ref-guarded to one
-    // push, and the param is cleared so a later focus/remount can't
-    // re-open the rec.
-    const { claimedRec } = useLocalSearchParams<{ claimedRec?: string }>();
-    const claimedRecHandledRef = useRef(false);
+    // Onboarding-claim handoff: when the user claims an invite during
+    // onboarding, the claim handler replaces into (tabs) with the target
+    // as a param — claimedRec (rec invite → open the rec) or claimedFriend
+    // (friend invite → open the new friend's profile); see
+    // (onboarding)/invite.tsx. Home pushes it once mounted —
+    // param-carried, no timers, so it can't race the root layout's
+    // onboarded-redirect (both replaces converge on this route; whichever
+    // runs last, the param is in the URL). Ref-guarded to one push, and
+    // the params are cleared so a later focus/remount can't re-open it.
+    const { claimedRec, claimedFriend } = useLocalSearchParams<{
+        claimedRec?: string;
+        claimedFriend?: string;
+    }>();
+    const claimHandledRef = useRef(false);
     useEffect(() => {
-        if (!claimedRec || claimedRecHandledRef.current) return;
-        claimedRecHandledRef.current = true;
-        router.setParams({ claimedRec: undefined });
-        router.push(`/rec/${claimedRec}`);
-    }, [claimedRec, router]);
+        if ((!claimedRec && !claimedFriend) || claimHandledRef.current) {
+            return;
+        }
+        claimHandledRef.current = true;
+        router.setParams({ claimedRec: undefined, claimedFriend: undefined });
+        if (claimedRec) {
+            router.push(`/rec/${claimedRec}`);
+        } else if (claimedFriend) {
+            goToProfile({ userId: claimedFriend });
+        }
+    }, [claimedRec, claimedFriend, router]);
 
     const [data, setData] = useState<HomeData | null>(null);
     const [loading, setLoading] = useState(true);

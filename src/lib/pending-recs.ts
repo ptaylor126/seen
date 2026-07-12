@@ -64,14 +64,25 @@ export async function sharePendingRec(
     return result?.action === Share.sharedAction;
 }
 
-// Accepts whatever the claimer pastes: the full landing URL (any host, we
-// only care about the t= param) or a bare 16-char token. null = not
-// recognisably an invite link.
-export function parseInviteToken(input: string): string | null {
+// Accepts whatever the claimer pastes: a full landing URL or a bare
+// 16-char token, for EITHER loop — rec invites (seenrecs.com/r/) and
+// friend invites (seenrecs.com/i/). Both token families come from the
+// same generator, so a bare token is shape-indistinguishable: hint is
+// null and the claim field tries both RPCs. A full URL disambiguates by
+// path. null = not recognisably an invite link at all.
+export function parseInviteInput(
+    input: string,
+): { token: string; hint: 'rec' | 'friend' | null } | null {
     const trimmed = input.trim();
-    if (TOKEN_RE.test(trimmed)) return trimmed;
+    if (TOKEN_RE.test(trimmed)) return { token: trimmed, hint: null };
     const match = trimmed.match(/[?&]t=([A-Za-z0-9_-]{16})(?![A-Za-z0-9_-])/);
-    return match ? match[1] : null;
+    if (!match) return null;
+    const hint = /\/i\/[^\s]*[?&]t=/.test(trimmed)
+        ? ('friend' as const)
+        : /\/r\/[^\s]*[?&]t=/.test(trimmed)
+          ? ('rec' as const)
+          : null;
+    return { token: match[1], hint };
 }
 
 export type ClaimErrorCode =
@@ -94,6 +105,40 @@ export const CLAIM_ERROR_COPY: Record<ClaimErrorCode, string> = {
 export type ClaimResult =
     | { ok: true; recId: string }
     | { ok: false; error: ClaimErrorCode };
+
+export type FriendClaimResult =
+    | { ok: true; userId: string }
+    | { ok: false; error: ClaimErrorCode };
+
+// Claims a FRIEND invite link (invite_links / claim_invite_link — the
+// permanent multi-claim per-user token): creates the friendship and
+// returns the link owner's user id for profile routing. Error mapping
+// keys off the RPC's stable messages (20260518150956 / 20260713120000).
+export async function claimFriendInvite(
+    token: string,
+): Promise<FriendClaimResult> {
+    const { data, error } = await supabase.rpc('claim_invite_link', {
+        token,
+    });
+    if (error) {
+        const msg = error.message ?? '';
+        if (msg.includes('not found')) {
+            return { ok: false, error: 'not_found' };
+        }
+        if (msg.includes('your own')) {
+            return { ok: false, error: 'own_rec' };
+        }
+        if (msg.includes('not available')) {
+            return { ok: false, error: 'unavailable' };
+        }
+        console.error('claim_invite_link failed:', error);
+        return { ok: false, error: 'generic' };
+    }
+    if (typeof data !== 'string' || data.length === 0) {
+        return { ok: false, error: 'generic' };
+    }
+    return { ok: true, userId: data };
+}
 
 // Claims a token: server-side this creates the real recommendation AND the
 // friendship, and returns the new rec's id for routing. Error mapping keys

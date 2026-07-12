@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { ClaimInvite } from '@/components/claim-invite';
 import { shareInvite } from '@/lib/invite';
+import { goToProfile } from '@/lib/profile-nav';
 import supabase from '@/lib/supabase';
 import {
     button,
@@ -364,13 +365,17 @@ export default function AddFriendScreen() {
                         </Text>
                     </Pressable>
 
-                    {/* Claim path for people who installed from a rec
-                        invite link but skipped the onboarding claim —
-                        the link in their texts still works here. On
-                        success the rec + friendship already exist
-                        server-side; route straight to the rec. */}
+                    {/* Claim path for people who installed from an invite
+                        link (rec OR friend) but skipped the onboarding
+                        claim — the link in their texts still works here.
+                        On success everything already exists server-side;
+                        route to the rec or the new friend's profile. */}
                     <ClaimInvite
-                        onClaimed={(recId) => router.push(`/rec/${recId}`)}
+                        onClaimed={(target) =>
+                            target.type === 'rec'
+                                ? router.push(`/rec/${target.recId}`)
+                                : goToProfile({ userId: target.userId })
+                        }
                     />
                 </View>
             </View>

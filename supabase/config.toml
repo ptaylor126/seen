@@ -424,3 +424,9 @@ entrypoint = "./functions/tmdb-proxy/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/get-pending-rec/index.ts"
+
+# Sibling: public read for the seenrecs.com/i/ friend-invite landing page.
+[functions.get-invite]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/get-invite/index.ts"

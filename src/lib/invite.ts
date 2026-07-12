@@ -1,27 +1,58 @@
 import { Platform, Share } from 'react-native';
 
-// Shared "Invite friends" action. Opens the OS share sheet with the App Store
-// link + a short pitch — the SAME flow the friends/add "Invite friends" button
-// uses. Extracted here so the friends empty-state button and the add-screen
-// button can't drift. Does NOT auto-connect the recipient as a friend (that's
-// the deferred invite-link deep-link project; see src/app/friends/invite.tsx).
+import supabase from '@/lib/supabase';
+
+// Shared "Invite friends" action — used by the friends empty state,
+// friends/add, and the onboarding invite step.
 //
-// On iOS the link is a separate `url` item so iOS builds a rich
-// LinkPresentation preview (Seen's icon + name from the App Store listing).
-// Android's Share ignores `url`, so there the link goes inline in the message.
-// A cancel rejects the promise, which we swallow.
+// Shares the user's PERMANENT tokenized invite link
+// (seenrecs.com/i/?t={invite_links.token}): the landing page shows who's
+// inviting them, and claiming after signup auto-friends both sides via
+// claim_invite_link (multi-claim — one link serves every friend it's sent
+// to). If the token can't be fetched (offline, revoked-with-no-regen edge),
+// falls back to the plain App Store link so the share NEVER dead-ends.
+//
+// On iOS the link is a separate `url` item so iOS builds a rich link
+// preview; Android's Share ignores `url`, so there the link goes inline.
+// Returns true only on an explicit share (Share.sharedAction) — the
+// onboarding step gates its completion on that; other callers ignore it.
 const APP_STORE_URL = 'https://apps.apple.com/app/id6775920785';
-const INVITE_PITCH =
+const INVITE_URL_BASE = 'https://seenrecs.com/i/?t=';
+const DEFAULT_PITCH =
     'Join me on Seen — recommendations from friends you actually trust.';
 
-export async function shareInvite(): Promise<void> {
+async function fetchOwnInviteUrl(): Promise<string | null> {
     try {
-        await Share.share(
+        const {
+            data: { session },
+        } = await supabase.auth.getSession();
+        const userId = session?.user.id;
+        if (!userId) return null;
+        const { data, error } = await supabase
+            .from('invite_links')
+            .select('token')
+            .eq('user_id', userId)
+            .is('revoked_at', null)
+            .maybeSingle();
+        if (error || !data?.token) return null;
+        return `${INVITE_URL_BASE}${data.token}`;
+    } catch {
+        return null;
+    }
+}
+
+export async function shareInvite(pitch?: string): Promise<boolean> {
+    const message = pitch ?? DEFAULT_PITCH;
+    const url = (await fetchOwnInviteUrl()) ?? APP_STORE_URL;
+    try {
+        const result = await Share.share(
             Platform.OS === 'ios'
-                ? { message: INVITE_PITCH, url: APP_STORE_URL }
-                : { message: `${INVITE_PITCH} ${APP_STORE_URL}` },
+                ? { message, url }
+                : { message: `${message} ${url}` },
         );
+        return result?.action === Share.sharedAction;
     } catch (err) {
         console.error('invite share failed:', err);
+        return false;
     }
 }

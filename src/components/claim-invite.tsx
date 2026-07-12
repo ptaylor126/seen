@@ -11,8 +11,9 @@ import {
 
 import {
     CLAIM_ERROR_COPY,
+    claimFriendInvite,
     claimPendingRec,
-    parseInviteToken,
+    parseInviteInput,
 } from '@/lib/pending-recs';
 import {
     button,
@@ -22,16 +23,29 @@ import {
     typography,
 } from '@/theme/theme';
 
+// What a successful claim resolved to — the host routes on it: a rec
+// invite lands on the created rec's screen, a friend invite on the new
+// friend's profile.
+export type ClaimedTarget =
+    | { type: 'rec'; recId: string }
+    | { type: 'friend'; userId: string };
+
 // "Have an invite link?" — the claim entry point, shared by the onboarding
 // invite step and friends/add. Deliberately quiet: a text link that expands
 // in place to a paste field + Claim button, so it never competes with the
-// host screen's primary action. Accepts the full seenrecs.com/r/ URL or a
-// bare token; on success the caller routes (the RPC has already created the
-// rec AND the friendship — no extra UI for the friendship, it just exists).
+// host screen's primary action.
+//
+// One paste field, TWO token families: rec invites (seenrecs.com/r/ →
+// claim_pending_recommendation) and friend invites (seenrecs.com/i/ →
+// claim_invite_link). A full URL disambiguates by path; a bare token is
+// shape-identical for both (same generator), so we try the rec claim
+// first and fall through to the friend claim on not_found. Either way the
+// server has already created the rec and/or friendship when onClaimed
+// fires — no extra UI for the friendship, it just exists.
 export function ClaimInvite({
     onClaimed,
 }: {
-    onClaimed: (recId: string) => void;
+    onClaimed: (target: ClaimedTarget) => void;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -42,19 +56,42 @@ export function ClaimInvite({
 
     async function handleClaim() {
         if (busy) return;
-        const token = parseInviteToken(value);
-        if (!token) {
+        const parsed = parseInviteInput(value);
+        if (!parsed) {
             setError("That doesn't look like an invite link.");
             return;
         }
         setBusy(true);
         setError(null);
         try {
-            const result = await claimPendingRec(token);
-            if (result.ok) {
-                onClaimed(result.recId);
+            // Friend-hinted (/i/ URL) → friend claim only.
+            if (parsed.hint === 'friend') {
+                const result = await claimFriendInvite(parsed.token);
+                if (result.ok) {
+                    onClaimed({ type: 'friend', userId: result.userId });
+                } else {
+                    setError(CLAIM_ERROR_COPY[result.error]);
+                }
+                return;
+            }
+            // Rec-hinted (/r/ URL) or bare token: rec claim first. For a
+            // bare token, ONLY not_found falls through to the friend claim
+            // (any other error means the token matched the rec table and
+            // failed for a real reason worth surfacing).
+            const recResult = await claimPendingRec(parsed.token);
+            if (recResult.ok) {
+                onClaimed({ type: 'rec', recId: recResult.recId });
+                return;
+            }
+            if (parsed.hint === 'rec' || recResult.error !== 'not_found') {
+                setError(CLAIM_ERROR_COPY[recResult.error]);
+                return;
+            }
+            const friendResult = await claimFriendInvite(parsed.token);
+            if (friendResult.ok) {
+                onClaimed({ type: 'friend', userId: friendResult.userId });
             } else {
-                setError(CLAIM_ERROR_COPY[result.error]);
+                setError(CLAIM_ERROR_COPY[friendResult.error]);
             }
         } finally {
             setBusy(false);

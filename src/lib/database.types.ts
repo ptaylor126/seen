@@ -734,7 +734,7 @@ export type Database = {
       }
       block_user: { Args: { other_user_id: string }; Returns: undefined }
       can_send_friend_request: { Args: { target: string }; Returns: boolean }
-      claim_invite_link: { Args: { token: string }; Returns: undefined }
+      claim_invite_link: { Args: { token: string }; Returns: string }
       claim_pending_recommendation: {
         Args: { p_token: string }
         Returns: string
