@@ -1391,35 +1391,39 @@ export default function TitleDetailScreen() {
                         </Text>
                     </Pressable>
 
-                    {/* Chat about it — the casual sibling beneath
-                        Recommend. Ghost row (muted, no fill/border) so
-                        the hierarchy reads Recommend = the committed act,
-                        Chat = the light one — the same primary/secondary
-                        pairing as the rec screen's Save over "Not for
-                        me". */}
+                    {/* Chat with a friend — the casual sibling beneath
+                        Recommend. Ghost row: accent icon + label but NO
+                        fill/border, so it reads as "quiet but active"
+                        (matching the app's other text actions — Cancel,
+                        Add by handle, the invite link) while staying
+                        clearly subordinate to the filled Recommend
+                        primary. The hierarchy is Recommend = the committed
+                        act, Chat = the light one — the same primary/
+                        secondary pairing as the rec screen's Save over
+                        "Not for me". */}
                     <Pressable
                         onPress={() =>
                             router.push(`/title/${mediaType}/${tmdbId}/chat`)
                         }
                         accessibilityRole="button"
-                        accessibilityLabel="Chat about it with a friend"
+                        accessibilityLabel="Chat with a friend"
                         style={({ pressed }) => [
                             styles.chatButton,
                             { opacity: pressed ? 0.6 : 1 },
                         ]}
                     >
                         <MessageCircle
-                            color={palette.textMuted}
+                            color={palette.accent}
                             size={18}
                             strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
                                 typography.bodyEmphasis,
-                                { color: palette.textMuted },
+                                { color: palette.accent },
                             ]}
                         >
-                            Chat about it
+                            Chat with a friend
                         </Text>
                     </Pressable>
                 </View>
@@ -2965,10 +2969,11 @@ const styles = StyleSheet.create({
         borderRadius: button.borderRadius,
     },
     chatButton: {
-        // Ghost secondary beneath Recommend: icon + muted label, no
-        // fill/border — quiet by design (see the JSX comment). The card's
+        // Ghost secondary beneath Recommend: accent icon + label, no
+        // fill/border — quiet but active (see the JSX comment). The card's
         // md gap keeps it its own distinct action rather than crowding
-        // the filled Recommend.
+        // the filled Recommend; the shorter padding (sm vs Recommend's 14)
+        // keeps it subordinate.
         flexDirection: 'row',
         gap: spacing.xs,
         alignItems: 'center',
