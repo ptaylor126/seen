@@ -1,8 +1,8 @@
 import { Image } from 'expo-image';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Film, MoreHorizontal } from 'lucide-react-native';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Dimensions,
@@ -609,6 +609,23 @@ export default function HomeScreen() {
     // it to a single report (the cold-start load), not later focus refetches.
     const { markDestinationReady } = useLaunchReady();
     const reportedReadyRef = useRef(false);
+
+    // Onboarding-claim handoff: when the user claims a rec invite during
+    // onboarding, the claim handler replaces into (tabs) with the new
+    // rec's id as a param (see (onboarding)/invite.tsx). Home pushes it
+    // once mounted — param-carried, no timers, so it can't race the root
+    // layout's onboarded-redirect (both replaces converge on this route;
+    // whichever runs last, the param is in the URL). Ref-guarded to one
+    // push, and the param is cleared so a later focus/remount can't
+    // re-open the rec.
+    const { claimedRec } = useLocalSearchParams<{ claimedRec?: string }>();
+    const claimedRecHandledRef = useRef(false);
+    useEffect(() => {
+        if (!claimedRec || claimedRecHandledRef.current) return;
+        claimedRecHandledRef.current = true;
+        router.setParams({ claimedRec: undefined });
+        router.push(`/rec/${claimedRec}`);
+    }, [claimedRec, router]);
 
     const [data, setData] = useState<HomeData | null>(null);
     const [loading, setLoading] = useState(true);

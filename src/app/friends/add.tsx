@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { ClaimInvite } from '@/components/claim-invite';
 import { shareInvite } from '@/lib/invite';
 import supabase from '@/lib/supabase';
 import {
@@ -362,6 +363,15 @@ export default function AddFriendScreen() {
                             Invite friends
                         </Text>
                     </Pressable>
+
+                    {/* Claim path for people who installed from a rec
+                        invite link but skipped the onboarding claim —
+                        the link in their texts still works here. On
+                        success the rec + friendship already exist
+                        server-side; route straight to the rec. */}
+                    <ClaimInvite
+                        onClaimed={(recId) => router.push(`/rec/${recId}`)}
+                    />
                 </View>
             </View>
         </SafeAreaView>

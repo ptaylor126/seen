@@ -8,7 +8,7 @@ import { goToProfile } from '@/lib/profile-nav';
 // Resolve a tapped push notification's data payload to a navigation action, or
 // null for "no deep route — just foreground". The `data` field mirrors what
 // send-push-notification builds: { kind, notification_id, ...notif.payload }.
-// Six rec kinds carry recommendation_id and open that rec's thread; the rest
+// Seven rec kinds carry recommendation_id and open that rec's thread; the rest
 // map to their own surfaces. A known rec kind missing its id, or an unknown
 // kind, falls back to the inbox rather than dropping the tap silently (matching
 // the inbox's own buildGeneric fallback). report_filed is a maintainer-only,
@@ -30,6 +30,9 @@ function resolveNavigation(
         case 'rec_commented':
         case 'comment_reacted':
         case 'rec_declined':
+        // rec_claimed: someone joined Seen from the user's rec invite —
+        // the claim created a real rec whose id rides in the payload.
+        case 'rec_claimed':
             return recId
                 ? () => router.push(`/rec/${recId}`)
                 : () => router.push('/inbox');

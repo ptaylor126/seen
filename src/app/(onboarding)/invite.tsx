@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ClaimInvite } from '@/components/claim-invite';
 import { useProfile } from '@/hooks/use-profile';
 import { finishOnboarding } from '@/lib/onboarding-utils';
 import {
@@ -140,6 +141,29 @@ export default function InviteScreen() {
                         Skip for now
                     </Text>
                 </Pressable>
+
+                {/* Quiet, skippable claim path for someone who INSTALLED
+                    from a rec invite link (seenrecs.com/r/). Claiming
+                    creates the friendship + the rec server-side; here we
+                    complete onboarding and land them on the rec that
+                    brought them. The rec id rides INTO (tabs) as a route
+                    param and home pushes it once mounted — no timer. The
+                    root layout's onboarded-redirect may also fire, but
+                    both replaces target (tabs): if ours runs first the
+                    effect no-ops (segments already out of onboarding);
+                    if the effect wins, ours follows to the same route
+                    carrying the param. Either order converges. */}
+                <ClaimInvite
+                    onClaimed={(recId) => {
+                        void (async () => {
+                            await finish();
+                            router.replace({
+                                pathname: '/(tabs)',
+                                params: { claimedRec: recId },
+                            });
+                        })();
+                    }}
+                />
             </View>
         </SafeAreaView>
     );

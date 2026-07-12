@@ -29,10 +29,12 @@ import { Avatar } from '@/components/avatar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
+import { createPendingRec, sharePendingRec } from '@/lib/pending-recs';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
     button,
+    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -131,6 +133,9 @@ export default function RecommendScreen() {
                 : new Set<string>(),
     );
     const [note, setNote] = useState('');
+    // In-flight guard for the "not on Seen" invite path (create pending
+    // rec + share sheet) — independent of `sending` (the friend fan-out).
+    const [inviteBusy, setInviteBusy] = useState(false);
     const [loading, setLoading] = useState(true);
     const showLoader = useDeferredLoading(loading);
     const [error, setError] = useState<string | null>(null);
@@ -364,6 +369,42 @@ export default function RecommendScreen() {
                 { text: 'Send anyway', onPress: () => resolve(true) },
             ]);
         });
+    }
+
+    // Recommend to someone NOT on Seen: create a pending_recommendations
+    // row (the note applies exactly as a normal rec's would), then open
+    // the share sheet with the seenrecs.com/r/ landing link. Order
+    // matters: ensureTitle is AWAITED here (not fire-and-forget like the
+    // normal send) because the landing page renders from the titles row —
+    // sharing a link before the stamp lands would 404 its poster/title.
+    // A dismissed share sheet deliberately KEEPS the row: the link may
+    // already be in flight, and the sender can reshare it later.
+    async function handleInviteSend() {
+        if (inviteBusy || sending || !mediaType) return;
+        setInviteBusy(true);
+        try {
+            if (titleStamp) await ensureTitle(titleStamp);
+            const token = await createPendingRec({
+                tmdbId,
+                mediaType,
+                note: trimmedNote.length > 0 ? trimmedNote : null,
+            });
+            const shared = await sharePendingRec(
+                token,
+                titleCtx?.title ?? 'this',
+            );
+            // Same semantics as the onboarding invite: only an explicit
+            // share closes the flow; a cancel stays here for a retry.
+            if (shared) router.back();
+        } catch (err) {
+            console.error('invite rec failed:', err);
+            Alert.alert(
+                "Couldn't create the invite",
+                'Check your connection and try again.',
+            );
+        } finally {
+            setInviteBusy(false);
+        }
     }
 
     async function handleSend() {
@@ -774,15 +815,61 @@ export default function RecommendScreen() {
                             </Text>
                         </View>
                     ) : friends.length === 0 ? (
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[typography.body, { color: palette.textMuted }]}
-                                numberOfLines={3}
-                            >
-                                You don&apos;t have any friends yet. Add one before sending
-                                recs.
-                            </Text>
-                        </View>
+                        <>
+                            <View style={styles.statusBlock}>
+                                <Text
+                                    style={[typography.body, { color: palette.textMuted }]}
+                                    numberOfLines={3}
+                                >
+                                    You don&apos;t have any friends yet — but
+                                    you can still send this to someone.
+                                </Text>
+                            </View>
+                            {/* The invite path is MOST valuable with zero
+                                friends — the old copy dead-ended here. */}
+                            <View style={styles.inviteGroup}>
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        styles.inviteCaption,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    Know someone who&apos;s not on Seen yet?
+                                </Text>
+                                <Pressable
+                                    onPress={() => void handleInviteSend()}
+                                    disabled={inviteBusy}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Recommend to someone not on Seen"
+                                    style={({ pressed }) => [
+                                        styles.inviteButton,
+                                        {
+                                            borderColor: palette.accent,
+                                            opacity:
+                                                pressed || inviteBusy
+                                                    ? 0.6
+                                                    : 1,
+                                        },
+                                    ]}
+                                >
+                                    {inviteBusy ? (
+                                        <ActivityIndicator
+                                            color={palette.accent}
+                                        />
+                                    ) : (
+                                        <Text
+                                            style={[
+                                                typography.bodyEmphasis,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            Send them this rec
+                                        </Text>
+                                    )}
+                                </Pressable>
+                            </View>
+                        </>
                     ) : (
                         <>
                             {/* Local recipient filter. Mirrors the Friends
@@ -863,6 +950,52 @@ export default function RecommendScreen() {
                                     </Pressable>
                                 ) : null}
                             </View>
+
+                            {/* Recommend to someone NOT on Seen — a quiet
+                                ghost row ABOVE the friend list (users
+                                search the list rather than scroll it, so
+                                anything below the list is effectively
+                                invisible). Compact single line, muted +
+                                accent action — present without competing
+                                with the list as the primary path. The note
+                                below applies to this send exactly as it
+                                does to a friend send. */}
+                            <Pressable
+                                onPress={() => void handleInviteSend()}
+                                disabled={inviteBusy}
+                                accessibilityRole="button"
+                                accessibilityLabel="Recommend to someone not on Seen"
+                                style={({ pressed }) => [
+                                    styles.inviteRow,
+                                    { opacity: pressed || inviteBusy ? 0.6 : 1 },
+                                ]}
+                            >
+                                {inviteBusy ? (
+                                    <ActivityIndicator
+                                        size="small"
+                                        color={palette.accent}
+                                    />
+                                ) : (
+                                    <Text
+                                        style={[
+                                            typography.caption,
+                                            { color: palette.textMuted },
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        Know someone not on Seen?{' '}
+                                        <Text
+                                            style={[
+                                                typography.caption,
+                                                styles.inviteRowAction,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            Send them this rec
+                                        </Text>
+                                    </Text>
+                                )}
+                            </Pressable>
 
                             <Text
                                 style={[
@@ -1085,6 +1218,37 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: spacing.xxl,
         paddingHorizontal: spacing.xl,
+    },
+    // "Not on Seen" ghost row — compact quiet line between the search
+    // field and the friend list. Centered, caption register, no fill or
+    // border; the accent action span is the only emphasis.
+    inviteRow: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: spacing.sm,
+        marginTop: spacing.xs,
+    },
+    inviteRowAction: {
+        fontFamily: fontFamily.medium,
+        fontWeight: '500',
+    },
+    // Zero-friends empty-state variant — caption + outlined secondary
+    // (mirrors friends/add.tsx's inviteGroup, on the shared button
+    // geometry). With no list to lead, the invite IS the primary path
+    // here, so it keeps the full-size treatment.
+    inviteGroup: {
+        gap: spacing.sm,
+        marginTop: spacing.xl,
+    },
+    inviteCaption: {
+        textAlign: 'center',
+    },
+    inviteButton: {
+        paddingVertical: button.paddingVertical,
+        borderRadius: button.borderRadius,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     sectionLabel: {
         paddingHorizontal: spacing.lg,

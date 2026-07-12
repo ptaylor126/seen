@@ -105,6 +105,16 @@ interface FriendAcceptedItem {
     friend: ProfileSummary;
 }
 
+interface RecClaimedItem {
+    kind: 'notification_rec_claimed';
+    id: string;
+    createdAt: string;
+    notificationId: string;
+    // The person who joined Seen from the sender's rec invite.
+    claimer: ProfileSummary;
+    recId: string | null;
+}
+
 interface RecReactedItem {
     kind: 'notification_rec_reacted';
     id: string;
@@ -262,6 +272,7 @@ type InboxItem =
     | FriendRequestItem
     | RecWatchedItem
     | FriendAcceptedItem
+    | RecClaimedItem
     | RecReactedItem
     | CommentReactedItem
     | RecCommentedItem
@@ -335,6 +346,7 @@ const MAX_ITEMS = 50;
 const RENDER_KINDS = [
     'rec_watched',
     'friend_accepted',
+    'rec_claimed',
     'rec_reacted',
     'comment_reacted',
     'rec_commented',
@@ -865,6 +877,24 @@ export default function InboxScreen() {
                         createdAt: n.created_at,
                         notificationId: n.id,
                         friend,
+                    });
+                } else if (n.kind === 'rec_claimed') {
+                    // Someone joined Seen by claiming this user's rec
+                    // invite. payload.from_user_id is the claimer (the
+                    // generic actor-collection pass above resolved their
+                    // profile); recommendation_id routes to the rec the
+                    // claim created.
+                    const claimerId = pickString(payload, 'from_user_id');
+                    const claimer = claimerId
+                        ? profilesById.get(claimerId) ?? placeholderProfile
+                        : placeholderProfile;
+                    inboxItems.push({
+                        kind: 'notification_rec_claimed',
+                        id: `notif:${n.id}`,
+                        createdAt: n.created_at,
+                        notificationId: n.id,
+                        claimer,
+                        recId: pickString(payload, 'recommendation_id'),
                     });
                 } else if (n.kind === 'rec_reacted') {
                     const reactorId = pickString(payload, 'from_user_id');
@@ -1588,6 +1618,40 @@ export default function InboxScreen() {
         );
     }
 
+    function renderRecClaimed(item: RecClaimedItem) {
+        return (
+            <Pressable
+                onPress={() =>
+                    item.recId
+                        ? router.push(`/rec/${item.recId}`)
+                        : router.push(`/friends/${item.claimer.handle}`)
+                }
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+            >
+                <Avatar
+                    avatarUrl={item.claimer.avatarUrl}
+                    displayName={item.claimer.displayName}
+                    seedId={item.claimer.userId}
+                    size={AVATAR_SIZE}
+                />
+                <View style={styles.rowText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={2}
+                    >
+                        <Text style={typography.bodyEmphasis}>
+                            {item.claimer.displayName}
+                        </Text>{' '}
+                        joined Seen from your rec
+                    </Text>
+                    <Text style={[typography.caption, { color: palette.textMuted }]}>
+                        {relativeTimestamp(item.createdAt)}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     function renderRecReacted(item: RecReactedItem) {
         const title = item.titleName ?? 'your rec';
         return (
@@ -1991,6 +2055,8 @@ export default function InboxScreen() {
                 return renderRecWatched(item);
             case 'notification_friend_accepted':
                 return renderFriendAccepted(item);
+            case 'notification_rec_claimed':
+                return renderRecClaimed(item);
             case 'notification_rec_reacted':
                 return renderRecReacted(item);
             case 'notification_comment_reacted':

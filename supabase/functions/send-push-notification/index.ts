@@ -50,6 +50,7 @@ type NotificationKind =
     | 'rec_watched'
     | 'friend_request'
     | 'friend_accepted'
+    | 'rec_claimed'
     | 'rec_reacted'
     | 'rec_commented'
     | 'rec_declined'
@@ -403,6 +404,20 @@ async function buildMessage(
             if (!accepterName) return null;
             return {
                 title: `${accepterName} accepted your request`,
+                data,
+            };
+        }
+        case 'rec_claimed': {
+            // payload.from_user_id is the claimer — someone who joined
+            // Seen from this user's rec invite (pending_recommendations →
+            // claim_pending_recommendation, 20260712120000). The push
+            // routes to the created rec via recommendation_id in data.
+            const claimerId = stringField(notif.payload, 'from_user_id');
+            if (!claimerId) return null;
+            const claimerName = await fetchDisplayName(supabase, claimerId);
+            if (!claimerName) return null;
+            return {
+                title: `${claimerName} joined Seen from your rec`,
                 data,
             };
         }

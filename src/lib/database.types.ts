@@ -305,6 +305,57 @@ export type Database = {
           },
         ]
       }
+      pending_recommendations: {
+        Row: {
+          claimed_at: string | null
+          claimed_by: string | null
+          created_at: string
+          from_user_id: string
+          id: string
+          media_type: string
+          note: string | null
+          tmdb_id: number
+          token: string
+        }
+        Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string
+          from_user_id: string
+          id?: string
+          media_type: string
+          note?: string | null
+          tmdb_id: number
+          token?: string
+        }
+        Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string
+          from_user_id?: string
+          id?: string
+          media_type?: string
+          note?: string | null
+          tmdb_id?: number
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_recommendations_claimed_by_fkey"
+            columns: ["claimed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_recommendations_from_user_id_fkey"
+            columns: ["from_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -684,6 +735,10 @@ export type Database = {
       block_user: { Args: { other_user_id: string }; Returns: undefined }
       can_send_friend_request: { Args: { target: string }; Returns: boolean }
       claim_invite_link: { Args: { token: string }; Returns: undefined }
+      claim_pending_recommendation: {
+        Args: { p_token: string }
+        Returns: string
+      }
       decline_friend_request: {
         Args: { request_id: string }
         Returns: undefined
