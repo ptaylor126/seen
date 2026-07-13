@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 
-import { findTitleChat } from '@/lib/chats';
+import { createTitleChat, findTitleChat } from '@/lib/chats';
 import supabase from '@/lib/supabase';
 
 // Single entry point for "chat with this friend about this title" — the
@@ -55,4 +55,48 @@ export async function goToChatAboutTitle(args: {
             intent: 'overlap',
         },
     });
+}
+
+// One-tap send: create/open the chat about this title AND post `message`,
+// then land the user in the thread with it already sent. Powers the
+// overlap picker's quick chips and the watched-by sheet's chat icon.
+//
+// createTitleChat is the "ensure chat + post message" primitive — it
+// handles BOTH cases transparently: a new chat inserts + posts; an
+// existing one (23505, direction-agnostic pair-unique) posts to that same
+// thread. So quick-send behaves identically whether or not a chat already
+// exists; the message just appends.
+//
+// Best-effort fallbacks land the user somewhere useful rather than dead:
+// no session, or any create/post failure, falls through to the compose
+// screen (goToChatAboutTitle) — where createTitleChat's own 23505 handling
+// still recovers the existing thread on send.
+export async function quickSendAboutTitle(args: {
+    otherUserId: string;
+    tmdbId: number;
+    mediaType: 'movie' | 'tv';
+    message: string;
+}): Promise<void> {
+    const { otherUserId, tmdbId, mediaType, message } = args;
+    try {
+        const {
+            data: { session },
+        } = await supabase.auth.getSession();
+        const userId = session?.user.id;
+        if (!userId) {
+            await goToChatAboutTitle({ otherUserId, tmdbId, mediaType });
+            return;
+        }
+        const chatId = await createTitleChat({
+            userId,
+            otherUserId,
+            tmdbId,
+            mediaType,
+            firstMessage: message,
+        });
+        router.push(`/chat/${chatId}`);
+    } catch (err) {
+        console.warn('quick-send failed, falling through to compose:', err);
+        await goToChatAboutTitle({ otherUserId, tmdbId, mediaType });
+    }
 }

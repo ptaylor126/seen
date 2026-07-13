@@ -22,7 +22,7 @@ import {
     WatchersSheet,
     type WatcherSheetItem,
 } from '@/components/watchers-sheet';
-import { goToChatAboutTitle } from '@/lib/chat-nav';
+import { goToChatAboutTitle, quickSendAboutTitle } from '@/lib/chat-nav';
 import { getSentChats } from '@/lib/chats';
 import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
@@ -265,6 +265,7 @@ interface WatchlistOverlapItem {
     tmdbId: number | null;
     mediaType: MediaType | null;
     titleName: string | null;
+    posterPath: string | null;
 }
 
 type InboxItem =
@@ -429,10 +430,14 @@ export default function InboxScreen() {
     // sweep still clears read_at, so the next visit starts clean.
     const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
     // Watcher-picker behind an overlap row tap — fetched fresh per tap.
+    // Carries the title (name + poster) so the sheet can show a tappable
+    // title header through to the title page alongside the picker.
     const [overlapPicker, setOverlapPicker] = useState<{
         tmdbId: number;
         mediaType: MediaType;
         watchers: WatcherSheetItem[];
+        titleName: string | null;
+        posterPath: string | null;
     } | null>(null);
 
     // Show the full loading state only on the FIRST load (mount/focus). Later
@@ -1110,6 +1115,8 @@ export default function InboxScreen() {
                         mediaType: mt,
                         titleName:
                             titleByKey.get(`${mt}:${tid}`)?.title ?? null,
+                        posterPath:
+                            titleByKey.get(`${mt}:${tid}`)?.posterPath ?? null,
                     });
                 } else {
                     // Unhandled kind — the query filters to RENDER_KINDS so
@@ -2213,6 +2220,8 @@ export default function InboxScreen() {
                 tmdbId: item.tmdbId,
                 mediaType: item.mediaType,
                 watchers,
+                titleName: item.titleName,
+                posterPath: item.posterPath,
             });
         } catch (err) {
             console.warn('overlap picker fetch failed:', err);
@@ -2369,22 +2378,62 @@ export default function InboxScreen() {
                 />
             )}
 
-            {/* Watcher-picker behind an overlap row — selecting a friend
-                opens/starts the chat about that title. */}
+            {/* Watcher-picker behind an overlap row — the same send-a-
+                message flow as the title page's overlap picker, so it
+                carries the same one-tap quick chips (message chips
+                quick-send + land in the thread; "Write…" opens compose).
+                onSelectWatcher is unused in chip mode. */}
             <WatchersSheet
                 visible={!!overlapPicker}
                 watchers={overlapPicker?.watchers ?? []}
                 onClose={() => setOverlapPicker(null)}
-                onSelectWatcher={(w) => {
-                    const target = overlapPicker;
-                    setOverlapPicker(null);
-                    if (target) {
-                        void goToChatAboutTitle({
-                            otherUserId: w.userId,
-                            tmdbId: target.tmdbId,
-                            mediaType: target.mediaType,
-                        });
-                    }
+                onSelectWatcher={() => {}}
+                // Tappable title header → the title page. Both destinations
+                // reachable from the overlap row (picker stays primary).
+                titleHeader={
+                    overlapPicker
+                        ? {
+                              title: overlapPicker.titleName ?? 'this title',
+                              caption:
+                                  overlapPicker.mediaType === 'movie'
+                                      ? 'Movie'
+                                      : 'TV',
+                              posterPath: overlapPicker.posterPath,
+                              onPress: () => {
+                                  const target = overlapPicker;
+                                  setOverlapPicker(null);
+                                  router.push(
+                                      `/title/${target.mediaType}/${target.tmdbId}`,
+                                  );
+                              },
+                          }
+                        : undefined
+                }
+                quickChips={{
+                    messages: ['Worth watching?', 'What did you think?'],
+                    onQuickSend: (w, message) => {
+                        const target = overlapPicker;
+                        setOverlapPicker(null);
+                        if (target) {
+                            void quickSendAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId: target.tmdbId,
+                                mediaType: target.mediaType,
+                                message,
+                            });
+                        }
+                    },
+                    onWriteYourOwn: (w) => {
+                        const target = overlapPicker;
+                        setOverlapPicker(null);
+                        if (target) {
+                            void goToChatAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId: target.tmdbId,
+                                mediaType: target.mediaType,
+                            });
+                        }
+                    },
                 }}
             />
         </View>

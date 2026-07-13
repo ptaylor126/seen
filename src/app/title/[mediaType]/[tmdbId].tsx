@@ -41,7 +41,7 @@ import {
     type ItemVisibility,
 } from '@/lib/item-status';
 import { OverlapBanner } from '@/components/overlap-banner';
-import { goToChatAboutTitle } from '@/lib/chat-nav';
+import { goToChatAboutTitle, quickSendAboutTitle } from '@/lib/chat-nav';
 import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import { LANGUAGE_NAMES } from '@/lib/languages';
 import { getRegion } from '@/lib/locale';
@@ -1428,6 +1428,19 @@ export default function TitleDetailScreen() {
                     </Pressable>
                 </View>
 
+                {/* Where to watch — moved up directly beneath the sharing
+                    card (was last, after Reviews). "Where can I watch
+                    this" is the first practical question after receiving a
+                    rec, so it leads the informational sections rather than
+                    making the recipient hunt past Cast + the social cards.
+                    Renders nothing when no providers exist for the region,
+                    so a no-providers title still leads with Cast as before. */}
+                <WhereToWatch
+                    region={region}
+                    providers={providersForRegion}
+                    palette={palette}
+                />
+
                 {/* Cast — top ~10 by billing order. Tapping any card
                     routes to the existing /person/[personId] screen so
                     the user stays in-app on the actor's filmography
@@ -1484,12 +1497,6 @@ export default function TitleDetailScreen() {
                     }
                     palette={palette}
                 />
-
-                <WhereToWatch
-                    region={region}
-                    providers={providersForRegion}
-                    palette={palette}
-                />
             </ScrollView>
 
             <CloseButton
@@ -1516,10 +1523,39 @@ export default function TitleDetailScreen() {
                 watchers={friendActivity?.watchedFriends ?? []}
                 onClose={() => setShowWatchersSheet(false)}
                 onSelectWatcher={(w) => {
-                    // Close the sheet first, then open the friend's profile
-                    // (avoids pushing a route underneath the open modal).
+                    // Row tap → the friend's profile (browse). Close the
+                    // sheet first (avoids pushing under the open modal).
                     setShowWatchersSheet(false);
                     router.push(`/friends/${w.handle}`);
+                }}
+                // Chat icon = an EXPANDER: reveals this row's chips inline
+                // (read-then-tap, no silent send). Same chips as the
+                // overlap picker; message chips quick-send, "Write…" opens
+                // compose.
+                quickChips={{
+                    expandable: true,
+                    messages: ['Worth watching?', 'What did you think?'],
+                    onQuickSend: (w, message) => {
+                        setShowWatchersSheet(false);
+                        if (mediaType) {
+                            void quickSendAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId,
+                                mediaType,
+                                message,
+                            });
+                        }
+                    },
+                    onWriteYourOwn: (w) => {
+                        setShowWatchersSheet(false);
+                        if (mediaType) {
+                            void goToChatAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId,
+                                mediaType,
+                            });
+                        }
+                    },
                 }}
             />
 
@@ -1535,6 +1571,31 @@ export default function TitleDetailScreen() {
                 onSelectWatcher={(w) => {
                     setShowWatchingSheet(false);
                     router.push(`/friends/${w.handle}`);
+                }}
+                quickChips={{
+                    expandable: true,
+                    messages: ['Worth watching?', 'What did you think?'],
+                    onQuickSend: (w, message) => {
+                        setShowWatchingSheet(false);
+                        if (mediaType) {
+                            void quickSendAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId,
+                                mediaType,
+                                message,
+                            });
+                        }
+                    },
+                    onWriteYourOwn: (w) => {
+                        setShowWatchingSheet(false);
+                        if (mediaType) {
+                            void goToChatAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId,
+                                mediaType,
+                            });
+                        }
+                    },
                 }}
             />
 
@@ -1554,22 +1615,40 @@ export default function TitleDetailScreen() {
             ) : null}
 
             {/* Watcher-picker behind the banner (and, later, the inbox
-                overlap row): same WatchersSheet, but selecting a friend
-                opens/starts the chat about this title instead of their
-                profile. */}
+                overlap row): same WatchersSheet, but this is the
+                send-a-message flow — each row carries always-visible quick
+                chips so a message is one tap. The message chips quick-send
+                and land in the thread; "Write…" opens the compose screen
+                for custom words. (onSelectWatcher is unused in chip mode —
+                the chips are the row's actions.) */}
             <WatchersSheet
                 visible={showOverlapPicker}
                 watchers={overlapWatchers ?? []}
                 onClose={() => setShowOverlapPicker(false)}
-                onSelectWatcher={(w) => {
-                    setShowOverlapPicker(false);
-                    if (mediaType) {
-                        void goToChatAboutTitle({
-                            otherUserId: w.userId,
-                            tmdbId,
-                            mediaType,
-                        });
-                    }
+                onSelectWatcher={() => {}}
+                quickChips={{
+                    messages: ['Worth watching?', 'What did you think?'],
+                    onQuickSend: (w, message) => {
+                        setShowOverlapPicker(false);
+                        if (mediaType) {
+                            void quickSendAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId,
+                                mediaType,
+                                message,
+                            });
+                        }
+                    },
+                    onWriteYourOwn: (w) => {
+                        setShowOverlapPicker(false);
+                        if (mediaType) {
+                            void goToChatAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId,
+                                mediaType,
+                            });
+                        }
+                    },
                 }}
             />
         </View>
