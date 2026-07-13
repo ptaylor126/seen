@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "935455654246",
+    "project_id": "seen-43e2d",
+    "storage_bucket": "seen-43e2d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:935455654246:android:5253dc08ebd6f0e0c288a7",
+        "android_client_info": {
+          "package_name": "com.paultaylor.seen"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABnA364G7a_ZNio4un40kyw1ohnW8WiSM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

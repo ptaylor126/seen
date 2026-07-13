@@ -25,6 +25,7 @@
     },
     "android": {
       "package": "com.paultaylor.seen",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#F2E7EC",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
