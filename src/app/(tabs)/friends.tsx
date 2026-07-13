@@ -33,6 +33,19 @@ import {
     typography,
 } from '@/theme/theme';
 
+// A friend's single most recent friend-visible activity, from
+// get_friends_activity() (one row per friend who has any). Null when the
+// friend has no qualifying activity — such friends render as before.
+interface FriendActivity {
+    tmdbId: number;
+    mediaType: 'movie' | 'tv';
+    status: 'watchlist' | 'watching' | 'watched';
+    // 1–10 half-star scale, nullable.
+    rating: number | null;
+    titleName: string;
+    activityAt: string;
+}
+
 interface FriendRow {
     userId: string;
     handle: string;
@@ -40,19 +53,72 @@ interface FriendRow {
     avatarUrl: string | null;
     // friendships.created_at — for the "Recently added" sort.
     friendshipCreatedAt: string;
-    // Count of recommendations exchanged with this friend, both directions.
-    recCount: number;
+    // Latest friend-visible activity, or null if the friend has none.
+    activity: FriendActivity | null;
 }
 
-type FriendSort = 'recentlyAdded' | 'name' | 'mostRecs';
+type FriendSort = 'recentlyAdded' | 'name' | 'recentActivity';
 
 const FRIEND_SORTS: { value: FriendSort; label: string }[] = [
     { value: 'recentlyAdded', label: 'Recently added' },
-    { value: 'name', label: 'Name (A–Z)' },
-    { value: 'mostRecs', label: 'Most recs' },
+    { value: 'recentActivity', label: 'Activity' },
+    { value: 'name', label: 'Name' },
 ];
 
-const AVATAR_SIZE = 44;
+// Shape returned by the get_friends_activity() RPC (one row per active
+// friend). Mapped onto FriendRow.activity by friend_id.
+interface FriendActivityRow {
+    friend_id: string;
+    tmdb_id: number;
+    media_type: 'movie' | 'tv';
+    status: 'watchlist' | 'watching' | 'watched';
+    rating: number | null;
+    title_name: string;
+    activity_at: string;
+}
+
+// Coarse relative time for the activity line: 2h, 3d, 2w, 1mo. Local to this
+// screen ON PURPOSE — the shared relativeTimestamp (thread/shared.ts) stops at
+// days then shows a date, and it backs rec/chat message timestamps, so adding
+// weeks/months there would redesign two shipped surfaces. Sub-minute reads as
+// "now".
+function relativeActivity(iso: string): string {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const minutes = diffMs / (1000 * 60);
+    const hours = minutes / 60;
+    const days = hours / 24;
+    const weeks = days / 7;
+    const months = days / 30;
+    if (minutes < 1) return 'now';
+    if (minutes < 60) return `${Math.floor(minutes)}m`;
+    if (hours < 24) return `${Math.floor(hours)}h`;
+    if (days < 7) return `${Math.floor(days)}d`;
+    if (days < 30) return `${Math.floor(weeks)}w`;
+    return `${Math.floor(months)}mo`;
+}
+
+// Rating (1–10 half-star scale) → compact numeric stars, trailing .0 dropped:
+// 8 → "4", 9 → "4.5", 10 → "5", 7 → "3.5". Badge register, not glyph stars.
+function formatStars(rating: number): string {
+    const stars = rating / 2;
+    return Number.isInteger(stars) ? String(stars) : stars.toFixed(1);
+}
+
+// The activity line copy, driven by status + rating.
+function formatActivityLine(activity: FriendActivity): string {
+    const { status, rating, titleName } = activity;
+    if (status === 'watching') return `Watching ${titleName}`;
+    if (status === 'watched') {
+        return rating != null
+            ? `Rated ${titleName} ${formatStars(rating)}★`
+            : `Watched ${titleName}`;
+    }
+    return `Added ${titleName} to their watchlist`;
+}
+
+// Larger than a list-row avatar (was 44) — taller than the two-line text
+// block, so it reads as the anchor of the card.
+const AVATAR_SIZE = 56;
 
 export default function FriendsScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -89,31 +155,37 @@ export default function FriendsScreen() {
             // Friendships + count of incoming pending requests in parallel.
             // Friendships are stored as lexicographic pairs (user_a < user_b),
             // so we OR-match either side and pick the other party per row.
-            const [friendshipsResult, pendingResult, recsResult] =
+            const [friendshipsResult, pendingResult, activityResult] =
                 await Promise.all([
-                    supabase
-                        .from('friendships')
-                        .select('user_a_id, user_b_id, created_at')
-                        .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
-                        .order('created_at', { ascending: false }),
-                    supabase
-                        .from('friend_requests')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('to_user_id', userId),
-                    // Recs involving me (either direction), for the "Most recs"
-                    // sort. Minimal columns, counted per friend client-side
-                    // below. RLS (recommendations_select_party) scopes this to
-                    // rows where I'm sender or recipient.
-                    supabase
-                        .from('recommendations')
-                        .select('from_user_id, to_user_id')
-                        .or(
-                            `from_user_id.eq.${userId},to_user_id.eq.${userId}`,
-                        ),
-                ]);
+                supabase
+                    .from('friendships')
+                    .select('user_a_id, user_b_id, created_at')
+                    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+                    .order('created_at', { ascending: false }),
+                supabase
+                    .from('friend_requests')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('to_user_id', userId),
+                // Latest friend-visible activity per friend (one row each,
+                // friends with none absent). SECURITY INVOKER RPC — RLS scopes
+                // it to my friends' friends-visible items. Parallel here, so no
+                // extra round trip.
+                //
+                // Cast: this RPC is verified on the DB but not yet in the
+                // generated database.types.ts (created by hand in the SQL
+                // editor), so the typed rpc() overload can't see it. Regenerate
+                // types (supabase gen types) to remove the cast — runtime is
+                // correct either way.
+                supabase.rpc(
+                    'get_friends_activity' as never,
+                ) as unknown as PromiseLike<{
+                    data: FriendActivityRow[] | null;
+                    error: { message: string } | null;
+                }>,
+            ]);
             if (friendshipsResult.error) throw friendshipsResult.error;
             if (pendingResult.error) throw pendingResult.error;
-            if (recsResult.error) throw recsResult.error;
+            if (activityResult.error) throw activityResult.error;
 
             setPendingIncoming(pendingResult.count ?? 0);
 
@@ -126,17 +198,19 @@ export default function FriendsScreen() {
                 return other;
             });
 
-            // Count recs per friend (both directions). from_user_id can be null
-            // (sender deleted — FK ON DELETE SET NULL); those can't be
-            // attributed to a friend, so skip them.
-            const recCountById = new Map<string, number>();
-            for (const rec of recsResult.data ?? []) {
-                const other =
-                    rec.from_user_id === userId
-                        ? rec.to_user_id
-                        : rec.from_user_id;
-                if (!other) continue;
-                recCountById.set(other, (recCountById.get(other) ?? 0) + 1);
+            // Latest activity per friend, keyed by friend_id. The RPC returns
+            // at most one row per friend; friends absent from it have no
+            // activity and get null below.
+            const activityById = new Map<string, FriendActivity>();
+            for (const a of activityResult.data ?? []) {
+                activityById.set(a.friend_id, {
+                    tmdbId: a.tmdb_id,
+                    mediaType: a.media_type,
+                    status: a.status,
+                    rating: a.rating,
+                    titleName: a.title_name,
+                    activityAt: a.activity_at,
+                });
             }
 
             if (otherIds.length === 0) {
@@ -161,7 +235,7 @@ export default function FriendsScreen() {
                     displayName: p.display_name,
                     avatarUrl: p.avatar_url,
                     friendshipCreatedAt: createdAtById.get(p.id) ?? '',
-                    recCount: recCountById.get(p.id) ?? 0,
+                    activity: activityById.get(p.id) ?? null,
                 }));
 
             setFriends(friendRows);
@@ -183,7 +257,11 @@ export default function FriendsScreen() {
         return (
             <Pressable
                 onPress={() => router.push(`/friends/${item.handle}`)}
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+                style={({ pressed }) => [
+                    styles.card,
+                    { backgroundColor: palette.surfaceElevated },
+                    pressed && { opacity: 0.6 },
+                ]}
             >
                 <Avatar
                     avatarUrl={item.avatarUrl}
@@ -192,14 +270,39 @@ export default function FriendsScreen() {
                     size={AVATAR_SIZE}
                 />
                 <View style={styles.rowText}>
+                    {/* Name line: display name (flexes) + a right-aligned
+                        coarse timestamp, shown only when there's activity. */}
+                    <View style={styles.nameLine}>
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                styles.nameText,
+                                { color: palette.text },
+                            ]}
+                            numberOfLines={1}
+                        >
+                            {item.displayName}
+                        </Text>
+                        {item.activity ? (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {relativeActivity(item.activity.activityAt)}
+                            </Text>
+                        ) : null}
+                    </View>
+                    {/* Second line: the activity line when it exists, else the
+                        @handle fallback. Never an empty line. */}
                     <Text
-                        style={[typography.bodyEmphasis, { color: palette.text }]}
+                        style={[typography.caption, { color: palette.textMuted }]}
                         numberOfLines={1}
                     >
-                        {item.displayName}
-                    </Text>
-                    <Text style={[typography.caption, { color: palette.textMuted }]}>
-                        @{item.handle}
+                        {item.activity
+                            ? formatActivityLine(item.activity)
+                            : `@${item.handle}`}
                     </Text>
                 </View>
                 {/* No inline per-row actions — requesting a rec lives on
@@ -237,14 +340,24 @@ export default function FriendsScreen() {
                 return a.displayName.localeCompare(b.displayName, undefined, {
                     sensitivity: 'base',
                 });
-            case 'mostRecs':
-                // Most first; tie-break by name for a stable, sensible order.
-                return (
-                    b.recCount - a.recCount ||
-                    a.displayName.localeCompare(b.displayName, undefined, {
+            case 'recentActivity': {
+                // Most recent activity first. Friends with no activity sink to
+                // the bottom, alphabetical among themselves.
+                const aAt = a.activity?.activityAt ?? null;
+                const bAt = b.activity?.activityAt ?? null;
+                if (aAt && bAt) {
+                    if (aAt > bAt) return -1;
+                    if (aAt < bAt) return 1;
+                    return a.displayName.localeCompare(b.displayName, undefined, {
                         sensitivity: 'base',
-                    })
-                );
+                    });
+                }
+                if (aAt) return -1; // a has activity, b doesn't
+                if (bAt) return 1; // b has activity, a doesn't
+                return a.displayName.localeCompare(b.displayName, undefined, {
+                    sensitivity: 'base',
+                });
+            }
             case 'recentlyAdded':
             default:
                 // Newest friendship first (created_at DESC).
@@ -507,12 +620,7 @@ export default function FriendsScreen() {
                                         { paddingBottom: tabBarInset },
                                     ]}
                                     ItemSeparatorComponent={() => (
-                                        <View
-                                            style={[
-                                                styles.separator,
-                                                { backgroundColor: palette.border },
-                                            ]}
-                                        />
+                                        <View style={styles.cardGap} />
                                     )}
                                 />
                             ) : (
@@ -631,19 +739,35 @@ const styles = StyleSheet.create({
         // moved to a header-right "+" button (see the ScreenHeader
         // rightActions prop above).
     },
-    row: {
+    // Friend row as a card — matches the title page's recommended-by /
+    // watched-by social cards: surfaceElevated fill (inline, palette-driven),
+    // radius.md, padding md, fill-only (no shadow). Discrete cards separated
+    // by gaps (cardGap via ItemSeparator), not dividers.
+    card: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: spacing.md,
         gap: spacing.md,
+        padding: spacing.md,
+        borderRadius: radius.md,
     },
     rowText: {
         flex: 1,
         gap: spacing.xs,
     },
-    separator: {
-        height: StyleSheet.hairlineWidth,
-        marginLeft: AVATAR_SIZE + spacing.md,
+    // Name + right-aligned timestamp on one line. The name flexes and
+    // truncates; the timestamp keeps its intrinsic width at the right edge.
+    nameLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    nameText: {
+        flexShrink: 1,
+    },
+    // Air between cards (spacing.md = 12) so they read as discrete objects,
+    // not a striped block — especially at radius.md.
+    cardGap: {
+        height: spacing.md,
     },
     emptyState: {
         flex: 1,
