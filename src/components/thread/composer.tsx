@@ -46,9 +46,10 @@ export function ThreadComposer({
     onSend: () => void;
     busy: boolean;
     placeholder: string;
-    // Focus callback (e.g. a hardware keyboard, where no keyboard event
-    // fires) — the screen may scroll its thread to the end.
-    onFocus: () => void;
+    // Optional focus callback — the rec screen scrolls its thread to the end
+    // on focus (top-anchored). The chat omits it: its bottom-anchored list
+    // already hugs the composer and lifts on the keyboard rise.
+    onFocus?: () => void;
     // Open the keyboard on mount (chat threads arrive ready to type). Off by
     // default so the rec thread stays arrive-reading.
     autoFocus?: boolean;

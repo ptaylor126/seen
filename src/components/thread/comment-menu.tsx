@@ -67,14 +67,18 @@ export function ThreadCommentMenu({
     const [menuHeight, setMenuHeight] = useState(0);
 
     const screenHeight = Dimensions.get('window').height;
+    // anchorY is the pressed bubble's TOP in window space (measureInWindow
+    // in comment-list) — NOT the touch point — so the menu sits a constant
+    // gap above the message regardless of where inside it the press landed.
     const anchorY = menu?.anchorY ?? 0;
     const minTop = insets.top + spacing.base;
     // Bottom of the usable area: above the keyboard (live height) and the
     // home-indicator inset.
     const visibleBottom =
         screenHeight - keyboardState.height - insets.bottom - spacing.base;
-    // Open above the anchor; if that clips the top, open below it instead;
-    // then clamp so the popover never overlaps the keyboard or an edge.
+    // Menu bottom a constant ANCHOR_GAP above the bubble's top. If opening
+    // above would clip the safe top, flip to below the bubble; then a
+    // last-resort viewport clamp keeps it off the keyboard / an edge.
     let top = anchorY - menuHeight - ANCHOR_GAP;
     if (top < minTop) top = anchorY + ANCHOR_GAP;
     if (menuHeight > 0 && top + menuHeight > visibleBottom) {

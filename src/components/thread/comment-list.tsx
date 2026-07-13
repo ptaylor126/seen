@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import {
     Pressable,
     StyleSheet,
@@ -82,6 +82,9 @@ export function ThreadCommentList({
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
+    // Per-bubble refs so a long-press can measureInWindow the pressed
+    // bubble's true screen position (the menu anchors to it).
+    const bubbleRefs = useRef(new Map<string, View>());
     // Which bubble has its exact send time revealed (tap toggles; tapping
     // another bubble moves the reveal there).
     const [expandedTimeId, setExpandedTimeId] = useState<string | null>(null);
@@ -172,19 +175,41 @@ export function ThreadCommentList({
                             ]}
                         >
                             <Pressable
+                                ref={(node) => {
+                                    if (node)
+                                        bubbleRefs.current.set(c.id, node);
+                                    else bubbleRefs.current.delete(c.id);
+                                }}
                                 onPress={() =>
                                     setExpandedTimeId((cur) =>
                                         cur === c.id ? null : c.id,
                                     )
                                 }
-                                onLongPress={(e) =>
-                                    onLongPressComment({
-                                        commentId: c.id,
-                                        anchorY: e.nativeEvent.pageY,
-                                        isOwn: isMine,
-                                        authorId: c.userId,
-                                    })
-                                }
+                                onLongPress={(e) => {
+                                    // Anchor the menu to the BUBBLE, not the
+                                    // touch point: measure the bubble's true
+                                    // top in window space so the menu sits a
+                                    // consistent gap above the message
+                                    // regardless of where inside it the press
+                                    // landed. Fall back to the touch pageY if
+                                    // the node ref isn't available.
+                                    const pageY = e.nativeEvent.pageY;
+                                    const open = (anchorY: number) =>
+                                        onLongPressComment({
+                                            commentId: c.id,
+                                            anchorY,
+                                            isOwn: isMine,
+                                            authorId: c.userId,
+                                        });
+                                    const node = bubbleRefs.current.get(c.id);
+                                    if (node) {
+                                        node.measureInWindow((_x, y) =>
+                                            open(y),
+                                        );
+                                    } else {
+                                        open(pageY);
+                                    }
+                                }}
                                 style={[
                                     styles.bubble,
                                     isMine

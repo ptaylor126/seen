@@ -40,10 +40,11 @@ export interface CommentRow {
     fromWatched: boolean;
 }
 
-// Payload for the long-press comment menu, anchored at the touch point of
-// the comment the user pressed. `anchorY` is from the long-press event's
-// nativeEvent.pageY (screen Y); `isOwn` controls whether the actions menu
-// appears below the emoji row.
+// Payload for the long-press comment menu. `anchorY` is the pressed
+// bubble's TOP in window space (measureInWindow, not the touch pageY), so
+// the menu sits a constant gap above the message regardless of where the
+// press landed. `isOwn` controls whether the actions menu appears below the
+// emoji row.
 export interface CommentMenuTarget {
     commentId: string;
     anchorY: number;

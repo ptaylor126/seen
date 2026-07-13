@@ -5,16 +5,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     AppState,
-    type NativeScrollEvent,
-    type NativeSyntheticEvent,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     useColorScheme,
     View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import {
+    KeyboardStickyView,
+    useReanimatedKeyboardAnimation,
+} from 'react-native-keyboard-controller';
+import Animated, {
+    Extrapolation,
+    interpolate,
+    runOnJS,
+    useAnimatedScrollHandler,
+    useAnimatedStyle,
+    useSharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -55,8 +63,24 @@ import {
     typography,
 } from '@/theme/theme';
 
-// The other party's avatar in the centered identity header.
-const IDENTITY_AVATAR_SIZE = 56;
+// The other party's avatar in the identity row, at the EXPANDED size. The
+// header collapses on scroll/keyboard by scaling this row down on the UI
+// thread, so the avatar renders once at full size and never re-lays-out.
+const IDENTITY_AVATAR_SIZE = 44;
+// Collapse tuning. The header shrinks as EITHER the thread scrolls up off the
+// bottom OR the keyboard opens — combined into a single 0→1 value (a max, not
+// two competing animations). COLLAPSE_SCROLL_DISTANCE is how far (px) you
+// scroll up from the bottom to reach full collapse; TITLE_CHIP_HEIGHT is the
+// title bar's fixed height (poster 60 + paddingVertical spacing.sm ×2), which
+// the wrapper collapses; the identity row scales to IDENTITY_COLLAPSED_SCALE.
+const COLLAPSE_SCROLL_DISTANCE = 72;
+const TITLE_CHIP_HEIGHT = 76;
+const IDENTITY_COLLAPSED_SCALE = 0.72;
+// The title chip shrinks WITH the identity rather than vanishing — same idea,
+// scaled down and kept visible/tappable. Its wrapper height tracks this scale
+// (TITLE_CHIP_HEIGHT × scale) so the shrink reclaims a little room with no gap
+// or clip.
+const TITLE_COLLAPSED_SCALE = 0.72;
 
 interface ChatTitleMeta {
     title: string;
@@ -77,6 +101,24 @@ export default function ChatScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    // Keyboard height + progress as shared values — the SAME keyboard clock the
+    // composer rides (KeyboardStickyView + the composer's own inset). Both are
+    // read on the UI thread: `progress` (0 closed → 1 open) drives the header
+    // collapse; `height` drives the message list's animated bottom spacer, so
+    // the newest messages lift in lockstep with the risen composer instead of
+    // snapping (the old JS-state height stepped in one re-render → a jump). The
+    // ScrollView itself is never transformed, so its scroll geometry stays
+    // correct with the keyboard open.
+    const { height: keyboardHeightSV, progress: keyboardProgress } =
+        useReanimatedKeyboardAnimation();
+    // Scroll-driven collapse (0 at the bottom → 1 scrolled up into history),
+    // written on the UI thread by the scroll handler. Combined with the
+    // keyboard progress via max() into the single collapse value the header
+    // animates off — so scroll and keyboard never fight.
+    const scrollCollapse = useSharedValue(0);
+    // UI-thread mirror of nearBottomRef, so the scroll worklet only crosses to
+    // JS (for the new-message pill) when the boolean actually flips.
+    const nearBottomShared = useSharedValue(true);
     const chatId = typeof params.chatId === 'string' ? params.chatId : '';
 
     const [loading, setLoading] = useState(true);
@@ -103,7 +145,7 @@ export default function ChatScreen() {
         useState<CommentMenuTarget | null>(null);
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
-    const scrollRef = useRef<ScrollView | null>(null);
+    const scrollRef = useRef<Animated.ScrollView>(null);
     // Whether the user is at/near the bottom of the thread (within ~one
     // screen). Drives the new-message auto-scroll: content arriving via a
     // load() refetch (realtime / focus / foreground) scrolls to the bottom
@@ -289,15 +331,122 @@ export default function ChatScreen() {
     // still follows the conversation, but someone deep in history doesn't.
     // Reaching the bottom (by any means) also clears the new-message pill —
     // the setState bails when already false, so per-event calls are cheap.
-    function handleScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
-        const { contentOffset, layoutMeasurement, contentSize } =
-            e.nativeEvent;
-        nearBottomRef.current =
-            contentOffset.y + layoutMeasurement.height >=
-            contentSize.height - layoutMeasurement.height;
-        if (nearBottomRef.current) setShowNewMessagePill(false);
-    }
+    // Called from the scroll worklet only when near-bottom flips (not per
+    // frame). Owns the JS-side pill/auto-scroll state; the collapse itself
+    // stays on the UI thread.
+    const applyNearBottom = useCallback((near: boolean) => {
+        nearBottomRef.current = near;
+        if (near) setShowNewMessagePill(false);
+    }, []);
 
+    // Single UI-thread scroll handler: (1) maps distance-from-bottom to the
+    // scroll-collapse value, and (2) flips near-bottom to JS on change. The
+    // list is bottom-anchored, so at rest distanceFromBottom = 0 (expanded);
+    // scrolling up into history grows it toward full collapse.
+    const scrollHandler = useAnimatedScrollHandler((e) => {
+        const maxOffset = e.contentSize.height - e.layoutMeasurement.height;
+        const distanceFromBottom = maxOffset - e.contentOffset.y;
+        scrollCollapse.value = interpolate(
+            distanceFromBottom,
+            [0, COLLAPSE_SCROLL_DISTANCE],
+            [0, 1],
+            Extrapolation.CLAMP,
+        );
+        const near =
+            e.contentOffset.y + e.layoutMeasurement.height >=
+            e.contentSize.height - e.layoutMeasurement.height;
+        if (near !== nearBottomShared.value) {
+            nearBottomShared.value = near;
+            runOnJS(applyNearBottom)(near);
+        }
+    });
+
+    // The one collapse value both inputs fold into (a max — whichever wants
+    // the header smaller wins). 0 = fully expanded, 1 = fully collapsed.
+    // Header container: tightens its top/bottom padding as it collapses.
+    const topSectionStyle = useAnimatedStyle(() => {
+        const c = Math.max(scrollCollapse.value, keyboardProgress.value);
+        return {
+            paddingTop: interpolate(
+                c,
+                [0, 1],
+                [insets.top + spacing.base, insets.top + spacing.sm],
+                Extrapolation.CLAMP,
+            ),
+            paddingBottom: interpolate(
+                c,
+                [0, 1],
+                [spacing.sm, spacing.xs],
+                Extrapolation.CLAMP,
+            ),
+        };
+    });
+    // Identity row: scales down (avatar + name together) and drops its gap to
+    // the title as it collapses. Transform-only, so it never re-lays-out.
+    const identityStyle = useAnimatedStyle(() => {
+        const c = Math.max(scrollCollapse.value, keyboardProgress.value);
+        return {
+            transform: [
+                {
+                    scale: interpolate(
+                        c,
+                        [0, 1],
+                        [1, IDENTITY_COLLAPSED_SCALE],
+                        Extrapolation.CLAMP,
+                    ),
+                },
+            ],
+            marginBottom: interpolate(
+                c,
+                [0, 1],
+                [spacing.sm, 0],
+                Extrapolation.CLAMP,
+            ),
+        };
+    });
+    // Title chip: shrinks WITH the header instead of vanishing — the wrapper
+    // height tracks the content's scale (TITLE_CHIP_HEIGHT × scale), so it gets
+    // smaller like the identity row above it — no fade, no clip, still tappable.
+    const titleChipWrapStyle = useAnimatedStyle(() => {
+        const c = Math.max(scrollCollapse.value, keyboardProgress.value);
+        return {
+            height: interpolate(
+                c,
+                [0, 1],
+                [TITLE_CHIP_HEIGHT, TITLE_CHIP_HEIGHT * TITLE_COLLAPSED_SCALE],
+                Extrapolation.CLAMP,
+            ),
+        };
+    });
+    // The chip's content scale — paired with the wrapper height above so the
+    // scaled pill fits its box exactly (67 × scale on both) and stays centered.
+    const titleChipScaleStyle = useAnimatedStyle(() => {
+        const c = Math.max(scrollCollapse.value, keyboardProgress.value);
+        return {
+            transform: [
+                {
+                    scale: interpolate(
+                        c,
+                        [0, 1],
+                        [1, TITLE_COLLAPSED_SCALE],
+                        Extrapolation.CLAMP,
+                    ),
+                },
+            ],
+        };
+    });
+    // Animated bottom spacer for the message list. The composer rides up on the
+    // keyboard's native clock; this lifts the newest messages by the SAME live
+    // keyboard height (UI thread) so they track it smoothly instead of jumping
+    // when a JS-state height steps in. Rests at spacing.base (closed), grows to
+    // keyboard height + spacing.sm (open). abs() is sign-agnostic — the shared
+    // value is signed for translateY use.
+    const bottomSpacerStyle = useAnimatedStyle(() => {
+        const kb = Math.abs(keyboardHeightSV.value);
+        return {
+            height: Math.max(spacing.base, kb + spacing.sm),
+        };
+    });
     // While the arrival pin is set, every content growth re-snaps to the end
     // — this is what actually lands the open-at-latest-message scroll (a
     // timer can't; see pinToBottomRef).
@@ -360,12 +509,11 @@ export default function ChatScreen() {
         enabled: !!chatId,
     });
 
-    // No manual keyboard listener: the composer self-animates its clearance
-    // off the keyboard progress, and the KeyboardAvoidingView lifts the
-    // thread — one animated source. The thread bottom-anchors (see
-    // scrollContent), so short threads already hug the composer and rise
-    // with the keyboard; no scroll is needed to keep the latest message
-    // above it (scrolling was a no-op on short threads anyway).
+    // No manual keyboard listener: the composer rides the keyboard via
+    // KeyboardStickyView (native clock), the message list bottom-anchors and
+    // gets a keyboard-height paddingBottom so the newest messages clear the
+    // risen composer, and the composer's own inset self-animates on the
+    // keyboard progress — all one keyboard, no competing container animation.
 
     // Per-comment reaction — same delete-on-active / upsert semantics as the
     // rec screen, against chat_comment_reactions.
@@ -456,12 +604,11 @@ export default function ChatScreen() {
         }
     }
 
-    function handleComposerFocus() {
-        // Bottom-anchored content already sits above the composer; a single
-        // scroll covers the case where the user had scrolled up before
-        // tapping the field (and the hardware-keyboard no-event fallback).
-        scrollRef.current?.scrollToEnd({ animated: true });
-    }
+    // No focus-scroll: the bottom-anchored message list already hugs the
+    // composer, and on the keyboard rise the ScrollView's paddingBottom lifts
+    // the newest messages clear of the risen composer. Keeping the user's
+    // scroll position on focus is also the correct behaviour (iMessage/
+    // WhatsApp don't jump to bottom when you tap the field).
 
     function handleDeleteComment(commentId: string) {
         Alert.alert('Delete comment?', 'This cannot be undone.', [
@@ -546,132 +693,143 @@ export default function ChatScreen() {
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             {closeButton}
-            <KeyboardAvoidingView
-                style={styles.flex}
-                behavior="padding"
-                keyboardVerticalOffset={0}
-            >
-                {/* Relative wrapper so the "New message ↓" pill can float at
-                    the thread's bottom edge, above the composer. */}
-                <View style={styles.flex}>
-                <ScrollView
+            {/* FIXED top section (iMessage model): a compact bar — identity
+                row + title chip — pinned at the top, OUTSIDE the scroll, so it
+                can't be dragged down by the message list's bottom-anchor and
+                stays glanceable at any scroll position. It COLLAPSES (padding,
+                identity scale, title height) off a single 0→1 value driven by
+                scroll + keyboard on the UI thread, so the list below doesn't
+                shimmy. The centered bar and the top-right close button share
+                the same Y band at different X, so they coexist. */}
+            <Animated.View style={[styles.topSection, topSectionStyle]}>
+                {/* Identity row (iMessage-style): the OTHER party's avatar +
+                    "You & {name}" inline, centered as a unit. Perspective-
+                    shifts by viewer, never shows your own avatar. Scales down
+                    as the header collapses. */}
+                <Animated.View style={[styles.identityHeader, identityStyle]}>
+                    <UserLink
+                        userId={otherProfile?.userId ?? null}
+                        disabled={!otherProfile}
+                        hitSlop={8}
+                        accessibilityLabel={`View ${otherName}'s profile`}
+                    >
+                        <Avatar
+                            avatarUrl={otherProfile?.avatarUrl ?? null}
+                            displayName={otherName}
+                            seedId={otherProfile?.userId ?? chat.id}
+                            size={IDENTITY_AVATAR_SIZE}
+                        />
+                    </UserLink>
+                    <Text
+                        style={[typography.bodyEmphasis, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        You & {otherFirstName}
+                    </Text>
+                </Animated.View>
+
+                {/* Thin tappable title chip — small poster + "{Title} · {type}"
+                    + chevron, through to the full title page. A pill, not a
+                    card. Outer wrapper animates HEIGHT, inner animates SCALE
+                    (paired) so the chip shrinks with the header — like the
+                    identity row — instead of folding away. */}
+                <Animated.View
+                    style={[styles.titleChipWrap, titleChipWrapStyle]}
+                >
+                    <Animated.View style={titleChipScaleStyle}>
+                        <Pressable
+                            onPress={() =>
+                                router.push(
+                                    `/title/${chat.mediaType}/${chat.tmdbId}`,
+                                )
+                            }
+                            accessibilityRole="link"
+                            accessibilityLabel={`View details for ${titleMeta.title}`}
+                            style={({ pressed }) => [
+                                styles.titleChip,
+                                {
+                                    backgroundColor: palette.surface,
+                                    opacity: pressed ? 0.7 : 1,
+                                },
+                            ]}
+                        >
+                            {titleMeta.posterPath ? (
+                                <Image
+                                    source={{
+                                        uri: imageUrl(
+                                            titleMeta.posterPath,
+                                            'w185',
+                                        ),
+                                    }}
+                                    style={styles.titleChipPoster}
+                                    contentFit="cover"
+                                    transition={150}
+                                />
+                            ) : (
+                                <View
+                                    style={[
+                                        styles.titleChipPoster,
+                                        { backgroundColor: palette.surfaceAlt },
+                                    ]}
+                                />
+                            )}
+                            <View style={styles.titleChipText}>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        styles.titleChipTitle,
+                                        { color: palette.text },
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {titleMeta.title}
+                                </Text>
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    {` · ${
+                                        chat.mediaType === 'movie'
+                                            ? 'Movie'
+                                            : 'TV'
+                                    }`}
+                                </Text>
+                            </View>
+                            <ChevronRight
+                                color={palette.textMuted}
+                                size={18}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                        </Pressable>
+                    </Animated.View>
+                </Animated.View>
+            </Animated.View>
+
+            {/* Message list — fills between the fixed header and the composer,
+                bottom-anchored (short threads hug the composer). Relative
+                wrapper so the "New message ↓" pill floats above the composer.
+                The ScrollView is NOT transformed; when the keyboard is up its
+                paddingBottom lifts the newest messages clear of the risen
+                composer, and its scroll geometry stays correct. */}
+            <View style={styles.flex}>
+                <Animated.ScrollView
                     ref={scrollRef}
                     style={styles.flex}
-                    onScroll={handleScroll}
-                    // Proximity tracking only needs coarse updates, not
-                    // per-frame events.
-                    scrollEventThrottle={100}
+                    onScroll={scrollHandler}
+                    // UI-thread handler drives the collapse — needs per-frame
+                    // events (16ms) to track the keyboard/scroll smoothly.
+                    scrollEventThrottle={16}
                     onContentSizeChange={handleContentSizeChange}
                     // A real user drag always releases the arrival pin — they
                     // own the scroll position from that moment.
                     onScrollBeginDrag={() => {
                         pinToBottomRef.current = false;
                     }}
-                    contentContainerStyle={[
-                        styles.scrollContent,
-                        {
-                            // Clear the absolute close button (36pt at
-                            // insets.top + base) before the header starts.
-                            paddingTop: insets.top + spacing.base + 36 + spacing.lg,
-                            paddingBottom: insets.bottom + spacing.base,
-                        },
-                    ]}
+                    contentContainerStyle={styles.scrollContent}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Centered identity header (iMessage-style): the OTHER
-                        party's avatar + "You & {name}" — perspective-shifts
-                        by viewer, never shows your own avatar. */}
-                    <View style={styles.identityHeader}>
-                        <UserLink
-                            userId={otherProfile?.userId ?? null}
-                            disabled={!otherProfile}
-                            hitSlop={8}
-                            accessibilityLabel={`View ${otherName}'s profile`}
-                        >
-                            <Avatar
-                                avatarUrl={otherProfile?.avatarUrl ?? null}
-                                displayName={otherName}
-                                seedId={otherProfile?.userId ?? chat.id}
-                                size={IDENTITY_AVATAR_SIZE}
-                            />
-                        </UserLink>
-                        <Text
-                            style={[
-                                typography.heading,
-                                { color: palette.text },
-                            ]}
-                        >
-                            You & {otherFirstName}
-                        </Text>
-                    </View>
-
-                    {/* Compact title header — small poster + title/year,
-                        tappable through to the full title page. No hero,
-                        no status chrome: a chat has no lifecycle. */}
-                    <Pressable
-                        onPress={() =>
-                            router.push(
-                                `/title/${chat.mediaType}/${chat.tmdbId}`,
-                            )
-                        }
-                        accessibilityRole="link"
-                        accessibilityLabel={`View details for ${titleMeta.title}`}
-                        style={({ pressed }) => [
-                            styles.titleHeader,
-                            {
-                                backgroundColor: palette.surface,
-                                opacity: pressed ? 0.7 : 1,
-                            },
-                        ]}
-                    >
-                        {titleMeta.posterPath ? (
-                            <Image
-                                source={{
-                                    uri: imageUrl(titleMeta.posterPath, 'w185'),
-                                }}
-                                style={styles.titlePoster}
-                                contentFit="cover"
-                                transition={150}
-                            />
-                        ) : (
-                            <View
-                                style={[
-                                    styles.titlePoster,
-                                    { backgroundColor: palette.surfaceAlt },
-                                ]}
-                            />
-                        )}
-                        <View style={styles.titleHeaderText}>
-                            <Text
-                                style={[
-                                    typography.bodyEmphasis,
-                                    { color: palette.text },
-                                ]}
-                                numberOfLines={2}
-                            >
-                                {titleMeta.title}
-                            </Text>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                {[
-                                    titleMeta.year,
-                                    chat.mediaType === 'movie' ? 'Movie' : 'TV',
-                                ]
-                                    .filter(Boolean)
-                                    .join(' · ')}
-                            </Text>
-                        </View>
-                        <ChevronRight
-                            color={palette.textMuted}
-                            size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
-                    </Pressable>
-
                     <View style={styles.bodyPad}>
                         <ThreadCommentList
                             comments={comments}
@@ -680,12 +838,17 @@ export default function ChatScreen() {
                             onLongPressComment={setCommentMenuFor}
                         />
                     </View>
-                </ScrollView>
+                    {/* Animated bottom clearance — lifts the newest messages
+                        smoothly with the rising composer/keyboard (see
+                        bottomSpacerStyle). Last child, so the bottom-anchored
+                        content sits directly above it. */}
+                    <Animated.View style={bottomSpacerStyle} />
+                </Animated.ScrollView>
 
                 {/* Floating "New message ↓" — shown when a message landed
                     while the user was up in history. Tap scrolls to the end;
                     scrolling to the bottom yourself also clears it (see
-                    handleScroll). Accent pill, same fill/radius language as
+                    applyNearBottom). Accent pill, same fill/radius language as
                     the composer's send circle. */}
                 {showNewMessagePill ? (
                     <Pressable
@@ -713,8 +876,14 @@ export default function ChatScreen() {
                         </Text>
                     </Pressable>
                 ) : null}
-                </View>
+            </View>
 
+            {/* Composer pinned to the keyboard via KeyboardStickyView (native
+                clock → rides the keyboard exactly, no lag). Its flow slot
+                reserves the bar's height at the bottom; the composer's own
+                bottom padding self-animates (home-indicator inset closed →
+                small gap open) on the same keyboard progress. */}
+            <KeyboardStickyView>
                 <ThreadComposer
                     value={composer}
                     onChangeText={setComposer}
@@ -725,13 +894,17 @@ export default function ChatScreen() {
                             ? 'Start a conversation'
                             : 'Add to the conversation…'
                     }
-                    onFocus={handleComposerFocus}
-                    autoFocus
+                    // Auto-focus only a brand-new (empty) thread — you're there
+                    // to write the first message. An existing thread opens at
+                    // rest, keyboard down, so you read first and the header
+                    // stays expanded until you scroll or tap the field (the
+                    // platform-standard open-a-conversation behaviour).
+                    autoFocus={comments.length === 0}
                     avatarUrl={myProfile?.avatarUrl ?? null}
                     avatarDisplayName={myProfile?.displayName ?? '?'}
                     avatarSeedId={myUserId ?? chat.id}
                 />
-            </KeyboardAvoidingView>
+            </KeyboardStickyView>
 
             {/* Long-press popover — react / delete own / report other's.
                 Reports use type 'comment' (see reports CHECK); the id points
@@ -769,52 +942,71 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         zIndex: 10,
     },
+    // Fixed compact header bar (identity row + title chip), OUTSIDE the scroll
+    // so the message list's bottom-anchor can't drag it down. Its top/bottom
+    // padding is animated (topSectionStyle) — the safe-area + a gap that
+    // tightens as it collapses.
+    topSection: {},
     scrollContent: {
-        // paddingTop/Bottom applied inline (safe-area + close-button
-        // clearance). flexGrow + flex-end BOTTOM-ANCHOR the thread: short
-        // threads hug the composer (newest just above it) instead of
-        // floating at the top, so when the keyboard lifts the layout the
-        // messages rise with it — the fix is content yielding, not scroll
-        // (scrollToEnd is a no-op when content fits the viewport).
+        // flexGrow + flex-end BOTTOM-ANCHOR the messages: short threads hug
+        // the composer (newest just above it) instead of floating at the top.
+        // Bottom clearance is an animated spacer (last child, bottomSpacerStyle)
+        // rather than paddingBottom, so it tracks the keyboard smoothly.
         flexGrow: 1,
         justifyContent: 'flex-end',
     },
-    // Compact tappable title card: poster + title/year + chevron. Surface-
-    // filled with a soft shadow so it reads as the conversation's anchor,
-    // gently lifted off the wash rather than flat against it.
-    titleHeader: {
+    // Tappable title bar: small poster + title · type + chevron. Spans the
+    // width (margin, not content-hugging) so it reads as a wide bar under the
+    // centered identity. Surface-filled, no shadow — a rounded bar, not a
+    // lifted card.
+    titleChip: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.md,
         marginHorizontal: spacing.base,
-        padding: spacing.sm,
-        borderRadius: radius.md,
-        // Subtle elevation — iOS shadow + Android elevation pair.
-        shadowColor: '#000',
-        shadowOpacity: 0.08,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 3,
+        gap: spacing.sm,
+        paddingLeft: spacing.sm,
+        paddingRight: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.lg,
     },
-    titlePoster: {
-        // Larger than the original 48×72 thumb — the poster is the
-        // conversation's visual anchor.
-        width: 68,
-        height: 102,
-        borderRadius: radius.sm,
+    titleChipPoster: {
+        width: 40,
+        height: 60,
+        // Nested-radius rule: inner = outer − padding. The bar's corner is
+        // radius.lg (24) and the poster is inset spacing.sm (8) on its top/
+        // left/bottom, so its corners are 24 − 8 = 16 to stay concentric with
+        // the bar's rounding rather than looking pasted on.
+        borderRadius: 16,
     },
-    titleHeaderText: {
+    // Title + "· type" group; flex:1 fills the bar so the chevron pins to the
+    // right edge and the title truncates instead of pushing it off.
+    titleChipText: {
         flex: 1,
-        gap: spacing.xs,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    titleChipTitle: {
+        // Shrinks so a long title truncates while the "· type" stays.
+        flexShrink: 1,
     },
     bodyPad: {
         paddingHorizontal: spacing.base,
     },
+    // Compact single-line identity row: avatar + "You & {name}" inline,
+    // centered as a unit. Its scale + marginBottom animate (identityStyle).
     identityHeader: {
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: spacing.sm,
-        marginBottom: spacing.base,
         paddingHorizontal: spacing.base,
+    },
+    // Height-collapsing wrapper for the title chip: overflow-clipped so the
+    // chip folds away cleanly, centered so it clips evenly top/bottom as the
+    // height animates to 0.
+    titleChipWrap: {
+        overflow: 'hidden',
+        justifyContent: 'center',
     },
     newMessagePill: {
         // Floating over the thread's bottom edge, self-centered. Full-radius
