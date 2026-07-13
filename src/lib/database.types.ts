@@ -47,7 +47,7 @@ export type Database = {
         }
         Insert: {
           blocked_id: string
-          blocker_id?: string
+          blocker_id: string
           created_at?: string
         }
         Update: {
@@ -66,6 +66,133 @@ export type Database = {
           {
             foreignKeyName: "blocks_blocker_id_fkey"
             columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_comment_reactions: {
+        Row: {
+          chat_id: string
+          comment_id: string
+          created_at: string
+          emoji: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          chat_id: string
+          comment_id: string
+          created_at?: string
+          emoji: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          chat_id?: string
+          comment_id?: string
+          created_at?: string
+          emoji?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_comment_reactions_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "title_chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_comment_reactions_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "chat_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_comment_reactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_comments: {
+        Row: {
+          body: string
+          chat_id: string
+          created_at: string
+          id: string
+          user_id: string | null
+        }
+        Insert: {
+          body: string
+          chat_id: string
+          created_at?: string
+          id?: string
+          user_id?: string | null
+        }
+        Update: {
+          body?: string
+          chat_id?: string
+          created_at?: string
+          id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_comments_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "title_chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_comments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_reactions: {
+        Row: {
+          chat_id: string
+          created_at: string
+          emoji: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          chat_id: string
+          created_at?: string
+          emoji: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          chat_id?: string
+          created_at?: string
+          emoji?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_reactions_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "title_chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_reactions_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -106,6 +233,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      feedback: {
+        Row: {
+          app_version: string | null
+          body: string
+          created_at: string
+          device: string | null
+          id: string
+          reply_email: string | null
+          screenshot_path: string | null
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          app_version?: string | null
+          body: string
+          created_at?: string
+          device?: string | null
+          id?: string
+          reply_email?: string | null
+          screenshot_path?: string | null
+          status?: string
+          user_id?: string | null
+        }
+        Update: {
+          app_version?: string | null
+          body?: string
+          created_at?: string
+          device?: string | null
+          id?: string
+          reply_email?: string | null
+          screenshot_path?: string | null
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: []
       }
       friend_requests: {
         Row: {
@@ -228,6 +391,9 @@ export type Database = {
           created_at: string
           id: string
           media_type: string
+          note: string | null
+          progress_episode: number | null
+          progress_season: number | null
           rating: number | null
           status: string
           tmdb_id: number
@@ -240,6 +406,9 @@ export type Database = {
           created_at?: string
           id?: string
           media_type: string
+          note?: string | null
+          progress_episode?: number | null
+          progress_season?: number | null
           rating?: number | null
           status: string
           tmdb_id: number
@@ -252,6 +421,9 @@ export type Database = {
           created_at?: string
           id?: string
           media_type?: string
+          note?: string | null
+          progress_episode?: number | null
+          progress_season?: number | null
           rating?: number | null
           status?: string
           tmdb_id?: number
@@ -432,6 +604,7 @@ export type Database = {
           comment_id: string
           created_at: string
           emoji: string
+          recommendation_id: string
           updated_at: string
           user_id: string
         }
@@ -439,6 +612,7 @@ export type Database = {
           comment_id: string
           created_at?: string
           emoji: string
+          recommendation_id: string
           updated_at?: string
           user_id: string
         }
@@ -446,6 +620,7 @@ export type Database = {
           comment_id?: string
           created_at?: string
           emoji?: string
+          recommendation_id?: string
           updated_at?: string
           user_id?: string
         }
@@ -455,6 +630,13 @@ export type Database = {
             columns: ["comment_id"]
             isOneToOne: false
             referencedRelation: "recommendation_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendation_comment_reactions_recommendation_id_fkey"
+            columns: ["recommendation_id"]
+            isOneToOne: false
+            referencedRelation: "recommendations"
             referencedColumns: ["id"]
           },
           {
@@ -470,6 +652,7 @@ export type Database = {
         Row: {
           body: string
           created_at: string
+          from_watched: boolean
           id: string
           is_decline_note: boolean
           recommendation_id: string
@@ -478,6 +661,7 @@ export type Database = {
         Insert: {
           body: string
           created_at?: string
+          from_watched?: boolean
           id?: string
           is_decline_note?: boolean
           recommendation_id: string
@@ -486,6 +670,7 @@ export type Database = {
         Update: {
           body?: string
           created_at?: string
+          from_watched?: boolean
           id?: string
           is_decline_note?: boolean
           recommendation_id?: string
@@ -684,6 +869,54 @@ export type Database = {
           },
         ]
       }
+      title_chats: {
+        Row: {
+          created_at: string
+          episode: number | null
+          from_user_id: string
+          id: string
+          media_type: string
+          season: number | null
+          tmdb_id: number
+          to_user_id: string
+        }
+        Insert: {
+          created_at?: string
+          episode?: number | null
+          from_user_id: string
+          id?: string
+          media_type: string
+          season?: number | null
+          tmdb_id: number
+          to_user_id: string
+        }
+        Update: {
+          created_at?: string
+          episode?: number | null
+          from_user_id?: string
+          id?: string
+          media_type?: string
+          season?: number | null
+          tmdb_id?: number
+          to_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "title_chats_from_user_id_fkey"
+            columns: ["from_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "title_chats_to_user_id_fkey"
+            columns: ["to_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       titles: {
         Row: {
           backdrop_path: string | null
@@ -723,6 +956,27 @@ export type Database = {
         }
         Relationships: []
       }
+      waitlist: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          source: string | null
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: string
+          source?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          source?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -743,6 +997,7 @@ export type Database = {
         Args: { request_id: string }
         Returns: undefined
       }
+      delete_account_data: { Args: { p_uid: string }; Returns: undefined }
       ensure_title: {
         Args: {
           p_backdrop_path: string
@@ -757,30 +1012,66 @@ export type Database = {
         Returns: undefined
       }
       generate_invite_token: { Args: never; Returns: string }
+      get_friends_activity: {
+        Args: never
+        Returns: {
+          activity_at: string
+          friend_id: string
+          media_type: string
+          rating: number
+          status: string
+          title_name: string
+          tmdb_id: number
+        }[]
+      }
+      is_blocked_pair: { Args: { a: string; b: string }; Returns: boolean }
+      is_blocked_with_auth: { Args: { other: string }; Returns: boolean }
       is_friend_of_auth: { Args: { other_user: string }; Returns: boolean }
       is_item_visible_to_auth: {
         Args: { item_user_id: string; item_visibility: string }
         Returns: boolean
       }
+      is_party_to_chat: { Args: { chat_id: string }; Returns: boolean }
+      is_party_to_chat_comment: {
+        Args: { comment_id: string }
+        Returns: boolean
+      }
+      is_party_to_chat_comment_unblocked: {
+        Args: { comment_id: string }
+        Returns: boolean
+      }
+      is_party_to_chat_unblocked: {
+        Args: { chat_id: string }
+        Returns: boolean
+      }
       is_party_to_comment: { Args: { comment_id: string }; Returns: boolean }
+      is_party_to_comment_unblocked: {
+        Args: { comment_id: string }
+        Returns: boolean
+      }
       is_party_to_rec: { Args: { rec_id: string }; Returns: boolean }
+      is_party_to_rec_unblocked: { Args: { rec_id: string }; Returns: boolean }
       is_recipient_of_rec: { Args: { rec_id: string }; Returns: boolean }
       list_blocked_users: {
         Args: never
         Returns: {
-          avatar_url: string | null
+          avatar_url: string
           blocked_at: string
           display_name: string
           handle: string
           user_id: string
         }[]
       }
+      mark_recommendation_watched: {
+        Args: { p_rec_id: string; p_suppress?: boolean; p_thumb?: string }
+        Returns: undefined
+      }
       reorder_favorites: {
         Args: { p_media_type: string; p_ordered_ids: string[] }
         Returns: undefined
       }
       request_recommendation: {
-        Args: { note?: string | null; to_user_id: string }
+        Args: { note?: string; to_user_id: string }
         Returns: undefined
       }
       send_recommendation: {
