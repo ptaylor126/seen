@@ -62,8 +62,9 @@ export default function TabsLayout() {
     // real user.
     //
     // Brief settle delay so the route transition into (tabs) finishes
-    // before the explainer Alert can slam up — the first second in the
-    // app shouldn't be blocked by a modal mid-transition. Cleanup
+    // before this fires — it defers the token read + push_tokens network
+    // write off the transition so the first second in the app isn't
+    // sharing a frame budget with a mid-transition async burst. Cleanup
     // cancels the pending attempt if TabsLayout unmounts within the
     // window (sign out, etc.) so we don't write a stale user's token.
     // The module-level guard inside ensurePushRegistrationOnLaunch
@@ -71,14 +72,16 @@ export default function TabsLayout() {
     // across cold launches via savePushToken's upsert on
     // (user_id, device_id).
     //
-    // Behaviour per permission state inside the helper:
-    //   - granted     → silently get token + upsert push_tokens row
-    //                   (re-registers established users; fixes the
-    //                   new-device case)
-    //   - undetermined → askPushExplainer Alert → system prompt →
-    //                    upsert on grant (catches users who never
-    //                    accepted a friend request)
-    //   - denied      → no-op (iOS won't re-show the prompt)
+    // Behaviour per permission state inside the helper — it NEVER prompts on
+    // launch (registerForPushNotifications returns null unless permission is
+    // ALREADY granted; see push.ts):
+    //   - granted      → silently get the Expo token + upsert push_tokens row
+    //                    (re-registers established users; fixes new-device)
+    //   - undetermined → no-op: no token, no Alert, no system prompt. The
+    //                    prompt is reserved for a high-intent moment
+    //                    (promptPushAtHighIntent: send a rec / accept a
+    //                    friend), never burned on launch.
+    //   - denied       → no-op (the OS won't re-show the prompt)
     useEffect(() => {
         if (!userId) return;
         const timer = setTimeout(() => {
