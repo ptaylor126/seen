@@ -37,6 +37,49 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-13 — Chat screen rebuilt: one keyboard clock, collapsing header, read-first open
+
+**Done**
+
+- **Chat screen rebuilt:** `KeyboardStickyView`, collapsing header (scroll + keyboard folded into one scalar), read-first open (auto-focus only on empty threads), bubble-anchored reaction menu.
+
+**Lessons**
+
+- **ANY JS STATE VALUE READ INSIDE AN ANIMATION PATH WILL SNAP** while everything else glides. This bit three times in one night in three disguises: the composer inset, the container translate height, and the message-list bottom padding. Rule: keyboard-driven values come from `useReanimatedKeyboardAnimation()`'s shared values (UI thread), never `useKeyboardState()`'s JS numbers, anywhere animated.
+- **Translating a container does not shrink its scroll frame.** A `translateY` on a ScrollView's parent moves it but leaves its scrollable geometry where it was, so scrolling breaks with the keyboard up. `KeyboardAvoidingView` (relayout) and `KeyboardStickyView` + an animated bottom spacer both avoid this; transform-the-container does not.
+- **WHEN A SCREEN FIGHTS YOU, CHECK WHETHER ANOTHER SCREEN ALREADY WON THAT FIGHT.** Six rounds of invention on the chat keyboard preceded one round of imitation: the recommend/compose screens already used `KeyboardStickyView` correctly.
+- **Anchor context menus to the ELEMENT, not the touch point.** pageY-anchored menus move by the element's height depending on where the finger landed. `measureInWindow` on the pressed element gives post-transform window coords and is correct under any parent transform.
+
+**Banked**
+
+- Overlap notifications are born read (`read_at = now()`) and compete in the 50-row history cap, so a legitimately recent one can be pushed out. Needs a retention/classification decision.
+- `watchlist_overlap`'s `watcher_ids` payload escapes `delete_account_data`'s sweep (it matches `payload->>'from_user_id'`).
+- Google sign-in on iOS (blocks live-testing the claim UI on the iPhone dev client).
+- vc5 + FCM, token-refresh AppState wiring, App Store screenshots, `items.note` surfacing, a "your pending invites" surface.
+
+---
+
+## 2026-07-12 — 1.0.5 live; the invite loop ships (both flavours); quick-send to watchers; live overlap notifications
+
+**Done**
+
+- **iOS 1.0.5 approved and live on the public App Store** — post-watched sheet, chat-about-it, realtime, overlap prompt. Design work from the 11th shipped after it via OTA.
+- **The invite loop, both flavours, server side live in production:**
+  - **Rec invites:** `pending_recommendations` table + single-use tokens + `claim_pending_recommendation` RPC (instant friendship on claim, modelled on `claim_invite_link`), `get-pending-rec` edge function, `seenrecs.com/r/?t=token` landing page (poster, sender, note, "See it on Seen").
+  - **Friend invites:** the May-era `invite_links`/`claim_invite_link` backend rewired onto the new pattern. Migration `20260713120000` added a block check (the RPC predated `public.blocks` by five weeks) and an owner-id return so the claim can route. `get-invite` edge function, `seenrecs.com/i/?t=token` landing page (avatar, "X invited you to Seen").
+  - **App side:** send paths, the claim field (onboarding + friends/add, accepts either token family), `rec_claimed` inbox kind and push.
+- **Quick-send to watchers** (Bobby's idea, second one shipped) — the overlap picker collapses to select-a-person + one chip strip ("Worth watching?" / "What did you think?" / Write…) that creates the chat and sends in one tap. Browse sheets get expandable per-row chips. Where-to-watch moved up the title page (a rec recipient was hunting for it).
+- **Overlap notifications now render from LIVE data, not the payload snapshot.** The payload keeps its roles (dedup key, why the row exists), but the row and the picker now read the same live items query, so they agree by construction.
+- **`chat_commented` copy:** replies in a chat I started now read "X sent a message about {title}", not "X wants to chat about {title}". The discriminator is an exact `title_chats.from_user_id` lookup, not a windowed heuristic.
+
+**Lessons**
+
+- **Notification payloads are a snapshot of what the trigger saw.** Anything privacy-dependent must re-query live at render time, or the row and the destination it opens will disagree — a payload named a watcher whose watch had since gone private; the picker's live query correctly showed someone else.
+- **The RLS auditor earned its keep again** — caught an anti-fabrication hole in `pending_recommendations` (a sender could pre-set `claimed_by`/`claimed_at` and forge "X joined via my rec"), fixed with null guards plus a column-level INSERT grant.
+- **Old RPCs predate current conventions.** `claim_invite_link` was written five weeks before `public.blocks` existed and had no block check. Audit anything you revive.
+
+---
+
 ## 2026-07-10 — Chat-about-it shipped end to end; realtime pass; thread scroll model
 
 **Done**
