@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { CheckCircle, XCircle } from 'lucide-react-native';
@@ -394,14 +395,6 @@ function pickBoolean(payload: Record<string, unknown> | null, key: string): bool
     return payload?.[key] === true;
 }
 
-function pickStringArray(
-    payload: Record<string, unknown> | null,
-    key: string,
-): string[] {
-    const v = payload?.[key];
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-}
-
 function pickMediaType(
     payload: Record<string, unknown> | null,
     key: string,
@@ -587,6 +580,58 @@ export default function InboxScreen() {
             const requests = requestsResult.data ?? [];
             const sentRecs = sentRecsResult.data ?? [];
 
+            // LIVE watchers for the watchlist_overlap rows. The notification
+            // payload's watcher_ids is a SNAPSHOT from when the trigger
+            // fired; a visibility flip afterward (which fires no trigger)
+            // makes it stale, so the row disagreed with the picker (which
+            // re-queries live). Resolve the currently-visible watchers here,
+            // from the SAME source as getFriendsWhoWatched / the picker, so
+            // row and picker agree by construction. ONE batched query across
+            // every overlap row's tmdb_id; grouped client-side by the
+            // composite `${media_type}:${tmdb_id}` (the single-column .in()
+            // pulls a superset, filtered by the grouping — same pattern as
+            // the library-status query below). Most-recent watcher first.
+            const overlapWatchersByKey = new Map<string, string[]>();
+            {
+                const overlapTmdbIds = Array.from(
+                    new Set(
+                        notifications
+                            .filter((n) => n.kind === 'watchlist_overlap')
+                            .map((n) =>
+                                pickNumber(asRecord(n.payload), 'tmdb_id'),
+                            )
+                            .filter((id): id is number => id !== null),
+                    ),
+                );
+                if (overlapTmdbIds.length > 0) {
+                    const { data: watchRows, error: watchRowsError } =
+                        await supabase
+                            .from('items')
+                            .select('user_id, tmdb_id, media_type, updated_at')
+                            .in('tmdb_id', overlapTmdbIds)
+                            .eq('status', 'watched')
+                            .eq('visibility', 'friends')
+                            .neq('user_id', userId)
+                            .order('updated_at', { ascending: false });
+                    if (watchRowsError) throw watchRowsError;
+                    // Grouped, deduped by user, order preserved (newest first).
+                    const seenPerKey = new Map<string, Set<string>>();
+                    for (const row of watchRows ?? []) {
+                        if (!row.user_id) continue;
+                        const key = `${row.media_type}:${row.tmdb_id}`;
+                        let seenUsers = seenPerKey.get(key);
+                        if (!seenUsers) {
+                            seenUsers = new Set();
+                            seenPerKey.set(key, seenUsers);
+                            overlapWatchersByKey.set(key, []);
+                        }
+                        if (seenUsers.has(row.user_id)) continue;
+                        seenUsers.add(row.user_id);
+                        overlapWatchersByKey.get(key)!.push(row.user_id);
+                    }
+                }
+            }
+
             // Collect every other-party userId across all sources
             // (including Sent recipients) and batch the profile lookup
             // into one query. Sent recipients land in profilesById right
@@ -617,11 +662,17 @@ export default function InboxScreen() {
                 if (id) otherUserIds.add(id);
                 // watchlist_overlap has no single actor — its lead watcher
                 // fronts the row copy, and the second is named in the
-                // two-watcher wording, so resolve both.
+                // two-watcher wording. Resolve both from the LIVE set (not
+                // the stale payload watcher_ids).
                 if (n.kind === 'watchlist_overlap') {
-                    const ids = pickStringArray(payload, 'watcher_ids');
-                    if (ids[0]) otherUserIds.add(ids[0]);
-                    if (ids[1]) otherUserIds.add(ids[1]);
+                    const mt = pickMediaType(payload, 'media_type');
+                    const tid = pickNumber(payload, 'tmdb_id');
+                    const live =
+                        mt && tid
+                            ? overlapWatchersByKey.get(`${mt}:${tid}`) ?? []
+                            : [];
+                    if (live[0]) otherUserIds.add(live[0]);
+                    if (live[1]) otherUserIds.add(live[1]);
                 }
             }
 
@@ -848,6 +899,45 @@ export default function InboxScreen() {
                 }
             }
 
+            // Exact chat-CREATOR lookup for chat_commented rows: who STARTED
+            // each chat (title_chats.from_user_id). A message in a chat *I*
+            // created is a REPLY, never an invite — so it must never read as
+            // "wants to chat", regardless of which notification is oldest in
+            // the window. Keyed on chat_id (window-independent, unlike the
+            // sent-chats cap); a party may read title_chats under RLS.
+            const chatCreatorById = new Map<string, string>();
+            {
+                const chatIds = Array.from(
+                    new Set(
+                        notifications
+                            .filter((n) => n.kind === 'chat_commented')
+                            .map((n) =>
+                                pickString(asRecord(n.payload), 'chat_id'),
+                            )
+                            .filter((id): id is string => !!id),
+                    ),
+                );
+                if (chatIds.length > 0) {
+                    // reason: title_chats isn't in the generated Database
+                    // types yet, so query through an untyped client (same
+                    // pattern as src/lib/chats.ts).
+                    const { data: chatRows, error: chatRowsError } =
+                        await (supabase as unknown as SupabaseClient)
+                            .from('title_chats')
+                            .select('id, from_user_id')
+                            .in('id', chatIds);
+                    if (chatRowsError) throw chatRowsError;
+                    for (const c of (chatRows ?? []) as Array<{
+                        id: string;
+                        from_user_id: string | null;
+                    }>) {
+                        if (c.from_user_id) {
+                            chatCreatorById.set(c.id, c.from_user_id);
+                        }
+                    }
+                }
+            }
+
             for (const n of notifications) {
                 const payload = asRecord(n.payload);
                 if (n.kind === 'rec_watched') {
@@ -1054,7 +1144,12 @@ export default function InboxScreen() {
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
-                        isOpener: chatOpenerNotifIds.has(n.id),
+                        // "wants to chat" ONLY when the OTHER party started
+                        // the chat (creator ≠ me) AND this is its opening
+                        // message; a chat I created reads as their reply.
+                        isOpener:
+                            chatOpenerNotifIds.has(n.id) &&
+                            chatCreatorById.get(chatId) !== userId,
                     });
                 } else if (
                     n.kind === 'chat_reacted' ||
@@ -1090,27 +1185,34 @@ export default function InboxScreen() {
                                 : null,
                     });
                 } else if (n.kind === 'watchlist_overlap') {
-                    const watcherIds = pickStringArray(payload, 'watcher_ids');
                     const mt = pickMediaType(payload, 'media_type');
                     const tid = pickNumber(payload, 'tmdb_id');
-                    if (watcherIds.length === 0 || !mt || !tid) {
+                    if (!mt || !tid) {
                         inboxItems.push(buildGeneric(n));
                         continue;
                     }
-                    const count = pickNumber(payload, 'watcher_count');
+                    // Display from the LIVE watcher set (payload keeps its
+                    // role as the dedup key + "why the row exists", but is
+                    // no longer the display source). Edge: zero currently-
+                    // visible watchers → suppress the row; it has nothing
+                    // true left to say (overlaps are excluded from the bell
+                    // count, so nothing is orphaned).
+                    const liveIds =
+                        overlapWatchersByKey.get(`${mt}:${tid}`) ?? [];
+                    if (liveIds.length === 0) {
+                        continue;
+                    }
                     inboxItems.push({
                         kind: 'notification_watchlist_overlap',
                         id: `notif:${n.id}`,
                         createdAt: n.created_at,
                         notificationId: n.id,
                         leadWatcher:
-                            profilesById.get(watcherIds[0]) ??
-                            placeholderProfile,
-                        secondWatcher: watcherIds[1]
-                            ? profilesById.get(watcherIds[1]) ??
-                              placeholderProfile
+                            profilesById.get(liveIds[0]) ?? placeholderProfile,
+                        secondWatcher: liveIds[1]
+                            ? profilesById.get(liveIds[1]) ?? placeholderProfile
                             : null,
-                        watcherCount: count ?? watcherIds.length,
+                        watcherCount: liveIds.length,
                         tmdbId: tid,
                         mediaType: mt,
                         titleName:

@@ -5,10 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     AppState,
-    Keyboard,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
-    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -106,7 +104,6 @@ export default function ChatScreen() {
     const [composer, setComposer] = useState('');
     const [composerBusy, setComposerBusy] = useState(false);
     const scrollRef = useRef<ScrollView | null>(null);
-    const [keyboardOpen, setKeyboardOpen] = useState(false);
     // Whether the user is at/near the bottom of the thread (within ~one
     // screen). Drives the new-message auto-scroll: content arriving via a
     // load() refetch (realtime / focus / foreground) scrolls to the bottom
@@ -363,29 +360,12 @@ export default function ChatScreen() {
         enabled: !!chatId,
     });
 
-    // Keyboard visibility → composer bottom padding + keep the latest
-    // message visible above the shrunk scroll area. Verbatim from the rec
-    // screen (same pinned-composer-outside-ScrollView structure).
-    useEffect(() => {
-        const showEvt =
-            Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-        const hideEvt =
-            Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-        const showSub = Keyboard.addListener(showEvt, () => {
-            setKeyboardOpen(true);
-            scrollRef.current?.scrollToEnd({ animated: true });
-            setTimeout(() => {
-                scrollRef.current?.scrollToEnd({ animated: true });
-            }, 300);
-        });
-        const hideSub = Keyboard.addListener(hideEvt, () =>
-            setKeyboardOpen(false),
-        );
-        return () => {
-            showSub.remove();
-            hideSub.remove();
-        };
-    }, []);
+    // No manual keyboard listener: the composer self-animates its clearance
+    // off the keyboard progress, and the KeyboardAvoidingView lifts the
+    // thread — one animated source. The thread bottom-anchors (see
+    // scrollContent), so short threads already hug the composer and rise
+    // with the keyboard; no scroll is needed to keep the latest message
+    // above it (scrolling was a no-op on short threads anyway).
 
     // Per-comment reaction — same delete-on-active / upsert semantics as the
     // rec screen, against chat_comment_reactions.
@@ -477,10 +457,10 @@ export default function ChatScreen() {
     }
 
     function handleComposerFocus() {
+        // Bottom-anchored content already sits above the composer; a single
+        // scroll covers the case where the user had scrolled up before
+        // tapping the field (and the hardware-keyboard no-event fallback).
         scrollRef.current?.scrollToEnd({ animated: true });
-        setTimeout(() => {
-            scrollRef.current?.scrollToEnd({ animated: true });
-        }, 300);
     }
 
     function handleDeleteComment(commentId: string) {
@@ -745,8 +725,8 @@ export default function ChatScreen() {
                             ? 'Start a conversation'
                             : 'Add to the conversation…'
                     }
-                    keyboardOpen={keyboardOpen}
                     onFocus={handleComposerFocus}
+                    autoFocus
                     avatarUrl={myProfile?.avatarUrl ?? null}
                     avatarDisplayName={myProfile?.displayName ?? '?'}
                     avatarSeedId={myUserId ?? chat.id}
@@ -791,7 +771,13 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         // paddingTop/Bottom applied inline (safe-area + close-button
-        // clearance).
+        // clearance). flexGrow + flex-end BOTTOM-ANCHOR the thread: short
+        // threads hug the composer (newest just above it) instead of
+        // floating at the top, so when the keyboard lifts the layout the
+        // messages rise with it — the fix is content yielding, not scroll
+        // (scrollToEnd is a no-op when content fits the viewport).
+        flexGrow: 1,
+        justifyContent: 'flex-end',
     },
     // Compact tappable title card: poster + title/year + chevron. Surface-
     // filled with a soft shadow so it reads as the conversation's anchor,

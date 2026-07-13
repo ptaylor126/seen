@@ -189,10 +189,6 @@ export default function RecScreen() {
     // "New comment ↓" pill — shown when someone ELSE's comment lands while
     // the user is up at the rec/hero. Tap or reaching the bottom clears it.
     const [showNewMessagePill, setShowNewMessagePill] = useState(false);
-    // Whether the keyboard is up — drops the composer's bottom safe-area
-    // inset while typing (the keyboard already covers the home-indicator
-    // area, so keeping the inset leaves a white gap above the keyboard).
-    const [keyboardOpen, setKeyboardOpen] = useState(false);
     // The recipient's library relationship to this title (drives the
     // action button label + the action sheet's selected state). null = not
     // in their library yet.
@@ -752,10 +748,7 @@ export default function RecScreen() {
     useEffect(() => {
         const showEvt =
             Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-        const hideEvt =
-            Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
         const showSub = Keyboard.addListener(showEvt, () => {
-            setKeyboardOpen(true);
             scrollRef.current?.scrollToEnd({ animated: true });
             // The KeyboardAvoidingView shrinks the scroll area DURING the
             // keyboard animation, so the immediate scroll above targets the
@@ -766,12 +759,8 @@ export default function RecScreen() {
                 scrollRef.current?.scrollToEnd({ animated: true });
             }, 300);
         });
-        const hideSub = Keyboard.addListener(hideEvt, () =>
-            setKeyboardOpen(false),
-        );
         return () => {
             showSub.remove();
-            hideSub.remove();
         };
     }, []);
 
@@ -1859,7 +1848,6 @@ export default function RecScreen() {
                             ? 'Start a conversation'
                             : 'Add to the conversation…'
                     }
-                    keyboardOpen={keyboardOpen}
                     onFocus={handleComposerFocus}
                     avatarUrl={
                         (isMeSender ? sender : recipient)?.avatarUrl ?? null

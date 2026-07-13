@@ -6,6 +6,11 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Animated, {
+    interpolate,
+    useAnimatedStyle,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -15,24 +20,23 @@ import { getPalette, radius, spacing, typography } from '@/theme/theme';
 // Composer avatar — larger, roughly the height of the taller pill field.
 const COMPOSER_AVATAR_SIZE = 40;
 
-// The thread's pinned comment composer bar. Extracted verbatim from
-// rec/[recId].tsx — the screen pins it below its ScrollView inside the
-// KeyboardAvoidingView and owns the keyboard listeners (they also drive the
-// screen's scroll), passing `keyboardOpen` down for the bottom padding.
+// The thread's pinned comment composer bar. Extracted from rec/[recId].tsx —
+// the screen pins it below its ScrollView inside the KeyboardAvoidingView.
 //
 // Reads as its own zone via the palette.surface fill alone (no top
 // border/shadow — those read as a hard stroke against the plum page). Bottom
-// padding is keyboard-aware (see inline): snug to the safe-area edge when
-// closed, flush above the keyboard when open. Disabled state mirrors the
-// button's enable rule so the affordance stays obvious.
+// clearance is SELF-ANIMATED off the keyboard progress: snug to the safe-area
+// edge when closed, flush above the keyboard when open, interpolating in sync
+// with the KAV's lift (one animated source, no discrete jump). Disabled state
+// mirrors the button's enable rule so the affordance stays obvious.
 export function ThreadComposer({
     value,
     onChangeText,
     onSend,
     busy,
     placeholder,
-    keyboardOpen,
     onFocus,
+    autoFocus,
     avatarUrl,
     avatarDisplayName,
     avatarSeedId,
@@ -42,13 +46,12 @@ export function ThreadComposer({
     onSend: () => void;
     busy: boolean;
     placeholder: string;
-    // Keyboard up → drop the composer's bottom safe-area inset while typing
-    // (the keyboard already covers the home-indicator area, so keeping the
-    // inset leaves a white gap above the keyboard).
-    keyboardOpen: boolean;
-    // Focus fallback (e.g. a hardware keyboard, where no keyboard event
-    // fires) — the screen scrolls its thread to the end.
+    // Focus callback (e.g. a hardware keyboard, where no keyboard event
+    // fires) — the screen may scroll its thread to the end.
     onFocus: () => void;
+    // Open the keyboard on mount (chat threads arrive ready to type). Off by
+    // default so the rec thread stays arrive-reading.
+    autoFocus?: boolean;
     // Current user's own avatar, left of the input.
     avatarUrl: string | null;
     avatarDisplayName: string;
@@ -57,25 +60,25 @@ export function ThreadComposer({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    // Keyboard progress (0 closed → 1 open) drives the bottom clearance so it
+    // moves WITH the keyboard rather than swapping discretely: home-indicator
+    // inset when closed → a small gap above the keyboard's top edge when open
+    // (spacing.md, not flush).
+    const { progress } = useReanimatedKeyboardAnimation();
+    const clearanceStyle = useAnimatedStyle(() => ({
+        paddingBottom: interpolate(
+            progress.value,
+            [0, 1],
+            [insets.bottom, spacing.md],
+        ),
+    }));
 
     return (
-        <View
+        <Animated.View
             style={[
                 styles.composer,
-                {
-                    backgroundColor: palette.surface,
-                    // Keyboard up → the home-indicator inset is
-                    // covered by the keyboard, so drop it to a small
-                    // gap. spacing.md (not spacing.sm) gives a little
-                    // breathing room above the keyboard's top edge so
-                    // the input doesn't sit flush against it — minimal
-                    // bump, NOT keyboardVerticalOffset (a non-zero
-                    // offset previously over-padded; see the KAV note).
-                    // Keyboard down → just the safe-area inset, so
-                    // the bar sits snug at the very bottom (no extra
-                    // gap above the home indicator).
-                    paddingBottom: keyboardOpen ? spacing.md : insets.bottom,
-                },
+                { backgroundColor: palette.surface },
+                clearanceStyle,
             ]}
         >
             {/* Current user's own avatar, left of the input —
@@ -97,11 +100,8 @@ export function ThreadComposer({
                 <TextInput
                     value={value}
                     onChangeText={onChangeText}
-                    // Fallback for the focus-without-keyboard-event
-                    // case (e.g. a hardware keyboard, where no
-                    // keyboardWillShow/DidShow fires): still pull the
-                    // latest message above the input on focus.
                     onFocus={onFocus}
+                    autoFocus={autoFocus}
                     placeholder={placeholder}
                     placeholderTextColor={palette.textMuted}
                     editable={!busy}
@@ -145,7 +145,7 @@ export function ThreadComposer({
                     />
                 </Pressable>
             </View>
-        </View>
+        </Animated.View>
     );
 }
 

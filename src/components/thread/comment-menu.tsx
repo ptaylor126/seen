@@ -1,4 +1,7 @@
+import { MotiView } from 'moti';
+import { useState } from 'react';
 import {
+    Dimensions,
     Modal,
     Pressable,
     StyleSheet,
@@ -6,6 +9,8 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import { useKeyboardState } from 'react-native-keyboard-controller';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
     type CommentMenuTarget,
@@ -15,12 +20,24 @@ import {
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 const REACTION_PICKER_SIZE = 40;
+// Gap between the popover and the long-pressed bubble.
+const ANCHOR_GAP = spacing.sm;
 
 // Long-press popover for comment reactions + per-comment actions. Extracted
-// verbatim from rec/[recId].tsx. Lean version: no full-screen dim, no spring
-// animation, no haptics. The backdrop Pressable is a sibling of the popover
-// (NOT a parent) so taps on the popover's emoji / action Pressables capture
-// first; taps outside the popover land on the backdrop and dismiss.
+// from rec/[recId].tsx. Lean version: no full-screen dim, no haptics. The
+// backdrop Pressable is a sibling of the popover (NOT a parent) so taps on
+// the popover's emoji / action Pressables capture first; taps outside land
+// on the backdrop and dismiss.
+//
+// Positioning: anchorY is the long-press pageY — an ABSOLUTE screen
+// coordinate. Because this renders in a Modal (a separate native root,
+// OUTSIDE the thread's KeyboardAvoidingView), the old `top: anchorY` placed
+// the popover using a coordinate from the keyboard-shifted layout inside the
+// keyboard-agnostic Modal space — so with the keyboard up it landed off the
+// bubble and could sit under the keyboard. Instead we open ABOVE the anchor
+// (iMessage-style) and CLAMP within the visible viewport (screen minus the
+// live keyboard height + safe insets), correct whether the keyboard is up
+// or down.
 //
 // Each item dismisses the popover (onClose) before calling its handler so any
 // follow-up dialog (Alert) lands on a clean screen — the caller owns the
@@ -41,6 +58,29 @@ export function ThreadCommentMenu({
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
+    const insets = useSafeAreaInsets();
+    const keyboardState = useKeyboardState();
+    // Measured popover height → lets us place it ABOVE the anchor and clamp
+    // its bottom. 0 until first layout; the fade-in masks the one-frame
+    // reposition, and the height persists across opens so most reopens are
+    // already correct.
+    const [menuHeight, setMenuHeight] = useState(0);
+
+    const screenHeight = Dimensions.get('window').height;
+    const anchorY = menu?.anchorY ?? 0;
+    const minTop = insets.top + spacing.base;
+    // Bottom of the usable area: above the keyboard (live height) and the
+    // home-indicator inset.
+    const visibleBottom =
+        screenHeight - keyboardState.height - insets.bottom - spacing.base;
+    // Open above the anchor; if that clips the top, open below it instead;
+    // then clamp so the popover never overlaps the keyboard or an edge.
+    let top = anchorY - menuHeight - ANCHOR_GAP;
+    if (top < minTop) top = anchorY + ANCHOR_GAP;
+    if (menuHeight > 0 && top + menuHeight > visibleBottom) {
+        top = visibleBottom - menuHeight;
+    }
+    if (top < minTop) top = minTop;
 
     return (
         <Modal
@@ -58,9 +98,15 @@ export function ThreadCommentMenu({
             {menu ? (
                 <View
                     pointerEvents="box-none"
-                    style={[styles.commentMenuContainer, { top: menu.anchorY }]}
+                    style={[styles.commentMenuContainer, { top }]}
                 >
-                    <View
+                    <MotiView
+                        onLayout={(e) =>
+                            setMenuHeight(e.nativeEvent.layout.height)
+                        }
+                        from={{ opacity: 0, scale: 0.92 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ type: 'timing', duration: 180 }}
                         style={[
                             styles.commentMenu,
                             {
@@ -138,12 +184,7 @@ export function ThreadCommentMenu({
                                     ]
                                   : [];
                             return menuActions.length > 0 ? (
-                                <View
-                                    style={[
-                                        styles.commentMenuActions,
-                                        { borderTopColor: palette.border },
-                                    ]}
-                                >
+                                <View style={styles.commentMenuActions}>
                                     {menuActions.map((action) => (
                                         <Pressable
                                             key={action.label}
@@ -172,7 +213,7 @@ export function ThreadCommentMenu({
                                 </View>
                             ) : null;
                         })()}
-                    </View>
+                    </MotiView>
                 </View>
             ) : null}
         </Modal>
@@ -180,7 +221,7 @@ export function ThreadCommentMenu({
 }
 
 const styles = StyleSheet.create({
-    // Container spans the full width at the anchored Y so its child
+    // Container spans the full width at the computed `top` so its child
     // popover can self-center horizontally. pointerEvents='box-none' on
     // the container lets backdrop taps fall through any empty space
     // around the popover sheet itself.
@@ -210,10 +251,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    // Actions sit below the emoji row separated by spacing alone — no
+    // divider line (removed per design). marginTop keeps them clearly
+    // distinct from the reactions above.
     commentMenuActions: {
-        marginTop: spacing.sm,
-        paddingTop: spacing.sm,
-        borderTopWidth: StyleSheet.hairlineWidth,
+        marginTop: spacing.xs,
     },
     commentMenuActionItem: {
         paddingHorizontal: spacing.md,
