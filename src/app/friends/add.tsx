@@ -80,7 +80,8 @@ export default function AddFriendScreen() {
         };
     }, []);
 
-    // Open the OS share sheet with the App Store link (shared shareInvite).
+    // Open the OS share sheet with the user's tokenized seenrecs.com/i/
+    // invite link (shared shareInvite) — claiming it auto-friends both sides.
     function handleInvite() {
         void shareInvite();
     }
@@ -329,12 +330,10 @@ export default function AddFriendScreen() {
                 )}
 
                 {/* Invite action — sits directly under the handle form.
-                    (The old in-app invite-link affordance was removed
-                    because that URL doesn't deep-link yet; this just
-                    shares the App Store link — no auto-connect. The
-                    backend invite_links + claim_invite_link path stays in
-                    place for when the deferred Universal Link / App Link
-                    work lands; see src/app/friends/invite.tsx.) */}
+                    Shares the user's tokenized seenrecs.com/i/ invite link
+                    (via shareInvite); the recipient lands on the invite page
+                    and claiming after signup auto-friends both sides through
+                    claim_invite_link. */}
                 <View style={styles.inviteGroup}>
                     <Text
                         style={[
@@ -536,7 +535,7 @@ const styles = StyleSheet.create({
     inviteCaption: { textAlign: 'center' },
     // Secondary (outlined) action — same shape as submitButton but a coral
     // outline instead of a fill, so it reads below the primary "Send
-    // request". Mirrors the secondary button in friends/invite.tsx.
+    // request".
     inviteButton: {
         paddingVertical: spacing.md,
         borderRadius: radius.sm,
