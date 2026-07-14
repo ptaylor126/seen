@@ -875,6 +875,7 @@ export type Database = {
           episode: number | null
           from_user_id: string
           id: string
+          last_activity: string
           media_type: string
           season: number | null
           tmdb_id: number
@@ -885,6 +886,7 @@ export type Database = {
           episode?: number | null
           from_user_id: string
           id?: string
+          last_activity?: string
           media_type: string
           season?: number | null
           tmdb_id: number
@@ -895,6 +897,7 @@ export type Database = {
           episode?: number | null
           from_user_id?: string
           id?: string
+          last_activity?: string
           media_type?: string
           season?: number | null
           tmdb_id?: number

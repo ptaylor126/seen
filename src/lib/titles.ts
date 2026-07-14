@@ -20,6 +20,7 @@
  */
 import supabase from '@/lib/supabase';
 import type { MediaType } from '@/lib/rating';
+import { getMovie, getTV } from '@/lib/tmdb';
 
 // Row shape returned by `fetchTitlesByItems`. Mirrors the columns we
 // select from public.titles. Nullable everywhere the column is
@@ -127,4 +128,82 @@ export async function ensureTitle(args: EnsureTitleArgs): Promise<void> {
     if (error) {
         console.warn('ensure_title failed (non-blocking):', error);
     }
+}
+
+// Fetch poster/title metadata for a set of (tmdb_id, media_type) from the
+// shared catalogue, filling any missing rows via a direct TMDB fetch (and
+// stamping them forward with ensureTitle) — so a rec'd / reviewed / chatted-
+// about title that was never added to anyone's library still renders. Batched:
+// one catalogue read + one TMDB call per missing title, never N catalogue
+// calls. Returns the populated key→row map (keyed `${media_type}:${tmdb_id}`).
+// Lifted out of friends/[handle].tsx so the recs-between, recent-reviews and
+// chats sections share ONE implementation.
+export async function fetchTitlesWithFallback(
+    items: { tmdb_id: number; media_type: string }[],
+): Promise<Map<string, TitleRow>> {
+    const titleByKey = await fetchTitlesByItems(items);
+    const missing = new Map<string, { tmdbId: number; mediaType: MediaType }>();
+    for (const it of items) {
+        const key = `${it.media_type}:${it.tmdb_id}`;
+        if (titleByKey.has(key)) continue;
+        if (it.media_type !== 'movie' && it.media_type !== 'tv') continue;
+        missing.set(key, { tmdbId: it.tmdb_id, mediaType: it.media_type });
+    }
+    if (missing.size === 0) return titleByKey;
+    const fetched = await Promise.all(
+        Array.from(missing.values()).map(
+            async (m): Promise<EnsureTitleArgs | null> => {
+                try {
+                    if (m.mediaType === 'movie') {
+                        const mv = await getMovie(m.tmdbId);
+                        return {
+                            tmdbId: m.tmdbId,
+                            mediaType: 'movie',
+                            title: mv.title,
+                            posterPath: mv.poster_path,
+                            backdropPath: mv.backdrop_path,
+                            releaseDate:
+                                mv.release_date && mv.release_date.length > 0
+                                    ? mv.release_date
+                                    : null,
+                            originalLanguage: mv.original_language,
+                            genreIds: mv.genres.map((g) => g.id),
+                        };
+                    }
+                    const tv = await getTV(m.tmdbId);
+                    return {
+                        tmdbId: m.tmdbId,
+                        mediaType: 'tv',
+                        title: tv.name,
+                        posterPath: tv.poster_path,
+                        backdropPath: tv.backdrop_path,
+                        releaseDate:
+                            tv.first_air_date && tv.first_air_date.length > 0
+                                ? tv.first_air_date
+                                : null,
+                        originalLanguage: tv.original_language,
+                        genreIds: tv.genres.map((g) => g.id),
+                    };
+                } catch (err) {
+                    console.warn('title TMDB fallback failed:', err);
+                    return null;
+                }
+            },
+        ),
+    );
+    for (const s of fetched) {
+        if (!s) continue;
+        titleByKey.set(`${s.mediaType}:${s.tmdbId}`, {
+            tmdb_id: s.tmdbId,
+            media_type: s.mediaType,
+            title: s.title,
+            poster_path: s.posterPath,
+            backdrop_path: s.backdropPath,
+            release_date: s.releaseDate,
+            original_language: s.originalLanguage,
+            genre_ids: s.genreIds,
+        });
+        void ensureTitle(s);
+    }
+    return titleByKey;
 }

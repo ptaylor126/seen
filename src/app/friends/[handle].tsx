@@ -31,6 +31,7 @@ import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-l
 import { Avatar } from '@/components/avatar';
 import { ArchCap } from '@/components/profile-arch';
 import { SegmentedControl } from '@/components/segmented-control';
+import { ChatsBetweenSection } from '@/components/chats-between-section';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { ViewControls } from '@/components/view-controls';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
@@ -43,17 +44,19 @@ import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
-import {
-    ensureTitle,
-    type EnsureTitleArgs,
-    fetchTitlesByItems,
-    type TitleRow,
-} from '@/lib/titles';
-import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
+import { fetchTitlesByItems, fetchTitlesWithFallback } from '@/lib/titles';
+import { imageUrl } from '@/lib/tmdb';
 import { useLibraryFilters } from '@/lib/use-library-filters';
 import { LibraryFilterControls } from '@/components/library-filter-controls';
 import { RequestRecSheet } from '@/components/request-rec-sheet';
 import { useRequestRec } from '@/hooks/use-request-rec';
+import {
+    POSTER_ASPECT,
+    POSTER_STRIP_GAP as REC_STRIP_GAP,
+    POSTER_STRIP_H as REC_BETWEEN_POSTER_H,
+    POSTER_STRIP_INSET as REC_STRIP_INSET,
+    POSTER_STRIP_W as REC_BETWEEN_POSTER_W,
+} from '@/theme/poster-layout';
 import {
     button,
     getPalette,
@@ -117,82 +120,6 @@ interface RecentReview {
     rating: number | null;
 }
 
-// Fetch poster/title metadata for a set of (tmdb_id, media_type) from the
-// shared catalogue, filling any missing rows via a direct TMDB fetch (and
-// stamping them forward with ensureTitle) — the same fallback the home
-// screen uses, so a rec'd/reviewed title that was never added to anyone's
-// library still renders. Used by both the recs-between and recent-reviews
-// strips. Returns the populated key→row map.
-async function fetchTitlesWithFallback(
-    items: { tmdb_id: number; media_type: string }[],
-): Promise<Map<string, TitleRow>> {
-    const titleByKey = await fetchTitlesByItems(items);
-    const missing = new Map<string, { tmdbId: number; mediaType: MediaType }>();
-    for (const it of items) {
-        const key = `${it.media_type}:${it.tmdb_id}`;
-        if (titleByKey.has(key)) continue;
-        if (it.media_type !== 'movie' && it.media_type !== 'tv') continue;
-        missing.set(key, { tmdbId: it.tmdb_id, mediaType: it.media_type });
-    }
-    if (missing.size === 0) return titleByKey;
-    const fetched = await Promise.all(
-        Array.from(missing.values()).map(
-            async (m): Promise<EnsureTitleArgs | null> => {
-                try {
-                    if (m.mediaType === 'movie') {
-                        const mv = await getMovie(m.tmdbId);
-                        return {
-                            tmdbId: m.tmdbId,
-                            mediaType: 'movie',
-                            title: mv.title,
-                            posterPath: mv.poster_path,
-                            backdropPath: mv.backdrop_path,
-                            releaseDate:
-                                mv.release_date && mv.release_date.length > 0
-                                    ? mv.release_date
-                                    : null,
-                            originalLanguage: mv.original_language,
-                            genreIds: mv.genres.map((g) => g.id),
-                        };
-                    }
-                    const tv = await getTV(m.tmdbId);
-                    return {
-                        tmdbId: m.tmdbId,
-                        mediaType: 'tv',
-                        title: tv.name,
-                        posterPath: tv.poster_path,
-                        backdropPath: tv.backdrop_path,
-                        releaseDate:
-                            tv.first_air_date && tv.first_air_date.length > 0
-                                ? tv.first_air_date
-                                : null,
-                        originalLanguage: tv.original_language,
-                        genreIds: tv.genres.map((g) => g.id),
-                    };
-                } catch (err) {
-                    console.warn('title TMDB fallback failed:', err);
-                    return null;
-                }
-            },
-        ),
-    );
-    for (const s of fetched) {
-        if (!s) continue;
-        titleByKey.set(`${s.mediaType}:${s.tmdbId}`, {
-            tmdb_id: s.tmdbId,
-            media_type: s.mediaType,
-            title: s.title,
-            poster_path: s.posterPath,
-            backdrop_path: s.backdropPath,
-            release_date: s.releaseDate,
-            original_language: s.originalLanguage,
-            genre_ids: s.genreIds,
-        });
-        void ensureTitle(s);
-    }
-    return titleByKey;
-}
-
 // Three-state resolution machine. Renders the whole screen off this:
 //   - loading → spinner
 //   - not-found → handle resolves to no profile (or fetch failed)
@@ -228,19 +155,9 @@ const BANNER_ZONE = 96;
 // as the own profile, scaled to this screen's 80pt avatar.
 const AVATAR_TOP = BANNER_ZONE - AVATAR_SIZE / 2 - 4;
 
-// Grid sizing — mirrors the Library tab so a friend's grid looks
-// identical to your own at the same density setting. Kept locally
-// rather than imported so this screen stays a self-contained route;
-// the numbers would only diverge if the Library tweaks them, and
-// noticing that drift on review is fine.
-const POSTER_ASPECT = 1.5; // 2:3 poster
-
-// "Recs between you" strip. Poster width is derived from screen width so
-// ~3.5 cards show and the next is HALF-CUT at the right edge — a clear
-// "scrolls horizontally" cue on any device (same trick as the home
-// "Friends are watching" row). A fixed width tiled flush to the edge and
-// read as a static row. REC_STRIP_INSET/GAP must match the strip styles
-// below (leading inset + inter-card gap) for the peek math to hold.
+// Grid poster aspect + the "Recs between you" / "Chats between you" strip
+// dimensions now live in @/theme/poster-layout (imported above), so the strip
+// sections share one definition and the friend grid uses the same 2:3 ratio.
 const RECS_BETWEEN_LIMIT = 20;
 // Recent reviews is a header overview, not a full archive — cap it so the
 // (already busy) profile header stays bounded.
@@ -248,12 +165,6 @@ const RECENT_REVIEWS_LIMIT = 3;
 const REVIEW_POSTER_W = 48;
 const REVIEW_POSTER_H = Math.round(REVIEW_POSTER_W * 1.5);
 const REVIEW_SNIPPET_CHARS = 180;
-const REC_STRIP_INSET = spacing.base;
-const REC_STRIP_GAP = spacing.md;
-const REC_BETWEEN_POSTER_W = Math.floor(
-    (Dimensions.get('window').width - REC_STRIP_INSET - 3 * REC_STRIP_GAP) / 3.5,
-);
-const REC_BETWEEN_POSTER_H = Math.round(REC_BETWEEN_POSTER_W * POSTER_ASPECT);
 const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
     2: spacing.base,
     3: spacing.sm,
@@ -1305,6 +1216,14 @@ export default function FriendDetailScreen() {
                     </ScrollView>
                 </View>
             )}
+
+            {/* Chats between you — directly below Recs between you, above
+                Recent reviews. Self-contained component; renders nothing when
+                the pair has no chats. */}
+            <ChatsBetweenSection
+                friendId={profile.id}
+                friendName={profile.displayName}
+            />
 
             {/* Recent reviews — this friend's recently-WRITTEN reviews
                 (newest review first, by reviews.updated_at). Each row:
