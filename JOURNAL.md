@@ -37,6 +37,26 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-14 — Overlap-vs-recommender fix; spoiler-surface + stale-bundle lessons
+
+**Lessons**
+
+- **The episode-chat header label is context, NOT spoiler protection.** Episode chats show the season and episode coordinate in the chat header, but by the time the reader's eye reaches the header the thread has already rendered and they've read the first message — so the header can never be the guard. A real spoiler guard would have to gate BEFORE the thread renders (an interstitial, or blurred messages until tapped through). The lock screen is the ONE surface where a spoiler lands unprompted, and RLS can't reach it: pushes are composed with `service_role` and never pass through the reader's policies. So the episode-chat push carries the coordinate in the push TITLE and SUPPRESSES the message body server-side — the suppression lives in the push builder, not the DB, because the DB can't.
+- **NEVER redirect `supabase gen types` onto the live `database.types.ts`.** The shell truncates the redirect target BEFORE the command runs, so any hang or failure destroys the file. Generate to a temp file, verify the line count and grep for an expected new column, THEN move it into place. Also: the CLI hangs SILENTLY when it needs auth — stdout is redirected so it can't prompt — run `npx supabase login` first.
+- **Stale JS misleads on DATA behaviour, not just visuals.** The overlap-trigger fix looked half-broken (the banner correct, the notification row wrong) purely because the client was running a cached bundle — the server was right the whole time. A stale bundle doesn't only mis-paint pixels; it makes a correct backend look buggy. Clear the bundle before judging ANYTHING, data included.
+
+---
+
+## 2026-07-13 (cont.) — Episode-scoped chats: spoiler surfaces + a types-gen near-miss
+
+**Lessons**
+
+- **The episode-chat header label is context, NOT spoiler protection.** Episode chats show the `Season X · Episode Y` coordinate in the chat header, but by the time the reader's eye reaches the header the thread has already rendered and they've read the first message — so the header can never be the guard. A real spoiler guard would have to gate BEFORE the thread renders (an interstitial, or blurred messages until tapped through), never in the header. Shipping the header as context only, deliberately (guard deferred until we've lived with the feature). Corollary — the lock screen is the ONE surface where a spoiler lands unprompted, and RLS can't reach it: pushes are composed with `service_role` and never pass through the reader's policies. So the push for an episode chat (`send-push-notification`) carries the coordinate in the push TITLE and SUPPRESSES the message body entirely — the suppression lives in the push builder, not the DB, because the DB can't.
+- **NEVER redirect `supabase gen types` onto the live `database.types.ts`.** The shell truncates the redirect target BEFORE the command runs, so any hang or failure destroys the file. Generate to a temp file, verify the line count and grep for an expected new column, THEN move it into place. Also: the CLI hangs SILENTLY when it needs auth — stdout is redirected so it can't prompt — run `npx supabase login` first.
+- **Episode titles are themselves spoilers.** The episode-chat header shows the coordinate (`Season 3 · Episode 8`) and deliberately NOT the episode name. Episode titles routinely give the episode away, so the coordinate is the identity we surface everywhere (header, inbox, push); the name never leaves TMDB's episode list.
+
+---
+
 ## 2026-07-13 — Chat screen rebuilt: one keyboard clock, collapsing header, read-first open
 
 **Done**
