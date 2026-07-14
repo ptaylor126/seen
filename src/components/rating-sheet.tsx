@@ -234,6 +234,23 @@ export function RatingSheet({
         [],
     );
 
+    // Snapshot initialRating at the open edge (visible false → true) so a later
+    // change to the prop while the sheet is open can't re-seed it. An initial
+    // value must stay initial: on the rec screen a realtime load() rewrites the
+    // parent's currentRating (→ initialRating) mid-beat, and if the open effect
+    // read the live prop it would re-run and reset the confirmation beat (sheet
+    // almost closes, snaps back, then closes). Captured during render so it's set
+    // before the open effect runs; re-captured on every open, so reopening after
+    // a re-rate seeds fresh. The open effect reads THIS, never the live prop —
+    // which is why initialRating is legitimately absent from its deps (the effect
+    // no longer references it), not suppressed.
+    const openSeedRatingRef = useRef<number | null>(initialRating);
+    const wasVisibleRef = useRef(visible);
+    if (visible && !wasVisibleRef.current) {
+        openSeedRatingRef.current = initialRating;
+    }
+    wasVisibleRef.current = visible;
+
     useEffect(() => {
         rowWidthRef.current = rowWidth;
     }, [rowWidth]);
@@ -255,7 +272,7 @@ export function RatingSheet({
         if (!visible) return;
 
         // Reset internal state for this open.
-        setSelected(initialRating);
+        setSelected(openSeedRatingRef.current);
         setPressedRating(null);
         setConfirming(false);
         setReceived(null);
@@ -327,7 +344,7 @@ export function RatingSheet({
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [visible, tmdbId, mediaType, initialRating, active, progress]);
+    }, [visible, tmdbId, mediaType, active, progress]);
 
     // Close: slide down + unmount when `visible` goes false (only if actually
     // open — a dismiss before the fetch resolved just cancels the open above).
