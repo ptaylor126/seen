@@ -3,7 +3,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
+    ChevronRight,
     ExternalLink,
+    ListVideo,
     MessageCircle,
     MoreHorizontal,
     Play,
@@ -1244,6 +1246,47 @@ export default function TitleDetailScreen() {
                     >
                         {detail.data.overview}
                     </Text>
+                ) : null}
+
+                {/* Episodes — TV only, never for movies. A navigation row (not
+                    a share action, so NOT in the Sharing card below): browse
+                    the season's episodes and open an episode-scoped chat from
+                    one. Sits in the content column near the season meta. */}
+                {detail.type === 'tv' ? (
+                    <Pressable
+                        onPress={() =>
+                            router.push(
+                                `/title/${mediaType}/${tmdbId}/episodes`,
+                            )
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Browse episodes"
+                        style={({ pressed }) => [
+                            styles.episodesRow,
+                            { opacity: pressed ? 0.6 : 1 },
+                        ]}
+                    >
+                        <View style={styles.episodesRowLabel}>
+                            <ListVideo
+                                color={palette.accent}
+                                size={18}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                            <Text
+                                style={[
+                                    typography.bodyEmphasis,
+                                    { color: palette.text },
+                                ]}
+                            >
+                                Episodes
+                            </Text>
+                        </View>
+                        <ChevronRight
+                            color={palette.textMuted}
+                            size={20}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    </Pressable>
                 ) : null}
 
                 {/* Status actions — the SINGLE interactive status control on
@@ -3058,6 +3101,23 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: spacing.sm,
+    },
+    // TV-only "Episodes" navigation row in the content column: a plain row on
+    // the page background (no card — it's navigation, not an action, and must
+    // not compete with the Sharing card below). Label left + chevron right;
+    // paddingHorizontal aligns its content with the overview/status rows (16).
+    episodesRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: spacing.base,
+        paddingVertical: spacing.md,
+        paddingHorizontal: spacing.base,
+    },
+    episodesRowLabel: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
     },
     closeButton: {
         position: 'absolute',

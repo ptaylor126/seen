@@ -19,6 +19,11 @@ export interface TitleChatRow {
     toUserId: string;
     tmdbId: number;
     mediaType: 'movie' | 'tv';
+    // Episode scope (migration 20260713140000): both null = a whole-show chat
+    // (today's behaviour), both set = a chat about a specific TV episode. The
+    // DB constraint guarantees they're both-null or both-set.
+    season: number | null;
+    episode: number | null;
     createdAt: string;
 }
 
@@ -29,7 +34,9 @@ export async function getTitleChat(
 ): Promise<TitleChatRow | null> {
     const { data, error } = await db
         .from('title_chats')
-        .select('id, from_user_id, to_user_id, tmdb_id, media_type, created_at')
+        .select(
+            'id, from_user_id, to_user_id, tmdb_id, media_type, season, episode, created_at',
+        )
         .eq('id', chatId)
         .maybeSingle();
     if (error) throw error;
@@ -45,6 +52,8 @@ export async function getTitleChat(
         toUserId: data.to_user_id,
         tmdbId: data.tmdb_id,
         mediaType,
+        season: data.season ?? null,
+        episode: data.episode ?? null,
         createdAt: data.created_at,
     };
 }
@@ -59,8 +68,14 @@ export async function findTitleChat(
     otherUserId: string,
     tmdbId: number,
     mediaType: 'movie' | 'tv',
+    // Episode scope. Omitted / null → the WHOLE-SHOW chat (season is null);
+    // both set → the chat for that specific episode. These are distinct rows
+    // under the two partial unique indexes, so the filter must be explicit or
+    // an episode lookup would collide with the whole-show row.
+    season: number | null = null,
+    episode: number | null = null,
 ): Promise<string | null> {
-    const { data, error } = await db
+    let query = db
         .from('title_chats')
         .select('id')
         .eq('tmdb_id', tmdbId)
@@ -68,8 +83,12 @@ export async function findTitleChat(
         .or(
             `and(from_user_id.eq.${userId},to_user_id.eq.${otherUserId}),` +
                 `and(from_user_id.eq.${otherUserId},to_user_id.eq.${userId})`,
-        )
-        .maybeSingle();
+        );
+    query =
+        season !== null && episode !== null
+            ? query.eq('season', season).eq('episode', episode)
+            : query.is('season', null).is('episode', null);
+    const { data, error } = await query.maybeSingle();
     if (error) throw error;
     return data?.id ?? null;
 }
@@ -107,8 +126,21 @@ export async function createTitleChat(args: {
     tmdbId: number;
     mediaType: 'movie' | 'tv';
     firstMessage: string;
+    // Episode scope. Omit for a whole-show chat; pass BOTH for an episode
+    // chat. The DB enforces both-null-or-both-set; we normalise here so a
+    // caller can't insert one without the other.
+    season?: number | null;
+    episode?: number | null;
 }): Promise<string> {
     const { userId, otherUserId, tmdbId, mediaType, firstMessage } = args;
+    // Both-or-neither: if either is missing, this is a whole-show chat.
+    const episodeScoped =
+        args.season !== null &&
+        args.season !== undefined &&
+        args.episode !== null &&
+        args.episode !== undefined;
+    const season = episodeScoped ? (args.season as number) : null;
+    const episode = episodeScoped ? (args.episode as number) : null;
 
     let chatId: string;
     const { data: inserted, error: insertError } = await db
@@ -118,6 +150,8 @@ export async function createTitleChat(args: {
             to_user_id: otherUserId,
             tmdb_id: tmdbId,
             media_type: mediaType,
+            season,
+            episode,
         })
         .select('id')
         .single();
@@ -126,12 +160,16 @@ export async function createTitleChat(args: {
         if ((insertError as { code?: string }).code !== '23505') {
             throw insertError;
         }
-        // Chat already exists (either direction) — open it instead.
+        // Chat already exists (either direction) — open it instead. Scope the
+        // lookup to the same episode (or the whole-show row) so we open the
+        // right conversation, not a different-scope one for the same title.
         const existingId = await findTitleChat(
             userId,
             otherUserId,
             tmdbId,
             mediaType,
+            season,
+            episode,
         );
         if (!existingId) throw insertError; // conflict but not visible — bail
         chatId = existingId;
@@ -154,12 +192,14 @@ export async function getSentChats(
         toUserId: string;
         tmdbId: number;
         mediaType: 'movie' | 'tv';
+        season: number | null;
+        episode: number | null;
         createdAt: string;
     }>
 > {
     const { data, error } = await db
         .from('title_chats')
-        .select('id, to_user_id, tmdb_id, media_type, created_at')
+        .select('id, to_user_id, tmdb_id, media_type, season, episode, created_at')
         .eq('from_user_id', userId)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -175,12 +215,16 @@ export async function getSentChats(
                 to_user_id: string;
                 tmdb_id: number;
                 media_type: 'movie' | 'tv';
+                season: number | null;
+                episode: number | null;
                 created_at: string;
             }) => ({
                 id: c.id,
                 toUserId: c.to_user_id,
                 tmdbId: c.tmdb_id,
                 mediaType: c.media_type,
+                season: c.season ?? null,
+                episode: c.episode ?? null,
                 createdAt: c.created_at,
             }),
         );

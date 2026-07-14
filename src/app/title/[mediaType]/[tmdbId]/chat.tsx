@@ -84,6 +84,11 @@ export default function TitleChatComposeScreen() {
         // watching?". Absent on the title page's direct "Chat about it"
         // door, which keeps the generic placeholder.
         intent?: string;
+        // Episode scope, forwarded by the episode-list door. Both present →
+        // an episode chat; absent → a whole-show chat. Passed straight to
+        // createTitleChat, which enforces both-or-neither.
+        season?: string;
+        episode?: string;
     }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
@@ -113,6 +118,23 @@ export default function TitleChatComposeScreen() {
             : null;
     const tmdbIdRaw = typeof params.tmdbId === 'string' ? params.tmdbId : '';
     const tmdbId = Number.parseInt(tmdbIdRaw, 10);
+
+    // Episode scope (both-or-neither). Only honoured for TV; a malformed or
+    // half-present pair collapses to a whole-show chat.
+    const seasonParam =
+        typeof params.season === 'string'
+            ? Number.parseInt(params.season, 10)
+            : NaN;
+    const episodeParam =
+        typeof params.episode === 'string'
+            ? Number.parseInt(params.episode, 10)
+            : NaN;
+    const episodeScope =
+        mediaType === 'tv' &&
+        Number.isFinite(seasonParam) &&
+        Number.isFinite(episodeParam)
+            ? { season: seasonParam, episode: episodeParam }
+            : null;
 
     const [titleCtx, setTitleCtx] = useState<TitleContext | null>(null);
     // Full catalogue metadata, captured at load so the send can stamp
@@ -328,6 +350,10 @@ export default function TitleChatComposeScreen() {
                 tmdbId,
                 mediaType,
                 firstMessage: trimmedMessage,
+                // Whole-show chat when null; an episode chat when the door
+                // forwarded a season + episode.
+                season: episodeScope?.season ?? null,
+                episode: episodeScope?.episode ?? null,
             });
 
             // Dismiss this modal, then push the chat — the app's modal

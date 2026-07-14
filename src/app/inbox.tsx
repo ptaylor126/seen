@@ -381,6 +381,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
+// Appends the episode coordinate to a chat's title so an episode chat reads
+// "{title} · S2 E5" and is distinguishable from a whole-show chat about the
+// same title. Whole-show chats (season/episode null) are returned unchanged.
+function withEpisodeSuffix(
+    name: string | null,
+    scope: { season: number | null; episode: number | null } | undefined,
+): string | null {
+    if (!name || !scope || scope.season === null || scope.episode === null) {
+        return name;
+    }
+    return `${name} · S${scope.season} E${scope.episode}`;
+}
+
 function pickString(payload: Record<string, unknown> | null, key: string): string | null {
     const v = payload?.[key];
     return typeof v === 'string' ? v : null;
@@ -906,11 +919,23 @@ export default function InboxScreen() {
             // the window. Keyed on chat_id (window-independent, unlike the
             // sent-chats cap); a party may read title_chats under RLS.
             const chatCreatorById = new Map<string, string>();
+            // Episode scope per chat (season/episode), so an episode chat reads
+            // "· S2 E5" in the inbox and is distinguishable from a whole-show
+            // chat about the same title. Same batched read as the creator map.
+            const chatEpisodeById = new Map<
+                string,
+                { season: number | null; episode: number | null }
+            >();
             {
                 const chatIds = Array.from(
                     new Set(
                         notifications
-                            .filter((n) => n.kind === 'chat_commented')
+                            .filter(
+                                (n) =>
+                                    n.kind === 'chat_commented' ||
+                                    n.kind === 'chat_reacted' ||
+                                    n.kind === 'chat_comment_reacted',
+                            )
                             .map((n) =>
                                 pickString(asRecord(n.payload), 'chat_id'),
                             )
@@ -924,16 +949,22 @@ export default function InboxScreen() {
                     const { data: chatRows, error: chatRowsError } =
                         await (supabase as unknown as SupabaseClient)
                             .from('title_chats')
-                            .select('id, from_user_id')
+                            .select('id, from_user_id, season, episode')
                             .in('id', chatIds);
                     if (chatRowsError) throw chatRowsError;
                     for (const c of (chatRows ?? []) as Array<{
                         id: string;
                         from_user_id: string | null;
+                        season: number | null;
+                        episode: number | null;
                     }>) {
                         if (c.from_user_id) {
                             chatCreatorById.set(c.id, c.from_user_id);
                         }
+                        chatEpisodeById.set(c.id, {
+                            season: c.season ?? null,
+                            episode: c.episode ?? null,
+                        });
                     }
                 }
             }
@@ -1140,10 +1171,12 @@ export default function InboxScreen() {
                         chatId,
                         tmdbId: tid,
                         mediaType: mt,
-                        titleName:
+                        titleName: withEpisodeSuffix(
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
+                            chatEpisodeById.get(chatId),
+                        ),
                         // "wants to chat" ONLY when the OTHER party started
                         // the chat (creator ≠ me) AND this is its opening
                         // message; a chat I created reads as their reply.
@@ -1179,10 +1212,12 @@ export default function InboxScreen() {
                         emoji,
                         tmdbId: tid,
                         mediaType: mt,
-                        titleName:
+                        titleName: withEpisodeSuffix(
                             mt && tid
                                 ? titleByKey.get(`${mt}:${tid}`)?.title ?? null
                                 : null,
+                            chatEpisodeById.get(chatId),
+                        ),
                     });
                 } else if (n.kind === 'watchlist_overlap') {
                     const mt = pickMediaType(payload, 'media_type');
@@ -1313,7 +1348,10 @@ export default function InboxScreen() {
                     chatId: c.id,
                     tmdbId: c.tmdbId,
                     mediaType: c.mediaType,
-                    titleName: meta?.title ?? null,
+                    titleName: withEpisodeSuffix(meta?.title ?? null, {
+                        season: c.season,
+                        episode: c.episode,
+                    }),
                     posterPath: meta?.posterPath ?? null,
                     recipient,
                 });

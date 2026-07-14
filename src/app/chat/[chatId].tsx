@@ -784,18 +784,35 @@ export default function ChatScreen() {
                                 >
                                     {titleMeta.title}
                                 </Text>
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    {` · ${
-                                        chat.mediaType === 'movie'
-                                            ? 'Movie'
-                                            : 'TV'
-                                    }`}
-                                </Text>
+                                {chat.season !== null &&
+                                chat.episode !== null ? (
+                                    // Episode chat — the ONLY spoiler label in
+                                    // v1, so accent-coloured to be unmissable.
+                                    // Coordinate only, never the episode name
+                                    // (episode titles are frequent spoilers).
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.accent },
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {` · Season ${chat.season} · Episode ${chat.episode}`}
+                                    </Text>
+                                ) : (
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        {` · ${
+                                            chat.mediaType === 'movie'
+                                                ? 'Movie'
+                                                : 'TV'
+                                        }`}
+                                    </Text>
+                                )}
                             </View>
                             <ChevronRight
                                 color={palette.textMuted}

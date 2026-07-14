@@ -249,6 +249,24 @@ export interface TMDBSeason {
     name: string;
 }
 
+// One episode from the tv/{id}/season/{n} proxy endpoint. Only the fields the
+// episode list + episode-chat door render (verified against the live proxy).
+export interface TMDBEpisode {
+    episode_number: number;
+    name: string;
+    overview: string;
+    air_date: string | null;
+    still_path: string | null;
+    runtime: number | null;
+}
+
+// A single season's full detail — its episodes.
+export interface TMDBSeasonDetail {
+    season_number: number;
+    name: string;
+    episodes: TMDBEpisode[];
+}
+
 // Watch providers — JustWatch-sourced availability data per region.
 // IMPORTANT LICENSING: the `link` field on each region's entry is the
 // canonical JustWatch deep link for the title in that region and is the
@@ -478,6 +496,16 @@ export function getTV(
     options?: { appendCredits?: boolean; appendVideos?: boolean },
 ): Promise<TMDBTV> {
     return callProxy(`tv/${tmdbId}`, appendParam(options));
+}
+
+// A single TV season's episode list. Backed by the tv/{id}/season/{n} proxy
+// allowlist entry (added 2026-07-13); the episode-list screen renders these
+// and each episode opens an episode-scoped chat.
+export function getTVSeason(
+    tmdbId: number,
+    seasonNumber: number,
+): Promise<TMDBSeasonDetail> {
+    return callProxy(`tv/${tmdbId}/season/${seasonNumber}`);
 }
 
 // Pick the single best trailer to surface on the title screen, or null if
