@@ -505,26 +505,12 @@ export function RatingSheet({
                         );
                     }
                 }
-            } else if (body.length > 0) {
-                // 2b. No-rec (or private): save the note to items.note. An empty
-                //     note never overwrites an existing note with ''.
-                try {
-                    // reason: items.note isn't in the generated Supabase types
-                    // yet (added live, not regenerated); cast the payload until
-                    // the types are regenerated.
-                    const payload = { note: body } as never;
-                    const { error } = await supabase
-                        .from('items')
-                        .update(payload)
-                        .eq('user_id', uid)
-                        .eq('tmdb_id', tmdbId)
-                        .eq('media_type', mediaType);
-                    if (error) throw error;
-                } catch (err) {
-                    console.error('rating sheet: note save failed', err);
-                    Alert.alert("Couldn't save note", 'Please try again.');
-                }
             }
+            // No no-rec branch: the old 2b wrote the note to items.note, which
+            // rides a friends-visible items row (RLS is row-level, not column-
+            // level), so "Just for you" was never private — and nothing ever
+            // read it back. items.note is now unwritten (column left dormant).
+            // Outside the rec fork there is now no target for a note.
 
             // 3. Rating write + rec → watched transitions, LAST (after privacy
             //    committed and comments posted, so the suppress set is known and
@@ -611,7 +597,6 @@ export function RatingSheet({
     const headerText = recFork
         ? `Tell ${recipientLabel} what you thought`
         : 'What did you think?';
-    const notePlaceholder = recFork ? 'Add a note' : 'Just for you';
     // Chips only when there's more than one sender to pick between.
     const showChips = recFork && recs.length > 1;
     // A comment has content when there's a note, or a rating being shared.
@@ -636,8 +621,15 @@ export function RatingSheet({
     const effectiveRating = pressedRating ?? selected;
     // Rating is optional: the primary enables when there's ANYTHING to commit —
     // a rating, a non-empty note, or a privacy change. All-empty → use Skip.
+    // The note only counts when it can actually be written — i.e. in the rec
+    // fork (2a). Outside it the field is hidden and there's no target, so a
+    // leftover note (typed, then privacy toggled ON) must not keep the button
+    // enabled or it would submit and silently drop the text. Note state is kept
+    // (not cleared) so toggling privacy back off restores it in the field.
     const hasSomethingToCommit =
-        selected !== null || note.trim().length > 0 || visibilityChanged;
+        selected !== null ||
+        (recFork && note.trim().length > 0) ||
+        visibilityChanged;
     const primaryDisabled = busy || submitting || !hasSomethingToCommit;
 
     return (
@@ -921,25 +913,30 @@ export function RatingSheet({
                                     />
                                 </View>
                             ) : null}
-                            <TextInput
-                                value={note}
-                                onChangeText={(v) =>
-                                    setNote(v.slice(0, NOTE_MAX))
-                                }
-                                editable={!busy}
-                                multiline
-                                maxLength={NOTE_MAX}
-                                placeholder={notePlaceholder}
-                                placeholderTextColor={palette.textMuted}
-                                style={[
-                                    styles.noteInput,
-                                    typography.body,
-                                    {
-                                        color: palette.text,
-                                        backgroundColor: palette.bg,
-                                    },
-                                ]}
-                            />
+                            {/* Note only in the rec fork — it posts to the
+                                sender's rec (2a). Outside it (no-rec, or a
+                                private rec) there's no target, so no field. */}
+                            {recFork ? (
+                                <TextInput
+                                    value={note}
+                                    onChangeText={(v) =>
+                                        setNote(v.slice(0, NOTE_MAX))
+                                    }
+                                    editable={!busy}
+                                    multiline
+                                    maxLength={NOTE_MAX}
+                                    placeholder="Add a note"
+                                    placeholderTextColor={palette.textMuted}
+                                    style={[
+                                        styles.noteInput,
+                                        typography.body,
+                                        {
+                                            color: palette.text,
+                                            backgroundColor: palette.bg,
+                                        },
+                                    ]}
+                                />
+                            ) : null}
                             {/* Privacy — marks the item private. Default OFF.
                                 Shown in both cases; ON collapses the rec
                                 framing above (chips + share-rating toggle). */}
