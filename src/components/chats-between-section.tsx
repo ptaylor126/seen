@@ -62,9 +62,18 @@ interface ChatGroup {
 export function ChatsBetweenSection({
     friendId,
     friendName,
+    bandColor,
 }: {
     friendId: string;
     friendName: string;
+    // Full-width background band the section paints behind itself, so the
+    // friend profile's alternating-band rhythm applies here without the
+    // parent needing to know (async) whether this section renders. Applied
+    // to the section root ONLY when the section actually renders (it returns
+    // null when there are no chats), so no empty coloured band is left
+    // behind. The parent also owns the vertical rhythm via bandVertical
+    // padding here — the section carries no outer margin of its own.
+    bandColor?: string;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -164,8 +173,13 @@ export function ChatsBetweenSection({
     if (!groups || groups.length === 0) return null;
 
     return (
-        <View style={styles.section}>
-            <Text style={[typography.bodyEmphasis, { color: palette.text }]}>
+        <View
+            style={[
+                styles.section,
+                bandColor ? { backgroundColor: bandColor } : null,
+            ]}
+        >
+            <Text style={[typography.overline, { color: palette.textMuted }]}>
                 Chats between you
             </Text>
             <ScrollView
@@ -250,8 +264,13 @@ export function ChatsBetweenSection({
 
 const styles = StyleSheet.create({
     section: {
+        // Vertical rhythm is owned by the band (paddingVertical base = 16),
+        // matching the friend profile's other section bands so the gap
+        // between any two sections is a uniform 32 (16 + 16) and can't
+        // accumulate — the section carries no outer margin. Horizontal
+        // padding insets the heading; the strip below bleeds past it.
         paddingHorizontal: spacing.base,
-        marginBottom: spacing.md,
+        paddingVertical: spacing.base,
         gap: spacing.sm,
     },
     scroll: {

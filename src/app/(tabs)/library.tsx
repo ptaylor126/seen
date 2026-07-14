@@ -29,7 +29,6 @@ import {
     SearchBarOverlay,
     useSearchBar,
 } from '@/components/search-bar';
-import { ViewControls } from '@/components/view-controls';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import {
     type LibraryGridCols,
@@ -720,19 +719,10 @@ export default function LibraryScreen() {
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScreenHeader
-                title="Library"
-                unreadCount={unreadCount}
-                rightActions={
-                    <ViewControls
-                        mode={mode}
-                        gridCols={gridCols}
-                        onModeChange={setMode}
-                        onGridColsChange={setGridCols}
-                        palette={palette}
-                    />
-                }
-            />
+            {/* Header carries the bell alone. The grid/list toggle (and its
+                density popover) live on the filter line — a grid setting has
+                no business in the header. */}
+            <ScreenHeader title="Library" unreadCount={unreadCount} />
 
             {/* Search row: local-filter bar + adjacent "+" add affordance.
                 The bar dual-modes — wired to localQuery for in-library
@@ -942,6 +932,9 @@ export default function LibraryScreen() {
                     genreStripOpen={filters.genreStripOpen}
                     setGenreStripOpen={filters.setGenreStripOpen}
                     availableGenres={filters.availableGenres}
+                    // Grid/list toggle at the right of the filter line; a
+                    // grid-tap expands it in place to reveal 2/3/4 density.
+                    view={{ mode, gridCols, setMode, setGridCols }}
                 />
             </View>
 

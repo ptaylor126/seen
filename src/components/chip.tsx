@@ -40,6 +40,7 @@ export function Chip({
     expanded,
     hitSlop = spacing.xs,
     style,
+    numberOfLines,
 }: {
     label: string;
     active: boolean;
@@ -50,6 +51,10 @@ export function Chip({
     expanded?: boolean;
     hitSlop?: number;
     style?: StyleProp<ViewStyle>;
+    // Truncate the label to N lines with an ellipsis. Used by the Genre pill,
+    // which is width-capped so a long active genre can't overflow the filter
+    // row; pair with a maxWidth in `style`.
+    numberOfLines?: number;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -75,6 +80,7 @@ export function Chip({
                     styles.label,
                     { color: active ? palette.accent : palette.textMuted },
                 ]}
+                numberOfLines={numberOfLines}
             >
                 {label}
             </Text>

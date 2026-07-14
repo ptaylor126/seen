@@ -2,56 +2,44 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
     ChevronLeft,
+    ChevronRight,
     MessageSquarePlus,
     MoreHorizontal,
     MoreVertical,
-    Search as SearchIcon,
     Send,
     UserPlus,
-    X,
 } from 'lucide-react-native';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
-    Dimensions,
-    FlatList,
     Pressable,
     ScrollView,
     StatusBar,
     StyleSheet,
     Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+// Same library glyph the nav bar uses (assets/images/navbar/icon-library.svg)
+// so the profile's Library card and the tab bar read as one mark.
+import LibraryNavIcon from '../../../assets/images/navbar/icon-library.svg';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
 import { ArchCap } from '@/components/profile-arch';
-import { SegmentedControl } from '@/components/segmented-control';
 import { ChatsBetweenSection } from '@/components/chats-between-section';
 import { TopFiveSections } from '@/components/top-five-sections';
-import { ViewControls } from '@/components/view-controls';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
-import {
-    type LibraryGridCols,
-    useLibraryView,
-} from '@/lib/library-view';
-import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { formatRatingStars, type MediaType } from '@/lib/rating';
 import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
-import { fetchTitlesByItems, fetchTitlesWithFallback } from '@/lib/titles';
+import { fetchTitlesWithFallback } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
-import { useLibraryFilters } from '@/lib/use-library-filters';
-import { LibraryFilterControls } from '@/components/library-filter-controls';
 import { RequestRecSheet } from '@/components/request-rec-sheet';
 import { useRequestRec } from '@/hooks/use-request-rec';
 import {
-    POSTER_ASPECT,
     POSTER_STRIP_GAP as REC_STRIP_GAP,
     POSTER_STRIP_H as REC_BETWEEN_POSTER_H,
     POSTER_STRIP_INSET as REC_STRIP_INSET,
@@ -66,29 +54,11 @@ import {
     typography,
 } from '@/theme/theme';
 
-type ItemStatus = 'watchlist' | 'watching' | 'watched';
-
 interface FriendProfile {
     id: string;
     handle: string;
     displayName: string;
     avatarUrl: string | null;
-}
-
-interface ItemRow {
-    id: string;
-    tmdbId: number;
-    mediaType: MediaType;
-    rating: number | null;
-    watchedAt: string | null;
-    createdAt: string;
-    title: string;
-    posterPath: string | null;
-    year: string;
-    // Full release_date ('YYYY-MM-DD' or null) for the release-date sorts.
-    releaseDate: string | null;
-    originalLanguage: string | null;
-    genreIds: number[] | null;
 }
 
 // One rec in the "Recs between you" strip — either direction. `direction`
@@ -124,27 +94,13 @@ interface RecentReview {
 //   - loading → spinner
 //   - not-found → handle resolves to no profile (or fetch failed)
 //   - not-friends → profile exists but no friendship row
-//   - friends → full library view
+//   - friends → full profile (Top 5, recs, chats, reviews, library door)
 type ResolvedState =
     | { kind: 'loading' }
     | { kind: 'not-found' }
     | { kind: 'not-friends'; profile: FriendProfile }
     | { kind: 'friends'; profile: FriendProfile; friendshipCreatedAt: string };
 
-const TABS: readonly ItemStatus[] = ['watchlist', 'watching', 'watched'] as const;
-const TAB_LABELS: Record<ItemStatus, string> = {
-    watchlist: 'Watchlist',
-    watching: 'Watching',
-    watched: 'Watched',
-};
-// Stable {value, label} array for the shared SegmentedControl —
-// computed once at module scope so the prop reference doesn't change
-// across renders.
-const TAB_OPTIONS: ReadonlyArray<{ value: ItemStatus; label: string }> =
-    TABS.map((value) => ({ value, label: TAB_LABELS[value] }));
-
-const POSTER_W = 56;
-const POSTER_H = 84;
 const AVATAR_SIZE = 80;
 // Plum banner zone inside the list header (below the fixed bar, down to the
 // arch crest). Taller than the own profile's 74 — the avatar/name sit a
@@ -155,44 +111,16 @@ const BANNER_ZONE = 96;
 // as the own profile, scaled to this screen's 80pt avatar.
 const AVATAR_TOP = BANNER_ZONE - AVATAR_SIZE / 2 - 4;
 
-// Grid poster aspect + the "Recs between you" / "Chats between you" strip
-// dimensions now live in @/theme/poster-layout (imported above), so the strip
-// sections share one definition and the friend grid uses the same 2:3 ratio.
+// The "Recs between you" / "Chats between you" strip dimensions live in
+// @/theme/poster-layout (imported above), so the strip sections share one
+// definition.
 const RECS_BETWEEN_LIMIT = 20;
 // Recent reviews is a header overview, not a full archive — cap it so the
-// (already busy) profile header stays bounded.
+// (already busy) profile stays bounded.
 const RECENT_REVIEWS_LIMIT = 3;
 const REVIEW_POSTER_W = 48;
 const REVIEW_POSTER_H = Math.round(REVIEW_POSTER_W * 1.5);
 const REVIEW_SNIPPET_CHARS = 180;
-const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
-    2: spacing.base,
-    3: spacing.sm,
-    4: spacing.sm,
-};
-
-function getGridCellWidth(cols: LibraryGridCols, screenWidth: number): number {
-    const gap = GRID_GAP_BY_COLS[cols];
-    const usable = screenWidth - 2 * spacing.base;
-    return Math.floor((usable - (cols - 1) * gap) / cols);
-}
-
-// The whole screen is one FlatList so the profile header can scroll away
-// while the filter zone (tabs + filters) sticks. Its data is a tagged
-// union: a single 'filters' row (sticky), then the library body as either
-// one 'listRow' per item (list mode) or one 'gridRow' per row-of-cells
-// (grid mode — FlatList's numColumns is incompatible with
-// stickyHeaderIndices, so we chunk into rows ourselves).
-type LibraryListItem =
-    | { type: 'filters' }
-    | { type: 'listRow'; row: ItemRow }
-    | { type: 'gridRow'; rows: ItemRow[] };
-
-// Leading-star variant — "★4.5" reads tighter at small chip sizes than
-// the trailing-star "4.5★" used in list rows. Mirrors the Library tab.
-function compactRatingStars(rating: number): string {
-    return `★${rating / 2}`;
-}
 
 // "Friends since May 2026" — a single coarse line is enough; specific
 // days feel surveillance-y for a casual social product.
@@ -200,17 +128,6 @@ function formatFriendsSince(iso: string): string {
     const d = new Date(iso);
     const month = d.toLocaleString('en-US', { month: 'long' });
     return `Friends since ${month} ${d.getFullYear()}`;
-}
-
-function emptyMessage(status: ItemStatus, displayName: string): string {
-    switch (status) {
-        case 'watchlist':
-            return `${displayName} hasn't added anything to their watchlist yet.`;
-        case 'watching':
-            return `${displayName} isn't currently watching anything.`;
-        case 'watched':
-            return `${displayName} hasn't marked anything watched yet.`;
-    }
 }
 
 export default function FriendDetailScreen() {
@@ -246,21 +163,10 @@ export default function FriendDetailScreen() {
             return () => StatusBar.setBarStyle('dark-content');
         }, [isFriendsBranch]),
     );
-    const [activeTab, setActiveTab] = useState<ItemStatus>('watched');
-    const [items, setItems] = useState<ItemRow[]>([]);
-    const [itemsLoading, setItemsLoading] = useState(false);
-    const [itemsError, setItemsError] = useState<string | null>(null);
     // Friend's top 5 lists. RLS gates the read at the DB layer (favorites
     // SELECT policy is owner-or-friend); calling this for a non-friend
     // would return an empty array, not throw — but the loader effect
     // below only fires when state.kind === 'friends' anyway.
-    // Focus state + ref for the local search field — drives the
-    // Cancel-on-focus affordance (mirrors Home's SearchBarInput
-    // pattern). The ref is needed so Cancel can blur the input
-    // directly rather than fall back to Keyboard.dismiss() (which
-    // doesn't update RN's tracked focus on Android).
-    const localSearchInputRef = useRef<TextInput | null>(null);
-    const [localFocused, setLocalFocused] = useState(false);
     const [favorites, setFavorites] = useState<UserFavorites>({
         movies: [],
         tv: [],
@@ -276,21 +182,6 @@ export default function FriendDetailScreen() {
     );
     // In-flight guard for the "Remove friend" action (overflow menu).
     const [removing, setRemoving] = useState(false);
-
-    // Shared filter / sort / search state — same hook the own library
-    // (src/app/(tabs)/library.tsx) uses, so the two screens stay in
-    // lockstep. Called at the top so the hook is invoked
-    // unconditionally regardless of the resolution state below; when
-    // items is still [] (loading / not-found / not-friends branches),
-    // the hook's memos return empty arrays and its effects no-op.
-    const filters = useLibraryFilters<ItemRow>(items, activeTab);
-
-    // Global library view mode (persisted via AsyncStorage). Switching
-    // here updates the same setting Library tab reads from — flipping
-    // grid/list on a friend's profile changes it on your own library
-    // too. Density (gridCols) is part of the same shared setting.
-    const { mode, gridCols, setMode, setGridCols } = useLibraryView();
-    const screenWidth = Dimensions.get('window').width;
 
     // ---- Phase 1: resolve friend by handle + friendship status.
     // useFocusEffect so we re-resolve on return (e.g. user accepted a
@@ -383,75 +274,10 @@ export default function FriendDetailScreen() {
         }, [handle, targetUserId, router]),
     );
 
-    // ---- Phase 2: fetch items for the active tab (only when friends).
-    // visibility is filtered both client-side (explicit) and by RLS
-    // (defence in depth); RLS is the authoritative check.
-    useEffect(() => {
-        if (state.kind !== 'friends') return;
-        let active = true;
-        setItemsLoading(true);
-        setItemsError(null);
-        (async () => {
-            try {
-                const { data: rows, error } = await supabase
-                    .from('items')
-                    .select('id, tmdb_id, media_type, rating, watched_at, updated_at, created_at')
-                    .eq('user_id', state.profile.id)
-                    .eq('status', activeTab)
-                    .eq('visibility', 'friends')
-                    .order('updated_at', { ascending: false });
-                // .limit(100) removed (step 4 parity work): the cap
-                // would silently truncate filter / sort / genre
-                // results to "the first 100 by recency", which is
-                // wrong now that filtering moved client-side. Items
-                // rows are small (~80 bytes); the titles join is
-                // already batched. Alpha-scale safe.
-                if (!active) return;
-                if (error) throw error;
-
-                // Stage 4: pull title metadata from the shared
-                // public.titles catalogue in one batched query (down
-                // from N per-item TMDB calls). Missing key → empty
-                // strings + null poster, the same placeholder shape
-                // the prior per-item TMDB-failure path landed on.
-                const titleByKey = await fetchTitlesByItems(rows ?? []);
-                if (!active) return;
-                const resolved: ItemRow[] = (rows ?? []).map((r) => {
-                    const titleRow = titleByKey.get(
-                        `${r.media_type}:${r.tmdb_id}`,
-                    );
-                    return {
-                        id: r.id,
-                        tmdbId: r.tmdb_id,
-                        mediaType: r.media_type as MediaType,
-                        rating: typeof r.rating === 'number' ? r.rating : null,
-                        watchedAt: r.watched_at,
-                        createdAt: r.created_at,
-                        title: titleRow?.title ?? '',
-                        posterPath: titleRow?.poster_path ?? null,
-                        year: titleRow?.release_date
-                            ? titleRow.release_date.slice(0, 4)
-                            : '',
-                        releaseDate: titleRow?.release_date ?? null,
-                        originalLanguage: titleRow?.original_language ?? null,
-                        genreIds: titleRow?.genre_ids ?? null,
-                    };
-                });
-                setItems(resolved);
-            } catch (err) {
-                if (!active) return;
-                console.error('friend items fetch failed:', err);
-                setItemsError(
-                    err instanceof Error ? err.message : 'Failed to load',
-                );
-            } finally {
-                if (active) setItemsLoading(false);
-            }
-        })();
-        return () => {
-            active = false;
-        };
-    }, [state, activeTab]);
+    // The friend's library items are no longer fetched here — the library
+    // moved to its own screen (src/app/friends/[handle]/library.tsx), which
+    // fires the items query on mount. A glance-only profile visit no longer
+    // pays for it.
 
     // ---- Phase 2b: fetch the friend's top 5 lists. Separate from the
     // items effect because it doesn't depend on activeTab (tab switches
@@ -620,137 +446,6 @@ export default function FriendDetailScreen() {
         };
     }, [state]);
 
-    function renderGridCell({ item }: { item: ItemRow }) {
-        const cellWidth = getGridCellWidth(gridCols, screenWidth);
-        const cellHeight = Math.floor(cellWidth * POSTER_ASPECT);
-        const showRating = activeTab === 'watched' && item.rating !== null;
-        return (
-            <Pressable
-                onPress={() =>
-                    router.push({
-                        pathname: '/title/[mediaType]/[tmdbId]',
-                        params: {
-                            mediaType: item.mediaType,
-                            tmdbId: String(item.tmdbId),
-                        },
-                    })
-                }
-                style={({ pressed }) => [
-                    { width: cellWidth, height: cellHeight },
-                    styles.gridCell,
-                    pressed && { opacity: 0.6 },
-                ]}
-                accessibilityLabel={item.title}
-            >
-                {item.posterPath ? (
-                    <Image
-                        source={{ uri: imageUrl(item.posterPath, 'w342') }}
-                        style={[
-                            styles.gridPoster,
-                            { width: cellWidth, height: cellHeight },
-                        ]}
-                        contentFit="cover"
-                        transition={150}
-                    />
-                ) : (
-                    <View
-                        style={[
-                            styles.gridPoster,
-                            {
-                                width: cellWidth,
-                                height: cellHeight,
-                                backgroundColor: palette.surfaceAlt,
-                            },
-                        ]}
-                    />
-                )}
-                {showRating && item.rating !== null ? (
-                    <View
-                        style={[
-                            styles.gridRatingChip,
-                            { backgroundColor: palette.bg },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                styles.gridRatingText,
-                                { color: palette.text },
-                            ]}
-                        >
-                            {compactRatingStars(item.rating)}
-                        </Text>
-                    </View>
-                ) : null}
-            </Pressable>
-        );
-    }
-
-    function renderRow({ item }: { item: ItemRow }) {
-        const mediaLabel = item.mediaType === 'movie' ? 'Movie' : 'TV Show';
-        const metaLine = [item.year, mediaLabel].filter(Boolean).join(' · ');
-        const watchedDate = item.watchedAt
-            ? new Date(item.watchedAt).toLocaleDateString()
-            : '';
-        const ratingDisplay =
-            item.rating !== null ? formatRatingStars(item.rating) : '';
-        const watchedLine = [ratingDisplay, watchedDate]
-            .filter(Boolean)
-            .join(' · ');
-        const showWatchedLine = activeTab === 'watched' && watchedLine.length > 0;
-        return (
-            <Pressable
-                onPress={() =>
-                    router.push({
-                        pathname: '/title/[mediaType]/[tmdbId]',
-                        params: {
-                            mediaType: item.mediaType,
-                            tmdbId: String(item.tmdbId),
-                        },
-                    })
-                }
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
-            >
-                {item.posterPath ? (
-                    <Image
-                        source={{ uri: imageUrl(item.posterPath, 'w185') }}
-                        style={styles.poster}
-                        contentFit="cover"
-                        transition={150}
-                    />
-                ) : (
-                    <View
-                        style={[
-                            styles.poster,
-                            { backgroundColor: palette.surfaceAlt },
-                        ]}
-                    />
-                )}
-                <View style={styles.rowText}>
-                    <Text
-                        style={[typography.bodyEmphasis, { color: palette.text }]}
-                        numberOfLines={2}
-                    >
-                        {item.title}
-                    </Text>
-                    {metaLine ? (
-                        <Text
-                            style={[typography.caption, { color: palette.textMuted }]}
-                        >
-                            {metaLine}
-                        </Text>
-                    ) : null}
-                    {showWatchedLine ? (
-                        <Text
-                            style={[typography.caption, { color: palette.textMuted }]}
-                        >
-                            {watchedLine}
-                        </Text>
-                    ) : null}
-                </View>
-            </Pressable>
-        );
-    }
-
     // ---- Render branches per state.
 
     // Parameterized: the loader/error branches render it accent-on-bg as
@@ -887,6 +582,37 @@ export default function FriendDetailScreen() {
     // ---- state.kind === 'friends'
     const { profile, friendshipCreatedAt } = state;
 
+    // Alternating full-width band colours for the three consecutive poster
+    // strips (Top 5, Recs between, Chats between) so they don't merge into
+    // one wall of covers. A strip gets the ALT tone when the number of
+    // present strips before it is even, the BASE (page) tone when it's odd —
+    // so adjacent strips always differ, and the pattern stays correct when a
+    // middle strip is conditionally absent (the instability the fixed
+    // rhythm had). Recent reviews stays on the base tone: it's a vertical
+    // list, not a strip, so it carries no merge risk. Kept to a quiet tonal
+    // step within the plum system (surfaceAlt over bg), not a colour scheme.
+    //
+    // The bands are SQUARE and FULL-WIDTH by decision — do not round or inset
+    // them. Two reasons:
+    //   1. The strips inside bleed past the screen edge with a negative
+    //      margin. An inset rounded band would either clip that bleed or let
+    //      the strips spill past its corners — full-bleed and inset rounded
+    //      cards are mutually exclusive.
+    //   2. In this app roundedness MEANS "contained object" (friends rows,
+    //      the title page's social cards, the library card below). A band is
+    //      the page itself, not an object on it. Round everything and
+    //      roundedness stops meaning anything.
+    const top5Present =
+        favorites.movies.length > 0 || favorites.tv.length > 0;
+    const recsPresent = !!(recsBetween && recsBetween.length > 0);
+    const stripBand = (presentBefore: number) =>
+        presentBefore % 2 === 0 ? palette.surfaceAlt : palette.bg;
+    const top5Band = stripBand(0);
+    const recsBand = stripBand(top5Present ? 1 : 0);
+    const chatsBand = stripBand(
+        (top5Present ? 1 : 0) + (recsPresent ? 1 : 0),
+    );
+
     // Remove friend — overflow menu → confirm → unfriend RPC (symmetric,
     // silent; the existing RPC sends no notification). On success (or a
     // benign "already gone" race) route to the Friends tab so we don't sit
@@ -992,43 +718,12 @@ export default function FriendDetailScreen() {
         ]);
     }
 
-    // Body rows for the single scrolling FlatList. Grid mode is chunked
-    // into rows of `gridCols` cells (numColumns can't coexist with the
-    // sticky filter row); list mode is one item per row. The 'filters'
-    // item is data[0] and sticks (stickyHeaderIndices below). Loading /
-    // error / empty render in the footer so the sticky tabs stay visible.
-    //
-    // Crucially `showBody` does NOT gate on itemsLoading: switching tabs
-    // refetches (the items query is per-status), and emptying the body
-    // mid-fetch would collapse the list to just the sticky header and snap
-    // scroll back to the top. Instead we keep the previous tab's rows
-    // mounted until the new ones arrive (keep-previous-data), so scroll
-    // position and the stuck tabs survive the swap. Only a genuine
-    // first-load with no rows yet shows the spinner (see listFooter).
-    const hasRows = filters.visibleRows.length > 0;
-    const showBody = !itemsError && hasRows;
-    const bodyItems: LibraryListItem[] = [];
-    if (showBody) {
-        if (mode === 'list') {
-            for (const row of filters.visibleRows) {
-                bodyItems.push({ type: 'listRow', row });
-            }
-        } else {
-            for (let i = 0; i < filters.visibleRows.length; i += gridCols) {
-                bodyItems.push({
-                    type: 'gridRow',
-                    rows: filters.visibleRows.slice(i, i + gridCols),
-                });
-            }
-        }
-    }
-    const listData: LibraryListItem[] = [{ type: 'filters' }, ...bodyItems];
-
-    // Profile info — scrolls away with the list (ListHeaderComponent).
-    // Plum banner + arched sheet: the banner continues the fixed bar's plum
-    // down to the arch crest; the avatar straddles the crest; name, handle,
-    // friends-since and the action buttons sit on the sheet below.
-    const listHeader = (
+    // Profile content — the whole scrolling body. Plum banner + arched
+    // sheet: the banner continues the fixed bar's plum down to the arch
+    // crest; the avatar straddles the crest; name, handle, friends-since and
+    // the action buttons sit on the sheet below, then Top 5, recs, chats,
+    // reviews, and the library door.
+    const profileContent = (
         <>
             {/* Top-bounce cap: plum extended above the header so an iOS
                 overscroll at the top shows plum, never a bg seam. */}
@@ -1126,11 +821,13 @@ export default function FriendDetailScreen() {
                 </Pressable>
             </View>
 
-            {/* Friend's top 5 sections — between the profile block and the
-                library search/tabs. Conditional wrapper so the marginBottom
-                doesn't fire when the friend has no favorites curated. */}
-            {(favorites.movies.length > 0 || favorites.tv.length > 0) && (
-                <View style={styles.topFiveBlock}>
+            {/* Friend's top 5 sections. Full-width band (first strip → ALT
+                tone) so it separates from the Recs strip below. Conditional
+                so no empty band paints when the friend has no favorites. */}
+            {top5Present && (
+                <View
+                    style={[styles.sectionBand, { backgroundColor: top5Band }]}
+                >
                     <TopFiveSections
                         movies={favorites.movies}
                         tv={favorites.tv}
@@ -1151,13 +848,18 @@ export default function FriendDetailScreen() {
                 (sender). Tapping opens the rec view (the conversation);
                 for a rec you sent, that view shows the sender perspective.
                 Full-bleed horizontal strip, matching Top 5 / where-to-watch. */}
-            {recsBetween && recsBetween.length > 0 && (
-                <View style={styles.recsBetweenSection}>
+            {recsPresent && (
+                <View
+                    style={[
+                        styles.recsBetweenSection,
+                        { backgroundColor: recsBand },
+                    ]}
+                >
                     <Text
                         style={[
-                            typography.bodyEmphasis,
+                            typography.overline,
                             styles.recsBetweenHeading,
-                            { color: palette.text },
+                            { color: palette.textMuted },
                         ]}
                     >
                         Recs between you
@@ -1219,10 +921,14 @@ export default function FriendDetailScreen() {
 
             {/* Chats between you — directly below Recs between you, above
                 Recent reviews. Self-contained component; renders nothing when
-                the pair has no chats. */}
+                the pair has no chats. It paints its own full-width band
+                (chatsBand, computed from how many strips precede it) only
+                when it renders, so the alternation stays correct without the
+                parent knowing this async section's presence. */}
             <ChatsBetweenSection
                 friendId={profile.id}
                 friendName={profile.displayName}
+                bandColor={chatsBand}
             />
 
             {/* Recent reviews — this friend's recently-WRITTEN reviews
@@ -1236,8 +942,8 @@ export default function FriendDetailScreen() {
                 <View style={styles.recentReviewsSection}>
                     <Text
                         style={[
-                            typography.bodyEmphasis,
-                            { color: palette.text },
+                            typography.overline,
+                            { color: palette.textMuted },
                         ]}
                     >
                         Recent reviews
@@ -1374,181 +1080,74 @@ export default function FriendDetailScreen() {
                 </View>
             )}
 
-            {/* No divider between the overview sections (Top 5, recs,
-                reviews) and the search + browse zone — whitespace does the
-                separation (the last overview section's marginBottom +
-                searchRow's marginTop), matching the Library filter zone's
-                divider removal. */}
-
-            {/* Local title search — mirrors the library tab's local-filter
-                bar (X = clear-but-stay, Cancel = exit + dismiss). Wired to
-                the shared hook's localQuery state. */}
-            <View style={styles.searchRow}>
-                <View
-                    style={[styles.searchBar, { backgroundColor: palette.surface }]}
+            {/* Library — pushes the friend's whole library to its own screen
+                (search + status tabs + filter chips + grid + view controls).
+                Kept off the profile so a glance-only visit doesn't pay for
+                the items query. Params hand the friend across so the library
+                screen needs no resolve round-trip. Treated as a card with an
+                accent icon tile — this is the thing you'd most want to browse,
+                so it carries real weight (not the thin settings row it was),
+                without borrowing the solid-plum register of "Recommend". */}
+            <View style={styles.libraryCardBand}>
+                <Pressable
+                    onPress={() =>
+                        router.push({
+                            pathname: '/friends/[handle]/library',
+                            params: {
+                                handle: profile.handle,
+                                userId: profile.id,
+                                name: profile.displayName,
+                                avatarUrl: profile.avatarUrl ?? '',
+                            },
+                        })
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel={`${profile.displayName}'s library`}
+                    style={({ pressed }) => [
+                        styles.libraryCard,
+                        { backgroundColor: palette.surfaceElevated },
+                        pressed && { opacity: 0.6 },
+                    ]}
                 >
-                    <SearchIcon
-                        color={palette.textMuted}
-                        size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <TextInput
-                        ref={localSearchInputRef}
-                        value={filters.localQuery}
-                        onChangeText={filters.setLocalQuery}
-                        placeholder={`Search ${profile.displayName}'s library`}
-                        placeholderTextColor={palette.textMuted}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        returnKeyType="search"
-                        onFocus={() => setLocalFocused(true)}
-                        onBlur={() => setLocalFocused(false)}
+                    <View
                         style={[
-                            styles.searchInput,
-                            typography.body,
-                            { color: palette.text },
-                        ]}
-                    />
-                    {filters.localQuery.length > 0 ? (
-                        <Pressable
-                            onPress={() => filters.setLocalQuery('')}
-                            hitSlop={spacing.sm}
-                            accessibilityRole="button"
-                            accessibilityLabel="Clear search"
-                            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
-                        >
-                            <X
-                                color={palette.textMuted}
-                                size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
-                            />
-                        </Pressable>
-                    ) : null}
-                </View>
-                {localFocused ? (
-                    <Pressable
-                        onPress={() => {
-                            filters.setLocalQuery('');
-                            localSearchInputRef.current?.blur();
-                        }}
-                        hitSlop={spacing.sm}
-                        accessibilityRole="button"
-                        accessibilityLabel="Cancel search"
-                        style={({ pressed }) => [
-                            styles.cancelButton,
-                            pressed && { opacity: 0.6 },
+                            styles.libraryCardIconTile,
+                            { backgroundColor: palette.accentWash },
                         ]}
                     >
-                        <Text style={[typography.body, { color: palette.accent }]}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                ) : null}
+                        <LibraryNavIcon
+                            color={palette.accent}
+                            width={22}
+                            height={22}
+                        />
+                    </View>
+                    <Text
+                        style={[
+                            typography.heading,
+                            styles.libraryCardTitle,
+                            { color: palette.text },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        Library
+                    </Text>
+                    <ChevronRight
+                        color={palette.textMuted}
+                        size={22}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                </Pressable>
             </View>
         </>
     );
-
-    // Sticky row (data[0]): segmented status picker + media/sort/genre
-    // controls. Pins under the fixed headerBar once the profile info above
-    // scrolls past. Page-bg fill (not the old surfaceAlt band): the
-    // filters now sit on the page background like the Library screen, but
-    // the fill stays OPAQUE so rows don't show through when it's stuck.
-    const filterZoneNode = (
-        <View style={[styles.filterZone, { backgroundColor: palette.bg }]}>
-            <View style={styles.segmentedRow}>
-                <SegmentedControl
-                    options={TAB_OPTIONS}
-                    value={activeTab}
-                    onChange={setActiveTab}
-                    palette={palette}
-                />
-            </View>
-            <LibraryFilterControls
-                palette={palette}
-                mediaFilter={filters.mediaFilter}
-                setMediaFilter={filters.setMediaFilter}
-                sortBy={filters.sortBy}
-                setSortBy={filters.setSortBy}
-                availableSortOptions={filters.availableSortOptions}
-                genreFilter={filters.genreFilter}
-                setGenreFilter={filters.setGenreFilter}
-                genreStripOpen={filters.genreStripOpen}
-                setGenreStripOpen={filters.setGenreStripOpen}
-                availableGenres={filters.availableGenres}
-            />
-        </View>
-    );
-
-    function renderListItem({ item }: { item: LibraryListItem }) {
-        if (item.type === 'filters') return filterZoneNode;
-        if (item.type === 'gridRow') {
-            return (
-                <View
-                    style={[
-                        styles.bodyInset,
-                        styles.gridRow,
-                        { columnGap: GRID_GAP_BY_COLS[gridCols] },
-                    ]}
-                >
-                    {item.rows.map((row) => (
-                        <View key={row.id}>{renderGridCell({ item: row })}</View>
-                    ))}
-                </View>
-            );
-        }
-        return (
-            <View style={styles.bodyInset}>{renderRow({ item: item.row })}</View>
-        );
-    }
-
-    // Loading / error / empty live below the sticky filter row so the tabs
-    // stay reachable in every state. Order matters: error first, then the
-    // spinner ONLY on a first load with no rows yet (a tab-switch reload
-    // keeps the previous rows mounted and shows no spinner, so scroll is
-    // preserved — see showBody above), then the empty copy once a load has
-    // completed with nothing. Empty copy has three sub-cases, in priority
-    // order: typed-search → genre filter → per-tab default.
-    const listFooter = itemsError ? (
-        <View style={styles.footerStatus}>
-            <Text
-                style={[
-                    typography.body,
-                    styles.centerText,
-                    { color: palette.error },
-                ]}
-                numberOfLines={3}
-            >
-                {itemsError}
-            </Text>
-        </View>
-    ) : itemsLoading && !hasRows ? (
-        <View style={styles.footerStatus}>
-            <ActivityIndicator color={palette.accent} />
-        </View>
-    ) : !itemsLoading && !hasRows ? (
-        <View style={styles.footerStatus}>
-            <Text
-                style={[
-                    typography.body,
-                    styles.centerText,
-                    { color: palette.textMuted },
-                ]}
-            >
-                {filters.localQuery.trim().length > 0
-                    ? `No matches in @${profile.handle}'s library.`
-                    : filters.genreFilter !== null
-                      ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
-                      : emptyMessage(activeTab, profile.displayName)}
-            </Text>
-        </View>
-    ) : null;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             {/* Fixed chrome on the plum banner — the plum reaches the
                 physical top of the screen (safe area included); chevron and
-                overflow go white. ViewControls keeps its own light
-                surfaceAlt container, legible on plum unchanged. */}
+                overflow go white. The view controls live on the library
+                screen (meaningless here), so the right slot holds only the
+                overflow menu. */}
             <SafeAreaView
                 edges={['top']}
                 style={{ backgroundColor: palette.accent }}
@@ -1556,13 +1155,6 @@ export default function FriendDetailScreen() {
                 <View style={styles.headerBar}>
                     {backButton(palette.textInverse)}
                     <View style={styles.headerBarRight}>
-                        <ViewControls
-                            mode={mode}
-                            gridCols={gridCols}
-                            onModeChange={setMode}
-                            onGridColsChange={setGridCols}
-                            palette={palette}
-                        />
                         <Pressable
                             onPress={openFriendMenu}
                             disabled={removing}
@@ -1584,56 +1176,20 @@ export default function FriendDetailScreen() {
                 </View>
             </SafeAreaView>
 
-            <FlatList
-                data={listData}
-                keyExtractor={(item) =>
-                    item.type === 'filters'
-                        ? 'filters'
-                        : item.type === 'listRow'
-                          ? item.row.id
-                          : `gridrow-${item.rows.map((r) => r.id).join('-')}`
-                }
-                renderItem={renderListItem}
-                ListHeaderComponent={listHeader}
-                // ListHeaderComponent is child 0; the sticky 'filters' item
-                // (data[0]) is child 1.
-                stickyHeaderIndices={[1]}
-                ListFooterComponent={listFooter}
+            {/* With the library grid gone, the profile no longer needs a
+                sticky-header FlatList — its remaining sections (Top 5, recs,
+                chats, reviews, the library door) are all bounded, so a plain
+                ScrollView carries them. Section markup + margins are carried
+                across unchanged. */}
+            <ScrollView
                 contentContainerStyle={[
                     styles.scrollContent,
                     { paddingBottom: bottomInset },
                 ]}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="on-drag"
-                ItemSeparatorComponent={({
-                    leadingItem,
-                }: {
-                    leadingItem: LibraryListItem;
-                }) => {
-                    if (leadingItem.type === 'listRow') {
-                        return (
-                            <View style={styles.bodyInset}>
-                                <View
-                                    style={[
-                                        styles.separator,
-                                        { backgroundColor: palette.border },
-                                    ]}
-                                />
-                            </View>
-                        );
-                    }
-                    if (leadingItem.type === 'gridRow') {
-                        return (
-                            <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
-                        );
-                    }
-                    // After the sticky filters row: grid gets a small top gap
-                    // (matched old gridContent paddingTop); list sat flush.
-                    return mode === 'grid' ? (
-                        <View style={{ height: spacing.sm }} />
-                    ) : null;
-                }}
-            />
+                showsVerticalScrollIndicator={false}
+            >
+                {profileContent}
+            </ScrollView>
 
             <RequestRecSheet
                 visible={requestRec.target !== null}
@@ -1655,9 +1211,8 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm,
     },
     headerBarRight: {
-        // Push the view-controls cluster (+ overflow menu) to the right
-        // edge of the header bar. The back button sits at the left; this
-        // slot is its mirror.
+        // Push the overflow menu to the right edge of the header bar. The
+        // back button sits at the left; this slot is its mirror.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.xs,
@@ -1702,19 +1257,24 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.lg,
         gap: spacing.xs,
     },
-    topFiveBlock: {
-        // Vertical breathing room below the top-5 sections; zero-
-        // height when both arrays are empty (the component returns
-        // null), so no stray padding appears in the no-favorites case.
-        // lg (was md): with the overview/browse hairline removed,
-        // whitespace alone separates Top 5 from whatever follows.
-        marginBottom: spacing.lg,
+    // Shared full-width section band. Vertical rhythm lives HERE and only
+    // here — paddingVertical base (16), no margins anywhere — so the gap
+    // between any two adjacent sections is a uniform 32 (16 + 16) that can't
+    // accumulate and doesn't shift when a conditional section drops out. No
+    // horizontal padding: the strip inside bleeds full-width to the band's
+    // edges (= the screen edges), and each strip's own heading carries its
+    // base inset. The band's backgroundColor (base vs alt tone) is applied
+    // inline per section for the alternating rhythm.
+    sectionBand: {
+        paddingVertical: spacing.base,
     },
     recsBetweenSection: {
-        // Heading + strip block, base inset, spaced below Top 5 and above
-        // the search row. Inner gap separates heading from the strip.
+        // Heading + strip block. Same band rhythm as sectionBand
+        // (paddingVertical base, no margin); paddingHorizontal insets the
+        // heading only — the strip's -REC_STRIP_INSET scroll margin cancels
+        // it so the strip still bleeds full width across the band.
         paddingHorizontal: spacing.base,
-        marginBottom: spacing.md,
+        paddingVertical: spacing.base,
         gap: spacing.sm,
     },
     recsBetweenHeading: {
@@ -1740,13 +1300,13 @@ const styles = StyleSheet.create({
         borderRadius: radius.sm,
     },
     recentReviewsSection: {
-        // Heading + capped vertical list, base inset. marginTop adds
-        // separation from the recs strip above; marginBottom spaces it
-        // from the divider/search below. Inner gap separates the heading
-        // and the rows.
+        // Heading + capped vertical list. Same band rhythm as the strips
+        // (paddingVertical base, no margins); stays on the BASE tone (no
+        // alt band) because a vertical review list is structurally distinct
+        // from the poster strips and carries no merge risk. paddingHorizontal
+        // insets both heading and rows. Inner gap separates heading + rows.
         paddingHorizontal: spacing.base,
-        marginTop: spacing.md,
-        marginBottom: spacing.md,
+        paddingVertical: spacing.base,
         gap: spacing.sm,
     },
     reviewRow: {
@@ -1781,50 +1341,33 @@ const styles = StyleSheet.create({
     reviewSpoiler: {
         fontStyle: 'italic',
     },
-    searchRow: {
-        // Outer row hosting the search pill + the conditional Cancel
-        // sibling. Margins live here (not on the pill) so the pill
-        // can flex to fill available width when Cancel appears /
-        // disappears. Mirrors Home's SearchBarInput row layout. Generous
-        // TOP margin keeps the breathing room under the overview sections
-        // above (no divider — whitespace is the separation);
-        // the bottom margin is tighter (md) so the search-to-filter gap
-        // matches the main Library screen (marginBottom 12 + filterZone
-        // paddingTop 4 = 16pt).
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-        marginHorizontal: spacing.base,
-        marginTop: spacing.lg,
-        marginBottom: spacing.md,
+    // Library door — the card sits in a base-tone band so it shares the
+    // 32pt section rhythm and gets a horizontal gutter (the card is inset,
+    // not full-bleed like the strips).
+    libraryCardBand: {
+        paddingVertical: spacing.base,
+        paddingHorizontal: spacing.base,
     },
-    searchBar: {
-        // Local title-filter input. Mirrors the own library's
-        // .localSearchBar pill shape so the two screens read the
-        // same, minus the `+` button (friend libraries have no add
-        // affordance). Border deliberately omitted — the surface
-        // fill against the page bg is the visual separation;
-        // pairing fill + border reads as a generic input pill.
-        // flex: 1 so the pill shrinks when Cancel appears in the
-        // outer row.
-        flex: 1,
+    // The card itself — a plum-tinted surface (surfaceElevated) with an
+    // accent icon tile. Presence from fill + radius + the tile + heading-tier
+    // title, deliberately NOT the solid-plum register of "Recommend". Title
+    // flexes so the chevron pins right.
+    libraryCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.sm,
-        paddingHorizontal: spacing.md,
-        borderRadius: radius.full,
+        gap: spacing.base,
+        padding: spacing.base,
+        borderRadius: radius.md,
+    },
+    libraryCardIconTile: {
+        width: 44,
         height: 44,
+        borderRadius: radius.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    cancelButton: {
-        // Plain text Pressable, sized via horizontal padding.
-        // Mirrors Home SearchBarInput's cancel button styling.
-        paddingHorizontal: spacing.xs,
-    },
-    searchInput: {
+    libraryCardTitle: {
         flex: 1,
-        // padding zeroed: the parent's fixed height owns vertical
-        // sizing so the icon and text stay aligned.
-        paddingVertical: 0,
     },
     notFriendsBlock: {
         paddingHorizontal: spacing.xl,
@@ -1887,90 +1430,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         marginTop: spacing.md,
     },
-    filterZone: {
-        // No shaded band — the controls sit on the page background (fill
-        // applied inline as palette.bg, kept opaque so rows don't show
-        // through when this sticky zone is stuck). Matches the Library
-        // screen's filter zone, including its tight paddingTop (xs): the
-        // search-to-filter gap = searchRow.marginBottom (12) + this (4)
-        // = 16pt, same as the main Library. The overview/browse
-        // separation is whitespace above the search bar (no divider).
-        paddingTop: spacing.xs,
-        paddingBottom: spacing.sm,
-        gap: spacing.md,
-    },
-    segmentedRow: {
-        // Horizontal inset for the segmented control matching the
-        // rest of the screen's content gutters.
-        paddingHorizontal: spacing.base,
-    },
     scrollContent: {
-        // Whole-screen FlatList: horizontal insets live on the header/filter/
-        // body items, which each manage their own gutters. The bottom cushion
+        // Whole-screen ScrollView: horizontal insets live on the individual
+        // sections, which each manage their own gutters. The bottom cushion
         // is applied inline via useBottomInset (nav-bar clearance).
-    },
-    bodyInset: {
-        // Horizontal gutter for library rows / grid rows + their
-        // separators — replaces the old listContent/gridContent
-        // paddingHorizontal now that they're items in one FlatList.
-        paddingHorizontal: spacing.base,
-    },
-    gridRow: {
-        // One chunked row of grid cells. flex-start so a short last row
-        // stays left-aligned (matches the old columnWrapper behaviour).
-        flexDirection: 'row',
-    },
-    footerStatus: {
-        // Loading / error / empty message, shown under the sticky filter
-        // row. Top padding gives it air instead of jamming under the tabs;
-        // symmetric bottom padding so it isn't left 24px off the screen edge.
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingTop: spacing.xxl,
-        paddingBottom: spacing.xxl,
-        paddingHorizontal: spacing.xl,
-        gap: spacing.sm,
-    },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: spacing.md,
-        gap: spacing.md,
-    },
-    poster: {
-        width: POSTER_W,
-        height: POSTER_H,
-        borderRadius: radius.sm,
-    },
-    rowText: {
-        flex: 1,
-        gap: spacing.xs,
-    },
-    separator: {
-        height: StyleSheet.hairlineWidth,
-        marginLeft: POSTER_W + spacing.md,
-    },
-    // Grid cell styles mirror the Library tab so a friend's grid looks
-    // identical at the same density. Values pulled across verbatim;
-    // diverging here would create a subtle inconsistency between
-    // "my library" and "their library" at a glance.
-    gridCell: {
-        position: 'relative',
-    },
-    gridPoster: {
-        borderRadius: radius.sm,
-    },
-    gridRatingChip: {
-        position: 'absolute',
-        bottom: spacing.xs,
-        left: spacing.xs,
-        paddingHorizontal: spacing.xs,
-        paddingVertical: 3,
-        borderRadius: radius.sm,
-        opacity: 0.92,
-    },
-    gridRatingText: {
-        ...typography.caption,
-        fontWeight: '600',
     },
 });

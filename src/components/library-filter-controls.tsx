@@ -8,7 +8,11 @@
  *
  * Renders (vertical order):
  *   1. Controls row: media filter pills (All / Movies / TV) on the
- *      left; Genre toggle pill + Sort button on the right.
+ *      left; Genre pill + Sort icon + the grid/list view toggle on the
+ *      right. When `view` is passed, the toggle expands IN PLACE on a
+ *      grid-tap to reveal 2/3/4 density options while the rest of the row
+ *      fades out (see the pill section below) — one control, defined here,
+ *      so both library surfaces behave identically.
  *   2. Genre chip strip below the controls row when genreStripOpen
  *      is true AND availableGenres is non-empty. "All genres" sentinel
  *      chip prepended for explicit clear.
@@ -20,19 +24,26 @@
  * enough to leave for a future sweep.
  */
 
-import { ArrowDownUp } from 'lucide-react-native';
-import { useState } from 'react';
 import {
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
-} from 'react-native';
+    ArrowDownUp,
+    LayoutGrid,
+    LayoutList,
+} from 'lucide-react-native';
+import { type ReactNode, useEffect, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+    FadeIn,
+    FadeOut,
+    LinearTransition,
+    useAnimatedStyle,
+    useSharedValue,
+    withTiming,
+} from 'react-native-reanimated';
 
 import { Chip } from '@/components/chip';
 import { SortSheet } from '@/components/sort-sheet';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
+import type { LibraryGridCols, LibraryMode } from '@/lib/library-view';
 import {
     MEDIA_FILTERS,
     MEDIA_FILTER_LABELS,
@@ -41,14 +52,22 @@ import {
     type SortOption,
 } from '@/lib/use-library-filters';
 import {
-    fontFamily,
     getPalette,
     ICON_STROKE_WIDTH,
+    radius,
     spacing,
-    typography,
 } from '@/theme/theme';
 
 type Palette = ReturnType<typeof getPalette>;
+
+const DENSITY_OPTIONS: readonly LibraryGridCols[] = [2, 3, 4];
+// Collapsed pill width (container pad 4 + two 28pt cells + 2pt gap) and the
+// room the filters leave to its right for it. The expanded pill grows LEFT
+// into the space the filters vacate, so this reserve only needs to fit the
+// two-icon resting state.
+const COLLAPSED_PILL_W = 62;
+const PILL_RESERVE = COLLAPSED_PILL_W + spacing.sm;
+const EXPAND_MS = 150;
 
 interface LibraryFilterControlsProps {
     palette: Palette;
@@ -65,6 +84,16 @@ interface LibraryFilterControlsProps {
     genreStripOpen: boolean;
     setGenreStripOpen: (open: boolean) => void;
     availableGenres: Array<{ id: number; name: string }>;
+    // Library view state + setters. When passed, the grid/list toggle (and
+    // its expand-in-place density options) render at the right of the filter
+    // row. Both library surfaces pass it, so the control is identical on each
+    // by construction. Omitted → no toggle.
+    view?: {
+        mode: LibraryMode;
+        gridCols: LibraryGridCols;
+        setMode: (m: LibraryMode) => void;
+        setGridCols: (n: LibraryGridCols) => void;
+    };
 }
 
 export function LibraryFilterControls({
@@ -79,6 +108,7 @@ export function LibraryFilterControls({
     genreStripOpen,
     setGenreStripOpen,
     availableGenres,
+    view,
 }: LibraryFilterControlsProps) {
     // Sort picker: the app's own bottom sheet (SortSheet), same pattern as
     // WatchersSheet/RatingSheet, on BOTH platforms. Replaces two failed
@@ -88,74 +118,228 @@ export function LibraryFilterControls({
     // custom sheet is what the A16/Android build will get too.
     const [sortSheetOpen, setSortSheetOpen] = useState(false);
 
+    // Density options expanded in place on the toggle. Only ever true in grid
+    // mode (see handleGrid). The filter group cross-fades out while it's true.
+    const [densityExpanded, setDensityExpanded] = useState(false);
+    const filtersOpacity = useSharedValue(1);
+    useEffect(() => {
+        filtersOpacity.value = withTiming(densityExpanded ? 0 : 1, {
+            duration: EXPAND_MS,
+        });
+    }, [densityExpanded, filtersOpacity]);
+    const filtersAnimStyle = useAnimatedStyle(() => ({
+        opacity: filtersOpacity.value,
+    }));
+
+    const handleList = () => {
+        if (!view) return;
+        // Switch to list; there's nothing to configure in list mode, so any
+        // open density options collapse.
+        view.setMode('list');
+        setDensityExpanded(false);
+    };
+
+    const handleGrid = () => {
+        if (!view) return;
+        if (densityExpanded) {
+            // Escape hatch — collapse WITHOUT changing anything, and
+            // DELIBERATELY stay in grid at the current density. The density
+            // options were an offer, not a requirement: the user asked for
+            // grid and got grid; tapping grid again just dismisses the offer.
+            // Do NOT "fix" this into reverting to list — that would punish an
+            // accidental open by forcing a choice, and would drop the grid
+            // mode the user explicitly selected. This asymmetry is intended.
+            setDensityExpanded(false);
+            return;
+        }
+        // Collapsed grid tap: enter grid if not already (from list this is
+        // switch-to-grid AND expand in one tap — the moment density is most
+        // relevant, and how the control is discovered at all), then reveal
+        // the density options.
+        if (view.mode !== 'grid') view.setMode('grid');
+        setDensityExpanded(true);
+    };
+
+    const handleDensity = (n: LibraryGridCols) => {
+        if (!view) return;
+        view.setGridCols(n);
+        setDensityExpanded(false);
+    };
+
     return (
         <>
             <View style={styles.controlsRow}>
-                <View style={styles.mediaFilterGroup}>
-                    {MEDIA_FILTERS.map((opt) => (
-                        <Chip
-                            key={opt}
-                            label={MEDIA_FILTER_LABELS[opt]}
-                            active={mediaFilter === opt}
-                            onPress={() => setMediaFilter(opt)}
-                        />
-                    ))}
-                </View>
-                <View style={styles.rightControls}>
-                    {/* Genre toggle pill — reveals/collapses the chip
-                        strip below. Default: outlined, label "Genre".
-                        Active (genreFilter set): accent-filled, label
-                        = the selected genre name. Active visuals
-                        derive from one boolean (isGenreActive) so bg
-                        / border / text colour / label can't drift
-                        out of sync. */}
-                    {(() => {
-                        const isGenreActive = genreFilter !== null;
-                        const activeGenreLabel = isGenreActive
-                            ? TMDB_GENRE_NAMES.get(genreFilter) ??
-                              `#${genreFilter}`
-                            : null;
-                        return (
+                {/* Filter group — media / genre / sort. Fades out (and goes
+                    untappable) while the density options are expanded, to make
+                    room for the pill growing over it. paddingRight reserves the
+                    collapsed pill's slot so genre/sort don't sit under it. */}
+                <Animated.View
+                    style={[
+                        styles.filtersGroup,
+                        view ? styles.filtersReserve : null,
+                        filtersAnimStyle,
+                    ]}
+                    pointerEvents={densityExpanded ? 'none' : 'auto'}
+                >
+                    <View style={styles.mediaFilterGroup}>
+                        {MEDIA_FILTERS.map((opt) => (
                             <Chip
-                                label={activeGenreLabel ?? 'Genre'}
-                                active={isGenreActive}
-                                expanded={genreStripOpen}
-                                onPress={() =>
-                                    setGenreStripOpen(!genreStripOpen)
-                                }
-                                accessibilityLabel={
-                                    isGenreActive
-                                        ? `Genre filter: ${activeGenreLabel}. Tap to ${genreStripOpen ? 'hide' : 'show'} options.`
-                                        : `${genreStripOpen ? 'Hide' : 'Show'} genre options`
-                                }
+                                key={opt}
+                                label={MEDIA_FILTER_LABELS[opt]}
+                                active={mediaFilter === opt}
+                                onPress={() => setMediaFilter(opt)}
                             />
-                        );
-                    })()}
-                    <Pressable
-                        onPress={() => setSortSheetOpen(true)}
-                        hitSlop={spacing.xs}
-                        style={({ pressed }) => [
-                            styles.sortButton,
-                            pressed && { opacity: 0.6 },
-                        ]}
-                        accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
-                        accessibilityRole="button"
-                    >
-                        <ArrowDownUp
-                            color={palette.text}
-                            size={14}
-                            strokeWidth={ICON_STROKE_WIDTH}
-                        />
-                        <Text
+                        ))}
+                    </View>
+                    <View style={styles.rightControls}>
+                        {/* Genre toggle pill — reveals/collapses the chip
+                            strip below. Default: outlined, label "Genre".
+                            Active (genreFilter set): accent-filled, label
+                            = the selected genre name. Active visuals
+                            derive from one boolean (isGenreActive) so bg
+                            / border / text colour / label can't drift
+                            out of sync. */}
+                        {(() => {
+                            const isGenreActive = genreFilter !== null;
+                            const activeGenreLabel = isGenreActive
+                                ? TMDB_GENRE_NAMES.get(genreFilter) ??
+                                  `#${genreFilter}`
+                                : null;
+                            return (
+                                <Chip
+                                    label={activeGenreLabel ?? 'Genre'}
+                                    active={isGenreActive}
+                                    expanded={genreStripOpen}
+                                    onPress={() =>
+                                        setGenreStripOpen(!genreStripOpen)
+                                    }
+                                    accessibilityLabel={
+                                        isGenreActive
+                                            ? `Genre filter: ${activeGenreLabel}. Tap to ${genreStripOpen ? 'hide' : 'show'} options.`
+                                            : `${genreStripOpen ? 'Hide' : 'Show'} genre options`
+                                    }
+                                    // Cap the pill so a long active genre
+                                    // ("Action & Adventure" ≈ 150pt) can't push
+                                    // the collapsed row past the 343pt available
+                                    // at 375. Short genres fit in full; long
+                                    // ones ellipsize (full name via the strip).
+                                    numberOfLines={1}
+                                    style={styles.genrePill}
+                                />
+                            );
+                        })()}
+                        {/* Sort trigger — icon only. The label was redundant:
+                            the sort sheet names the current option when opened.
+                            Neutral (palette.text), not an accent/selected state
+                            — sort is a trigger, not a filter. */}
+                        <Pressable
+                            onPress={() => setSortSheetOpen(true)}
+                            hitSlop={spacing.sm}
+                            style={({ pressed }) => [
+                                styles.sortButton,
+                                pressed && { opacity: 0.6 },
+                            ]}
+                            accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
+                            accessibilityRole="button"
+                        >
+                            <ArrowDownUp
+                                color={palette.text}
+                                size={18}
+                                strokeWidth={ICON_STROKE_WIDTH}
+                            />
+                        </Pressable>
+                    </View>
+                </Animated.View>
+
+                {/* Grid/list toggle, right-anchored so it grows LEFT on expand
+                    — the mode icons never move, so the icon you just tapped
+                    stays under your thumb. Absolute so its growth never
+                    reflows or clips the fading filter group. The anchor spans
+                    the chip band (top 0 → bottom paddingBottom) and centres the
+                    pill vertically. */}
+                {view ? (
+                    <View style={styles.pillAnchor} pointerEvents="box-none">
+                        <Animated.View
+                            layout={LinearTransition.duration(EXPAND_MS)}
                             style={[
-                                styles.sortButtonText,
-                                { color: palette.text },
+                                styles.pill,
+                                { backgroundColor: palette.surfaceAlt },
                             ]}
                         >
-                            {SORT_LABELS[sortBy]}
-                        </Text>
-                    </Pressable>
-                </View>
+                            {densityExpanded ? (
+                                <Animated.View
+                                    entering={FadeIn.duration(EXPAND_MS)}
+                                    exiting={FadeOut.duration(EXPAND_MS - 20)}
+                                    style={styles.densityGroup}
+                                >
+                                    {DENSITY_OPTIONS.map((opt) => (
+                                        <ToggleCell
+                                            key={opt}
+                                            active={view.gridCols === opt}
+                                            palette={palette}
+                                            onPress={() => handleDensity(opt)}
+                                            accessibilityLabel={`${opt} columns`}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.densityNumber,
+                                                    {
+                                                        color:
+                                                            view.gridCols === opt
+                                                                ? palette.accent
+                                                                : palette.textMuted,
+                                                    },
+                                                ]}
+                                            >
+                                                {opt}
+                                            </Text>
+                                        </ToggleCell>
+                                    ))}
+                                </Animated.View>
+                            ) : null}
+                            <View style={styles.modeGroup}>
+                                <ToggleCell
+                                    active={view.mode === 'list'}
+                                    palette={palette}
+                                    onPress={handleList}
+                                    accessibilityLabel="List view"
+                                >
+                                    <LayoutList
+                                        color={
+                                            view.mode === 'list'
+                                                ? palette.accent
+                                                : palette.textMuted
+                                        }
+                                        size={18}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                </ToggleCell>
+                                <ToggleCell
+                                    active={view.mode === 'grid'}
+                                    palette={palette}
+                                    onPress={handleGrid}
+                                    accessibilityLabel={
+                                        view.mode === 'grid'
+                                            ? densityExpanded
+                                                ? 'Grid view. Hide column options.'
+                                                : `Grid view, ${view.gridCols} columns. Show column options.`
+                                            : 'Grid view'
+                                    }
+                                >
+                                    <LayoutGrid
+                                        color={
+                                            view.mode === 'grid'
+                                                ? palette.accent
+                                                : palette.textMuted
+                                        }
+                                        size={18}
+                                        strokeWidth={ICON_STROKE_WIDTH}
+                                    />
+                                </ToggleCell>
+                            </View>
+                        </Animated.View>
+                    </View>
+                ) : null}
             </View>
 
             {/* Genre chip strip — revealed by the Genre toggle pill
@@ -233,14 +417,64 @@ export function LibraryFilterControls({
     );
 }
 
+// Cell shared by the mode toggle and the density options — a plum WASH FILL
+// for the active state, matching the filter chips and the segmented control
+// so every "selected" state across the filter zone speaks one language. No
+// border; the fill carries "selected". Constant min size so the fill swapping
+// in/out causes no layout shift.
+function ToggleCell({
+    active,
+    onPress,
+    palette,
+    accessibilityLabel,
+    children,
+}: {
+    active: boolean;
+    onPress: () => void;
+    palette: Palette;
+    accessibilityLabel: string;
+    children: ReactNode;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            hitSlop={spacing.xs}
+            style={({ pressed }) => [
+                styles.toggleCell,
+                {
+                    backgroundColor: active
+                        ? palette.accentWash
+                        : 'transparent',
+                },
+                pressed && { opacity: 0.6 },
+            ]}
+            accessibilityLabel={accessibilityLabel}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+        >
+            {children}
+        </Pressable>
+    );
+}
+
 const styles = StyleSheet.create({
     controlsRow: {
+        // Relative host for the fading filter group + the absolute,
+        // right-anchored view-toggle pill.
+        position: 'relative',
+        paddingHorizontal: spacing.base,
+        paddingBottom: spacing.sm,
+    },
+    filtersGroup: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: spacing.base,
-        paddingBottom: spacing.sm,
         gap: spacing.sm,
+    },
+    filtersReserve: {
+        // Leave the collapsed pill's slot free at the right so genre/sort
+        // don't sit beneath it. Only applied when the toggle is present.
+        paddingRight: PILL_RESERVE,
     },
     mediaFilterGroup: {
         flexDirection: 'row',
@@ -248,32 +482,61 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     rightControls: {
-        // Sub-group on the right of controlsRow holding the Genre
-        // toggle + Sort button. Sits opposite the media filter pills.
+        // Genre pill + Sort icon. Sits opposite the media filter pills.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
     },
+    genrePill: {
+        // Width cap so a long active genre can't overflow the collapsed row —
+        // see the numberOfLines note at the call site.
+        maxWidth: 72,
+    },
     sortButton: {
-        // Right-aligned tappable cluster: icon + current sort label.
-        // Tap opens the Alert.alert menu — known v1 shape; refine to
-        // a proper menu/bottom-sheet later. Icon + label use
-        // palette.text (not textMuted) — a small visibility lift so it
-        // reads as a present, tappable control. Deliberately NOT an
-        // accent state: sort isn't a "selected" filter, it's a neutral
-        // trigger, so it sits below the wash chips in the hierarchy
-        // (solid-plum tabs > plum-wash chips > neutral-but-visible sort).
-        flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.xs,
+        justifyContent: 'center',
         paddingVertical: spacing.xs,
     },
-    sortButtonText: {
-        // 14/Medium — same treatment as chipText / SegmentedControl
-        // labels so the row reads consistently.
-        ...typography.caption,
-        fontFamily: fontFamily.medium,
-        fontWeight: '500',
+    pillAnchor: {
+        // Spans the chip band (top 0 → bottom = controlsRow paddingBottom) and
+        // centres the pill vertically. Right-pinned with no width, so it hugs
+        // the pill and the pill's right edge stays put as it grows left.
+        position: 'absolute',
+        top: 0,
+        bottom: spacing.sm,
+        right: spacing.base,
+        justifyContent: 'center',
+    },
+    pill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: radius.sm,
+        padding: 2,
+        gap: spacing.xs,
+    },
+    densityGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+    },
+    modeGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+    },
+    toggleCell: {
+        minWidth: 28,
+        minHeight: 26,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 2,
+        borderRadius: radius.sm - 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    densityNumber: {
+        fontSize: 12,
+        fontWeight: '700',
+        lineHeight: 16,
     },
     genreScrollRow: {
         // Horizontal chip strip below controlsRow when revealed.

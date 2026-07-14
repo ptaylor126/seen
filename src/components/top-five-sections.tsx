@@ -77,9 +77,9 @@ function Section({
         <View style={styles.section}>
             <Text
                 style={[
-                    typography.bodyEmphasis,
+                    typography.overline,
                     styles.heading,
-                    { color: palette.text },
+                    { color: palette.textMuted },
                 ]}
             >
                 {heading}

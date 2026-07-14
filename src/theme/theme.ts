@@ -206,6 +206,20 @@ export const typography = {
         fontWeight: '500' as const,
         lineHeight: 16,
     },
+    // Section-label tier — an uppercase, letter-spaced eyebrow that labels a
+    // block (a poster strip, a review list) from ABOVE without competing with
+    // the content it sits over. Deliberately a different register from the
+    // 16/600 bodyEmphasis used for content titles: smaller, tracked, and
+    // rendered in textMuted by its consumers, so heading vs content read as
+    // two distinct tiers. Used by the friend profile's banded sections.
+    overline: {
+        fontFamily: 'Geist_600SemiBold',
+        fontSize: 12,
+        fontWeight: '600' as const,
+        lineHeight: 16,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase' as const,
+    },
 } as const;
 
 export const spacing = {
