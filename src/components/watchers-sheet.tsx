@@ -496,22 +496,15 @@ export function WatchersSheet({
                                 );
                             }
 
-                            // Plain mode (no quickChips): a tappable profile
-                            // row, nothing else.
-                            return (
-                                <Pressable
-                                    key={w.userId}
-                                    onPress={() => onSelectWatcher(w)}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={`View ${w.displayName}'s profile`}
-                                    style={({ pressed }) => [
-                                        styles.row,
-                                        pressed && { opacity: 0.6 },
-                                    ]}
-                                >
-                                    {identity}
-                                </Pressable>
-                            );
+                            // No plain (no-quickChips) mode: every caller —
+                            // the overlap pickers and the browse sheets — passes
+                            // quickChips, so a chip-less row is never rendered.
+                            // (It used to be a profile-looking row labelled
+                            // "View … profile" whose tap actually opened a chat
+                            // — an affordance that lied.) The callback must
+                            // still return for the impossible !quickChips case:
+                            // render nothing.
+                            return null;
                         })}
                     </ScrollView>
                     {/* Sheet-level chip bar — select mode only. Pinned below

@@ -762,13 +762,15 @@ export default function TitleDetailScreen() {
                             tmdbId,
                             mediaType,
                         );
-                        // Banner asks "who to talk to about this" → drop
-                        // friends who recommended it to me (noise on a title
-                        // they already pushed). The watched-by list above
-                        // keeps everyone.
-                        const shown = watchers.filter((w) => !w.recommendedToMe);
-                        if (shown.length > 0) {
-                            setOverlapWatchers(shown);
+                        // State holds the FULL watcher set — the picker must
+                        // offer everyone ("who do I want to talk to?"). The
+                        // BANNER filters at its own render site ("who should I
+                        // go talk to?"), dropping friends who recommended it to
+                        // me (noise on a title they already pushed). Only raise
+                        // the banner when a non-recommender watched — otherwise
+                        // the whisper would render empty.
+                        setOverlapWatchers(watchers);
+                        if (watchers.some((w) => !w.recommendedToMe)) {
                             setOverlapBannerVisible(true);
                         }
                     } catch (err) {
@@ -1652,7 +1654,11 @@ export default function TitleDetailScreen() {
                 fullScreenModal; a root overlay would render beneath it). */}
             {overlapBannerVisible && overlapWatchers ? (
                 <OverlapBanner
-                    watchers={overlapWatchers}
+                    // Filter HERE, at the banner only — the picker (below)
+                    // keeps the full set so recommenders stay messageable.
+                    watchers={overlapWatchers.filter(
+                        (w) => !w.recommendedToMe,
+                    )}
                     style={{ bottom: insets.bottom + spacing.lg }}
                     onPress={() => {
                         setOverlapBannerVisible(false);

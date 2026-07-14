@@ -49,7 +49,7 @@ import {
     type WatcherSheetItem,
 } from '@/components/watchers-sheet';
 import { useThreadRealtime } from '@/hooks/use-thread-realtime';
-import { goToChatAboutTitle } from '@/lib/chat-nav';
+import { goToChatAboutTitle, quickSendAboutTitle } from '@/lib/chat-nav';
 import { getFriendsWhoWatched } from '@/lib/friend-activity';
 import {
     formatLibraryBadge,
@@ -958,10 +958,13 @@ export default function RecScreen() {
             // action sheet's dismissal; the fetch round-trip typically
             // outlasts the ~180ms close anyway.
             //
-            // The banner asks "who to talk to about this" → drop friends who
-            // recommended it to me (the recommendedToMe flag from the shared
-            // lib), which on this screen includes the rec's own sender. Empty
-            // after that → no banner.
+            // State holds the FULL watcher set — the picker must offer
+            // everyone ("who do I want to talk to?"). The BANNER filters at its
+            // own render site ("who should I go talk to?"), dropping friends
+            // who recommended it to me (the recommendedToMe flag from the
+            // shared lib), which on this screen includes the rec's own sender.
+            // Only raise the banner when a non-recommender watched — otherwise
+            // the whisper would render empty.
             if (status === 'watchlist') {
                 void (async () => {
                     try {
@@ -975,11 +978,8 @@ export default function RecScreen() {
                             rec.tmdbId,
                             rec.mediaType,
                         );
-                        const shown = watchers.filter(
-                            (w) => !w.recommendedToMe,
-                        );
-                        if (shown.length > 0) {
-                            setOverlapWatchers(shown);
+                        setOverlapWatchers(watchers);
+                        if (watchers.some((w) => !w.recommendedToMe)) {
                             setOverlapBannerVisible(true);
                         }
                     } catch (err) {
@@ -1813,14 +1813,16 @@ export default function RecScreen() {
 
                 {/* Overlap whisper after Save → Watchlist. Mounted on THIS
                     screen (never root — presentation topology); sits at the
-                    thread area's bottom edge, above the composer.
-                    overlapWatchers is already filtered to non-recommenders
-                    upstream (the recommendedToMe flag), which on this screen
-                    drops the rec's own sender — so it renders as-is, and
-                    visibility is only set when that set is non-empty. */}
+                    thread area's bottom edge, above the composer. State holds
+                    the FULL watcher set; the banner filters HERE (dropping
+                    recommenders, which on this screen includes the rec's own
+                    sender) so the picker below can still offer everyone.
+                    Visibility is only set when that filtered set is non-empty. */}
                 {overlapBannerVisible && overlapWatchers ? (
                     <OverlapBanner
-                        watchers={overlapWatchers}
+                        watchers={overlapWatchers.filter(
+                            (w) => !w.recommendedToMe,
+                        )}
                         onPress={() => {
                             setOverlapBannerVisible(false);
                             setShowOverlapPicker(true);
@@ -1917,15 +1919,34 @@ export default function RecScreen() {
                 visible={showOverlapPicker}
                 watchers={overlapWatchers ?? []}
                 onClose={() => setShowOverlapPicker(false)}
-                onSelectWatcher={(w) => {
-                    setShowOverlapPicker(false);
-                    if (rec) {
-                        void goToChatAboutTitle({
-                            otherUserId: w.userId,
-                            tmdbId: rec.tmdbId,
-                            mediaType: rec.mediaType,
-                        });
-                    }
+                // Select mode → onSelectWatcher is unused (the footer chips
+                // act on the pre-selected/selected watcher). Same config as
+                // the title-page and inbox overlap pickers so all three
+                // behave identically for one watcher and for many.
+                onSelectWatcher={() => {}}
+                quickChips={{
+                    messages: ['Worth watching?', 'What did you think?'],
+                    onQuickSend: (w, message) => {
+                        setShowOverlapPicker(false);
+                        if (rec) {
+                            void quickSendAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId: rec.tmdbId,
+                                mediaType: rec.mediaType,
+                                message,
+                            });
+                        }
+                    },
+                    onWriteYourOwn: (w) => {
+                        setShowOverlapPicker(false);
+                        if (rec) {
+                            void goToChatAboutTitle({
+                                otherUserId: w.userId,
+                                tmdbId: rec.tmdbId,
+                                mediaType: rec.mediaType,
+                            });
+                        }
+                    },
                 }}
             />
         </View>
