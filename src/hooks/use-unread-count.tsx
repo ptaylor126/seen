@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 
+import { emitNotificationChange } from '@/lib/notification-signal';
 import supabase from '@/lib/supabase';
 
 /**
@@ -166,8 +167,28 @@ export function UnreadCountProvider({ children }: { children: ReactNode }) {
                         table: 'notifications',
                         filter: `user_id=eq.${userId}`,
                     },
-                    () => {
+                    (payload) => {
+                        // Count path — unchanged: recount on any event.
                         void refresh();
+                        // List path — publish to the module signal so the inbox
+                        // (a root route, OUTSIDE this provider's (tabs) subtree,
+                        // so it can't read our context) reloads off this SAME
+                        // channel. Not a second channel; a fan-out of the one we
+                        // already have. ONLY the notifications binding fans out
+                        // — the list changes only when notifications changes.
+                        const newRow = payload.new as {
+                            read_at?: string | null;
+                            payload?: Record<string, unknown>;
+                        };
+                        const oldRow = payload.old as {
+                            payload?: Record<string, unknown>;
+                        };
+                        emitNotificationChange({
+                            eventType: payload.eventType,
+                            newReadAt: newRow?.read_at ?? null,
+                            oldPayload: oldRow?.payload ?? null,
+                            newPayload: newRow?.payload ?? null,
+                        });
                     },
                 )
                 .on(

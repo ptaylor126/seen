@@ -30,6 +30,10 @@ import {
     getFriendsWhoWatchedByTitle,
 } from '@/lib/friend-activity';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
+import {
+    subscribeNotificationChange,
+    type NotificationChange,
+} from '@/lib/notification-signal';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptPushAtHighIntent } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
@@ -46,6 +50,39 @@ import {
 } from '@/theme/theme';
 
 type MediaType = 'movie' | 'tv';
+
+// Live-update debounce. Real arrivals are seconds apart, so this only collapses
+// a single action that writes several notification rows, or two near-
+// simultaneous arrivals, into ONE six-query reload. 300ms is below the
+// perceptual "instant" threshold, so the update still reads as live.
+const LIVE_RELOAD_DEBOUNCE_MS = 300;
+
+// Does this notifications change alter the inbox LIST? Reload on a new row, a
+// re-surfaced overlap (read_at back to null), or an overlap whose watcher list
+// grew (payload changed). SKIP the read_at-only sweep — the inbox's own write —
+// so it can't self-trigger, and DELETE (account deletions), which reconciles on
+// the next focus reload.
+function shouldReloadInbox(change: NotificationChange): boolean {
+    if (change.eventType === 'INSERT') return true;
+    if (change.eventType === 'UPDATE') {
+        if (change.newReadAt === null) return true; // re-surfaced overlap
+        return payloadChanged(change.oldPayload, change.newPayload); // grew
+    }
+    return false; // DELETE → next-focus reconcile
+}
+
+// old and new both come from the SAME realtime serialization (REPLICA IDENTITY
+// FULL), so jsonb's canonical key order is identical on both sides and a string
+// compare is reliable: the sweep leaves payload byte-identical (skip); an
+// overlap update changes it (reload). A missing old (shouldn't happen under
+// FULL) counts as changed → reload, which is safe.
+function payloadChanged(
+    oldPayload: Record<string, unknown> | null,
+    newPayload: Record<string, unknown> | null,
+): boolean {
+    if (oldPayload === null || newPayload === null) return true;
+    return JSON.stringify(oldPayload) !== JSON.stringify(newPayload);
+}
 
 interface ProfileSummary {
     userId: string;
@@ -1370,6 +1407,47 @@ export default function InboxScreen() {
         });
         return () => sub.remove();
     }, [load]);
+
+    // Live list updates while the inbox is focused. The UnreadCountProvider owns
+    // the one notifications realtime channel and publishes each change to the
+    // module signal; we ride it (no second channel). Reload only on changes that
+    // alter the list (shouldReloadInbox); the read_at sweep is skipped so it
+    // can't self-trigger. A 300ms trailing debounce coalesces bursts; an in-
+    // flight guard serialises the live reloads so one can't interleave with
+    // load()'s read-before-sweep (which stays internal to each load, untouched).
+    // Focus-gated: the signal only matters while the user is looking, and the
+    // focus effect above already refreshes on return. The count is NOT touched
+    // here — it stays the provider's RPC value; we only call load().
+    useFocusEffect(
+        useCallback(() => {
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            let loadingNow = false;
+            let pending = false;
+            const run = () => {
+                if (loadingNow) {
+                    pending = true;
+                    return;
+                }
+                loadingNow = true;
+                void load().finally(() => {
+                    loadingNow = false;
+                    if (pending) {
+                        pending = false;
+                        run();
+                    }
+                });
+            };
+            const unsubscribe = subscribeNotificationChange((change) => {
+                if (!shouldReloadInbox(change)) return;
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(run, LIVE_RELOAD_DEBOUNCE_MS);
+            });
+            return () => {
+                unsubscribe();
+                if (timer) clearTimeout(timer);
+            };
+        }, [load]),
+    );
 
     async function handleAccept(requestId: string) {
         if (actionBusy) return;

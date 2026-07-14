@@ -1,0 +1,37 @@
+-- RECORD ONLY — applied by hand in the Supabase SQL editor on 2026-07-14.
+-- This file mirrors the live database; do NOT re-run, do NOT `supabase db push`.
+--
+-- Set REPLICA IDENTITY FULL on public.notifications so postgres_changes UPDATE
+-- events carry the FULL old row, not just the primary key. The inbox's live-
+-- update fan-out (src/lib/notification-signal.ts → src/app/inbox.tsx) needs
+-- old.payload to tell an overlap update (payload changed) from the read_at
+-- sweep (only read_at changed, the inbox's own write). Under the default PK-
+-- only identity, old carries only `id`, so that distinction is impossible.
+--
+-- Side effect (understood, benign): DELETE events on the count provider's
+-- user_id-filtered notifications subscription may now DELIVER, where under
+-- PK-only they were silently dropped (the filter had no user_id in old to
+-- match). The only runtime notification DELETEs are account deletions:
+--   * profile cascade (user_id -> profiles on delete cascade), and
+--   * delete_account_data(p_uid), which also deletes OTHER users' rows that
+--     name the departing user via payload->>'from_user_id'.
+-- The provider's callback recounts (unread_count RPC) on those — strictly more
+-- current, never wrong (it recomputes the whole composite; no delta to corrupt)
+-- and rare. The inbox fan-out predicate ignores DELETE, matching the accepted
+-- "DELETE reconciles on the next reload" behaviour.
+--
+-- Scoped to notifications only. The reactions tables stay PK-only, so their
+-- accepted reaction-removal reconcile behaviour is unchanged.
+
+alter table public.notifications replica identity full;
+
+-- Verify (do NOT trust the editor's "Success"): expect replica_identity = 'full'.
+-- select relname,
+--        case relreplident
+--            when 'd' then 'default (primary key)'
+--            when 'n' then 'nothing'
+--            when 'f' then 'full'
+--            when 'i' then 'index'
+--        end as replica_identity
+--   from pg_class
+--  where oid = 'public.notifications'::regclass;
