@@ -30,6 +30,10 @@ const ALLOWED_PATH_PATTERNS: RegExp[] = [
     // the provider link) live on the client where this data is rendered.
     /^movie\/\d+\/watch\/providers$/,
     /^tv\/\d+\/watch\/providers$/,
+    // Single season's full episode list (per-episode name/overview/air_date/
+    // still) for episode-scoped chats. Anchored to the season endpoint only —
+    // no /episode/{m} sub-path, no widening.
+    /^tv\/\d+\/season\/\d+$/,
     // Person lookup + combined cast/crew filmography for the
     // search-by-person feature. combined_credits returns both movie
     // and TV credits in one response so we don't need to hit

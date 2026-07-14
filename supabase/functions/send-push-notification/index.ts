@@ -552,15 +552,38 @@ async function buildMessage(
             const mediaType = stringField(notif.payload, 'media_type');
             if (!senderId || !chatId || !commentId) return null;
 
-            const [senderName, title, body, isFirst] = await Promise.all([
-                fetchDisplayName(supabase, senderId),
-                tmdbId !== null && mediaType
-                    ? fetchTmdbTitle(tmdbId, mediaType)
-                    : Promise.resolve(null),
-                fetchChatCommentBody(supabase, commentId),
-                isFirstChatComment(supabase, chatId, commentId),
-            ]);
+            const [senderName, title, body, isFirst, episode] =
+                await Promise.all([
+                    fetchDisplayName(supabase, senderId),
+                    tmdbId !== null && mediaType
+                        ? fetchTmdbTitle(tmdbId, mediaType)
+                        : Promise.resolve(null),
+                    fetchChatCommentBody(supabase, commentId),
+                    isFirstChatComment(supabase, chatId, commentId),
+                    // Parallel with the others → no added latency. Tells us
+                    // whether this is an episode chat.
+                    fetchChatEpisode(supabase, chatId),
+                ]);
             if (!senderName) return null;
+
+            // EPISODE CHAT: the episode label is the only spoiler protection,
+            // and the push is the surface where a spoiler does the most damage
+            // (read on the lock screen before you know what it's about). So put
+            // the coordinate in the TITLE and SUPPRESS the message body — never
+            // send the message text for an episode chat.
+            if (episode) {
+                const coord = `S${episode.season} E${episode.episode}`;
+                const verbed = isFirst
+                    ? title
+                        ? `${senderName} wants to chat about ${title} ${coord}`
+                        : `${senderName} wants to chat about an episode`
+                    : title
+                      ? `${senderName} sent a message about ${title} ${coord}`
+                      : `${senderName} sent a message about an episode`;
+                return { title: verbed, data };
+            }
+
+            // WHOLE-SHOW CHAT: unchanged — title-level copy + message preview.
             const bodyPreview = body
                 ? body.length > 80
                     ? `${body.slice(0, 80)}…`
@@ -702,6 +725,26 @@ async function fetchChatCommentBody(
     if (error) return null;
     const body = (data as { body?: string | null } | null)?.body;
     return typeof body === 'string' && body.length > 0 ? body : null;
+}
+
+// A chat's episode scope, if any. Both null = whole-show chat; both set =
+// episode chat. Best-effort: on any error we treat it as whole-show (the push
+// then reads exactly as before). service_role SELECT on title_chats is granted
+// by the title_chats migration.
+async function fetchChatEpisode(
+    supabase: SupabaseClient,
+    chatId: string,
+): Promise<{ season: number; episode: number } | null> {
+    const { data, error } = await supabase
+        .from('title_chats')
+        .select('season, episode')
+        .eq('id', chatId)
+        .maybeSingle();
+    if (error) return null;
+    const row = data as { season?: number | null; episode?: number | null } | null;
+    return typeof row?.season === 'number' && typeof row?.episode === 'number'
+        ? { season: row.season, episode: row.episode }
+        : null;
 }
 
 // Is this comment the chat's FIRST message (the invite)? Best-effort: any
