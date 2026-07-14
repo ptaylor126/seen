@@ -958,12 +958,10 @@ export default function RecScreen() {
             // action sheet's dismissal; the fetch round-trip typically
             // outlasts the ~180ms close anyway.
             //
-            // REC-SCREEN NUANCE: the rec's SENDER is excluded from the
-            // banner decision and wording — this screen already says they
-            // recommended it, so "taylor has seen this" on taylor's own rec
-            // is redundant. Sender-only watcher set → no banner. The FULL
-            // set is still stored: the picker behind the banner (and the
-            // title page / notification rows) keeps everyone.
+            // The banner asks "who to talk to about this" → drop friends who
+            // recommended it to me (the recommendedToMe flag from the shared
+            // lib), which on this screen includes the rec's own sender. Empty
+            // after that → no banner.
             if (status === 'watchlist') {
                 void (async () => {
                     try {
@@ -977,11 +975,11 @@ export default function RecScreen() {
                             rec.tmdbId,
                             rec.mediaType,
                         );
-                        const nonSender = watchers.filter(
-                            (w) => w.userId !== rec.fromUserId,
+                        const shown = watchers.filter(
+                            (w) => !w.recommendedToMe,
                         );
-                        if (nonSender.length > 0) {
-                            setOverlapWatchers(watchers);
+                        if (shown.length > 0) {
+                            setOverlapWatchers(shown);
                             setOverlapBannerVisible(true);
                         }
                     } catch (err) {
@@ -1815,16 +1813,14 @@ export default function RecScreen() {
 
                 {/* Overlap whisper after Save → Watchlist. Mounted on THIS
                     screen (never root — presentation topology); sits at the
-                    thread area's bottom edge, above the composer. The
-                    banner's copy excludes the rec's sender (the screen
-                    already communicates their position); visibility is only
-                    ever set when the non-sender subset is non-empty, so the
-                    filter below can't render an empty banner. */}
+                    thread area's bottom edge, above the composer.
+                    overlapWatchers is already filtered to non-recommenders
+                    upstream (the recommendedToMe flag), which on this screen
+                    drops the rec's own sender — so it renders as-is, and
+                    visibility is only set when that set is non-empty. */}
                 {overlapBannerVisible && overlapWatchers ? (
                     <OverlapBanner
-                        watchers={overlapWatchers.filter(
-                            (w) => w.userId !== rec.fromUserId,
-                        )}
+                        watchers={overlapWatchers}
                         onPress={() => {
                             setOverlapBannerVisible(false);
                             setShowOverlapPicker(true);

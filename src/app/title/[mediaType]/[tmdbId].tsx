@@ -762,8 +762,13 @@ export default function TitleDetailScreen() {
                             tmdbId,
                             mediaType,
                         );
-                        if (watchers.length > 0) {
-                            setOverlapWatchers(watchers);
+                        // Banner asks "who to talk to about this" → drop
+                        // friends who recommended it to me (noise on a title
+                        // they already pushed). The watched-by list above
+                        // keeps everyone.
+                        const shown = watchers.filter((w) => !w.recommendedToMe);
+                        if (shown.length > 0) {
+                            setOverlapWatchers(shown);
                             setOverlapBannerVisible(true);
                         }
                     } catch (err) {

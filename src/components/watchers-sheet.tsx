@@ -39,6 +39,12 @@ export interface WatcherSheetItem {
     displayName: string;
     avatarUrl: string | null;
     rating: number | null;
+    // True when this watcher has a non-dismissed recommendation of this title
+    // to the current user. Set by getFriendsWhoWatched; optional because other
+    // constructors (e.g. the "friends watching" set) don't compute it. The
+    // "who to talk to" prompts (overlap row + banners) filter these out; the
+    // "who has seen this" surfaces (watched-by list, picker) keep them.
+    recommendedToMe?: boolean;
 }
 
 interface WatchersSheetProps {

@@ -25,7 +25,10 @@ import {
 } from '@/components/watchers-sheet';
 import { goToChatAboutTitle, quickSendAboutTitle } from '@/lib/chat-nav';
 import { getSentChats } from '@/lib/chats';
-import { getFriendsWhoWatched } from '@/lib/friend-activity';
+import {
+    getFriendsWhoWatched,
+    getFriendsWhoWatchedByTitle,
+} from '@/lib/friend-activity';
 import { formatLibraryBadge, type ItemStatus } from '@/lib/item-status';
 import { goToProfile } from '@/lib/profile-nav';
 import { promptPushAtHighIntent } from '@/lib/push';
@@ -593,54 +596,32 @@ export default function InboxScreen() {
             const requests = requestsResult.data ?? [];
             const sentRecs = sentRecsResult.data ?? [];
 
-            // LIVE watchers for the watchlist_overlap rows. The notification
-            // payload's watcher_ids is a SNAPSHOT from when the trigger
-            // fired; a visibility flip afterward (which fires no trigger)
-            // makes it stale, so the row disagreed with the picker (which
-            // re-queries live). Resolve the currently-visible watchers here,
-            // from the SAME source as getFriendsWhoWatched / the picker, so
-            // row and picker agree by construction. ONE batched query across
-            // every overlap row's tmdb_id; grouped client-side by the
-            // composite `${media_type}:${tmdb_id}` (the single-column .in()
-            // pulls a superset, filtered by the grouping — same pattern as
-            // the library-status query below). Most-recent watcher first.
+            // LIVE watchers per overlap row, via the shared
+            // getFriendsWhoWatchedByTitle — ONE rule for "who watched this"
+            // (payload.watcher_ids is a stale snapshot the client no longer
+            // reads for display). The notification ROW is a "who to talk to
+            // about this" prompt, so we DROP flagged watchers (a friend who
+            // recommended it to me is noise here). The picker behind the row
+            // keeps everyone (see handleOverlapTap). Keyed
+            // `${media_type}:${tmdb_id}`; most-recent watcher first.
             const overlapWatchersByKey = new Map<string, string[]>();
             {
-                const overlapTmdbIds = Array.from(
-                    new Set(
-                        notifications
-                            .filter((n) => n.kind === 'watchlist_overlap')
-                            .map((n) =>
-                                pickNumber(asRecord(n.payload), 'tmdb_id'),
-                            )
-                            .filter((id): id is number => id !== null),
-                    ),
-                );
+                const overlapTmdbIds = notifications
+                    .filter((n) => n.kind === 'watchlist_overlap')
+                    .map((n) => pickNumber(asRecord(n.payload), 'tmdb_id'))
+                    .filter((id): id is number => id !== null);
                 if (overlapTmdbIds.length > 0) {
-                    const { data: watchRows, error: watchRowsError } =
-                        await supabase
-                            .from('items')
-                            .select('user_id, tmdb_id, media_type, updated_at')
-                            .in('tmdb_id', overlapTmdbIds)
-                            .eq('status', 'watched')
-                            .eq('visibility', 'friends')
-                            .neq('user_id', userId)
-                            .order('updated_at', { ascending: false });
-                    if (watchRowsError) throw watchRowsError;
-                    // Grouped, deduped by user, order preserved (newest first).
-                    const seenPerKey = new Map<string, Set<string>>();
-                    for (const row of watchRows ?? []) {
-                        if (!row.user_id) continue;
-                        const key = `${row.media_type}:${row.tmdb_id}`;
-                        let seenUsers = seenPerKey.get(key);
-                        if (!seenUsers) {
-                            seenUsers = new Set();
-                            seenPerKey.set(key, seenUsers);
-                            overlapWatchersByKey.set(key, []);
-                        }
-                        if (seenUsers.has(row.user_id)) continue;
-                        seenUsers.add(row.user_id);
-                        overlapWatchersByKey.get(key)!.push(row.user_id);
+                    const byKey = await getFriendsWhoWatchedByTitle(
+                        userId,
+                        overlapTmdbIds,
+                    );
+                    for (const [key, entries] of byKey) {
+                        overlapWatchersByKey.set(
+                            key,
+                            entries
+                                .filter((e) => !e.recommendedToMe)
+                                .map((e) => e.userId),
+                        );
                     }
                 }
             }
