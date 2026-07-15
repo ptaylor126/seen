@@ -1,10 +1,12 @@
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Check, Search as SearchIcon, X } from 'lucide-react-native';
+import { Check, Search as SearchIcon, UserPlus, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    FlatList,
     Keyboard,
     Pressable,
     ScrollView,
@@ -21,17 +23,26 @@ import {
 } from 'react-native-keyboard-controller';
 import Animated, {
     interpolate,
+    LinearTransition,
     useAnimatedStyle,
 } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { Chip } from '@/components/chip';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { createPendingRec, sharePendingRec } from '@/lib/pending-recs';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
-import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
+import {
+    getMovie,
+    getTV,
+    imageUrl,
+    type TMDBMovie,
+    type TMDBSeason,
+    type TMDBTV,
+} from '@/lib/tmdb';
 import {
     button,
     fontFamily,
@@ -57,12 +68,43 @@ interface TitleContext {
 }
 
 const NOTE_MAX_LENGTH = 500;
+
+// Selectable seasons for the rec SCOPE picker (TV only). Mirrors the episodes
+// screen's derivation: seasons with real episodes, numbered ascending, with
+// Specials (season 0) forced to the END; synthesize Season 1..N when TMDB
+// omits the array. Unlike the episodes screen we don't need a default
+// selection — the rec default is always whole-show (season null).
+function deriveUsableSeasons(tv: TMDBTV): TMDBSeason[] {
+    const sortKey = (n: number) => (n === 0 ? Infinity : n);
+    const usable = (tv.seasons ?? [])
+        .filter((s) => s.episode_count > 0)
+        .sort((a, b) => sortKey(a.season_number) - sortKey(b.season_number));
+    if (usable.length > 0) return usable;
+    return Array.from({ length: tv.number_of_seasons || 1 }, (_, i) => ({
+        season_number: i + 1,
+        episode_count: 0,
+        name: `Season ${i + 1}`,
+    }));
+}
+
+// Same labelling the episodes screen uses: Specials for season 0.
+function seasonLabel(n: number): string {
+    return n === 0 ? 'Specials' : `Season ${n}`;
+}
+
 const FRIEND_AVATAR_SIZE = 44;
 // Recipient chips in the note bar are deliberately smaller/quieter than the
 // friend-list rows above.
 const RECIPIENT_AVATAR_SIZE = 24;
-const POSTER_W = 40;
-const POSTER_H = 60;
+// Left header thumbnail — 2:3 poster (H = W × 1.5). The title sits beside it
+// via the titleContextRow flex layout, so its inset re-derives from POSTER_W
+// automatically (no TITLE_INSET constant — the chips live on the 24 spine).
+const POSTER_W = 60;
+const POSTER_H = 90;
+// Width of the right-edge fade mask over the season strip — the variable-
+// width-chip equivalent of the poster strips' half-item peek: chips dissolve
+// into the page instead of being hard-clipped, cueing the scroll.
+const SEASON_FADE_W = 28;
 
 export default function RecommendScreen() {
     const params = useLocalSearchParams<{
@@ -81,27 +123,23 @@ export default function RecommendScreen() {
     // collapsed-note search scroll inset (padding the list so friend rows
     // clear the keyboard while the note bar is collapsed).
     const keyboardState = useKeyboardState();
-    // Closed-state home-indicator clearance, animated in LOCKSTEP with the
-    // KeyboardStickyView lift: both read the same keyboard progress (0 closed
-    // → 1 open), so the bar moves once, smoothly, to its resting spot. This
-    // replaces the discrete paddingBottom swap (keyed on keyboardState.height,
-    // which flips only at keyboardDidShow — a step landing mid-animation that
-    // rode the bar too high then jolted it down). paddingBottom is now the
-    // constant internal content room (spacing.sm); the clearance is a cheap
-    // transform (no per-frame relayout). translateY -insets.bottom when closed
-    // (lift clear of the home indicator) → 0 when open (bar sits tight on the
-    // keyboard top via KeyboardStickyView).
+    // Home-indicator clearance as INTERNAL bottom padding, animated in
+    // LOCKSTEP with the KeyboardStickyView lift (both read the same keyboard
+    // progress, 0 closed → 1 open). The bar's tinted fill sits at the true
+    // physical bottom of the screen (no upward translate), so the tint runs
+    // to the edge with no gap; the padding keeps the content clear of the home
+    // indicator. Closed → insets.bottom + sm (content room). Open → sm only
+    // (the keyboard, not the home indicator, is below the bar). Animating
+    // paddingBottom relayouts the bar per frame, but it's a handful of nodes
+    // — the cost is negligible and it's what "fill to the edge" requires
+    // (a transform lift would re-open the gap this fixes).
     const keyboardProgress = useReanimatedKeyboardAnimation().progress;
     const barClearanceStyle = useAnimatedStyle(() => ({
-        transform: [
-            {
-                translateY: interpolate(
-                    keyboardProgress.value,
-                    [0, 1],
-                    [-insets.bottom, 0],
-                ),
-            },
-        ],
+        paddingBottom: interpolate(
+            keyboardProgress.value,
+            [0, 1],
+            [insets.bottom + spacing.sm, spacing.sm],
+        ),
     }));
 
     const mediaType: MediaType | null =
@@ -147,6 +185,14 @@ export default function RecommendScreen() {
     const [localQuery, setLocalQuery] = useState('');
     const [localFocused, setLocalFocused] = useState(false);
     const localSearchInputRef = useRef<TextInput | null>(null);
+    // Optional season scope for the rec (TV only). null = whole show, the
+    // default; picking a season is an additive extra step. Top-level state so
+    // the choice SURVIVES the title-context collapse during friend search —
+    // that collapse is a pure conditional render (titleCtx && !localFocused),
+    // it never resets this. `seasons` is the selectable list derived from the
+    // TV detail at load (empty for movies / single-season shows).
+    const [season, setSeason] = useState<number | null>(null);
+    const [seasons, setSeasons] = useState<TMDBSeason[]>([]);
 
     useEffect(() => {
         if (!mediaType || !Number.isFinite(tmdbId)) {
@@ -160,6 +206,9 @@ export default function RecommendScreen() {
         // the same fetch feeds both the header display and the send-time
         // ensureTitle stamp. Mirrors the title screen's getMovie/getTV →
         // ensureTitle mapping (empty TMDB date → null, genres → genre ids).
+        // Captured from the SAME getTV response (no extra fetch) so the scope
+        // picker has its season list. Stays [] for movies.
+        let tvSeasons: TMDBSeason[] = [];
         const titlePromise: Promise<EnsureTitleArgs> =
             mediaType === 'movie'
                 ? getMovie(tmdbId).then((m: TMDBMovie) => ({
@@ -175,19 +224,22 @@ export default function RecommendScreen() {
                       originalLanguage: m.original_language,
                       genreIds: m.genres.map((g) => g.id),
                   }))
-                : getTV(tmdbId).then((t: TMDBTV) => ({
-                      tmdbId,
-                      mediaType: 'tv' as const,
-                      title: t.name,
-                      posterPath: t.poster_path,
-                      backdropPath: t.backdrop_path,
-                      releaseDate:
-                          t.first_air_date && t.first_air_date.length > 0
-                              ? t.first_air_date
-                              : null,
-                      originalLanguage: t.original_language,
-                      genreIds: t.genres.map((g) => g.id),
-                  }));
+                : getTV(tmdbId).then((t: TMDBTV) => {
+                      tvSeasons = deriveUsableSeasons(t);
+                      return {
+                          tmdbId,
+                          mediaType: 'tv' as const,
+                          title: t.name,
+                          posterPath: t.poster_path,
+                          backdropPath: t.backdrop_path,
+                          releaseDate:
+                              t.first_air_date && t.first_air_date.length > 0
+                                  ? t.first_air_date
+                                  : null,
+                          originalLanguage: t.original_language,
+                          genreIds: t.genres.map((g) => g.id),
+                      };
+                  });
 
         (async () => {
             try {
@@ -201,6 +253,7 @@ export default function RecommendScreen() {
                     posterPath: resolvedTitle.posterPath,
                 });
                 setTitleStamp(resolvedTitle);
+                setSeasons(tvSeasons);
 
                 const userId = sessionResult.data.session?.user.id;
                 if (!userId) throw new Error('Not authenticated');
@@ -388,6 +441,9 @@ export default function RecommendScreen() {
                 tmdbId,
                 mediaType,
                 note: trimmedNote.length > 0 ? trimmedNote : null,
+                // Season scope survives the invite-then-join (server column +
+                // claim RPC are live). TV only, null (whole show) otherwise.
+                season: mediaType === 'tv' ? season : null,
             });
             const shared = await sharePendingRec(
                 token,
@@ -475,6 +531,12 @@ export default function RecommendScreen() {
                         tmdb_id: tmdbId,
                         media_type: mt,
                         note: trimmedNote.length > 0 ? trimmedNote : undefined,
+                        // Season scope — TV + a picked season only; omitted
+                        // (→ the RPC's null default = whole show) otherwise.
+                        // The picker never sets a season for a movie, but gate
+                        // on mt defensively.
+                        season:
+                            mt === 'tv' && season !== null ? season : undefined,
                     }),
                 ),
             );
@@ -664,12 +726,238 @@ export default function RecommendScreen() {
         );
     }
 
-    return (
-        <SafeAreaView
-            style={[styles.root, { backgroundColor: palette.bg }]}
-            edges={['top']}
+    // Title + poster + the "what to recommend" scope strip. Collapses while
+    // the friend search is focused so the list owns the space above the
+    // keyboard. Shared by the FlatList header and the zero-friends branch.
+    const titleContextNode =
+        titleCtx && !localFocused ? (
+            <View style={styles.titleContextBlock}>
+                <View style={styles.titleContextRow}>
+                    {titleCtx.posterPath ? (
+                        <Image
+                            source={{ uri: imageUrl(titleCtx.posterPath, 'w185') }}
+                            style={styles.contextPoster}
+                            contentFit="cover"
+                            transition={150}
+                        />
+                    ) : (
+                        <View
+                            style={[
+                                styles.contextPoster,
+                                { backgroundColor: palette.surfaceAlt },
+                            ]}
+                        />
+                    )}
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            styles.contextTitle,
+                            { color: palette.text },
+                        ]}
+                        numberOfLines={2}
+                    >
+                        {titleCtx.title}
+                    </Text>
+                </View>
+
+                {/* Scope picker — TV only, ≥2 selectable seasons. Re-placed
+                    onto the 24 spine (scopeBlock no longer indents under the
+                    title); behaviour, chips, fade, and wiring are unchanged. */}
+                {mediaType === 'tv' && seasons.length >= 2 && (
+                    <View style={styles.scopeBlock}>
+                        <Text
+                            style={[
+                                typography.overline,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            What to recommend
+                        </Text>
+                        <View style={styles.seasonStripWrap}>
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                keyboardShouldPersistTaps="handled"
+                                style={styles.seasonScroll}
+                                contentContainerStyle={styles.seasonStrip}
+                            >
+                                <Chip
+                                    label="Whole show"
+                                    active={season === null}
+                                    onPress={() => setSeason(null)}
+                                    accessibilityLabel="Recommend the whole show"
+                                />
+                                {seasons.map((s) => (
+                                    <Chip
+                                        key={s.season_number}
+                                        label={seasonLabel(s.season_number)}
+                                        active={season === s.season_number}
+                                        onPress={() =>
+                                            setSeason(s.season_number)
+                                        }
+                                        accessibilityLabel={`Recommend ${seasonLabel(
+                                            s.season_number,
+                                        )}`}
+                                    />
+                                ))}
+                            </ScrollView>
+                            <LinearGradient
+                                colors={[palette.bgTransparent, palette.bg]}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={styles.seasonFade}
+                                pointerEvents="none"
+                            />
+                        </View>
+                    </View>
+                )}
+            </View>
+        ) : null;
+
+    // Local recipient filter — borderless surface pill, inline clear-X,
+    // Cancel/Done sibling on focus. Selection lives in selectedFriendIds, so
+    // filtering never drops a pick.
+    const searchNode = (
+        <View style={styles.searchRow}>
+            <View
+                style={[styles.searchBar, { backgroundColor: palette.surface }]}
+            >
+                <SearchIcon
+                    color={palette.textMuted}
+                    size={20}
+                    strokeWidth={ICON_STROKE_WIDTH}
+                />
+                <TextInput
+                    ref={localSearchInputRef}
+                    value={localQuery}
+                    onChangeText={setLocalQuery}
+                    placeholder="Search friends"
+                    placeholderTextColor={palette.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    onFocus={() => setLocalFocused(true)}
+                    onBlur={() => setLocalFocused(false)}
+                    style={[
+                        styles.searchInput,
+                        typography.body,
+                        { color: palette.text },
+                    ]}
+                />
+                {localQuery.length > 0 ? (
+                    <Pressable
+                        onPress={() => setLocalQuery('')}
+                        hitSlop={spacing.sm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear search"
+                        style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                    >
+                        <X
+                            color={palette.textMuted}
+                            size={18}
+                            strokeWidth={ICON_STROKE_WIDTH}
+                        />
+                    </Pressable>
+                ) : null}
+            </View>
+            {localFocused ? (
+                <Pressable
+                    onPress={() => {
+                        setLocalQuery('');
+                        localSearchInputRef.current?.blur();
+                    }}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel="Done searching"
+                    style={({ pressed }) => [
+                        styles.cancelButton,
+                        pressed && { opacity: 0.6 },
+                    ]}
+                >
+                    <Text style={[typography.body, { color: palette.accent }]}>
+                        Done
+                    </Text>
+                </Pressable>
+            ) : null}
+        </View>
+    );
+
+    // "Not on Seen" path — a single left-aligned link on the 24 spine (was a
+    // centred two-part sentence). The note applies to this send exactly as a
+    // friend send.
+    const inviteLinkNode = (
+        <Pressable
+            onPress={() => void handleInviteSend()}
+            disabled={inviteBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Recommend to someone not on Seen"
+            style={({ pressed }) => [
+                styles.inviteRow,
+                { opacity: pressed || inviteBusy ? 0.6 : 1 },
+            ]}
         >
-            <View style={styles.header}>
+            {inviteBusy ? (
+                <ActivityIndicator size="small" color={palette.accent} />
+            ) : (
+                <>
+                    {/* Leading person-plus anchors it as an action (inviting a
+                        NEW person, not just text). Accent, sized to the text. */}
+                    <UserPlus
+                        color={palette.accent}
+                        size={16}
+                        strokeWidth={ICON_STROKE_WIDTH}
+                    />
+                    <Text
+                        // body (16) not caption (14) + medium 500 — a little
+                        // more present so it doesn't read as weak. Still
+                        // left-aligned on the spine, not a heading.
+                        style={[
+                            typography.body,
+                            styles.inviteRowAction,
+                            { color: palette.accent },
+                        ]}
+                    >
+                        Send to someone not on Seen
+                    </Text>
+                </>
+            )}
+        </Pressable>
+    );
+
+    // FlatList header — everything above the recipient list scrolls away with
+    // it; the list is the screen (the recipients are the job). All on the 24
+    // spine. "Send to" uses the SAME overline token as "What to recommend" so
+    // the two section labels are peers.
+    const listHeaderNode = (
+        <>
+            {titleContextNode}
+            {searchNode}
+            {inviteLinkNode}
+            <Text
+                style={[
+                    typography.overline,
+                    styles.sectionLabel,
+                    { color: palette.textMuted },
+                ]}
+            >
+                Send to
+            </Text>
+        </>
+    );
+
+    return (
+        // Plain View, NOT SafeAreaView: under fullScreenModal the SafeAreaView
+        // component's edge padding comes back ~0 (it doesn't apply inside the
+        // native modal's view hierarchy). The useSafeAreaInsets() HOOK does
+        // report the real inset here (same as the title page's close button),
+        // so the header pads from insets.top directly.
+        <View style={[styles.root, { backgroundColor: palette.bg }]}>
+            <View
+                style={[
+                    styles.header,
+                    { paddingTop: insets.top + spacing.sm },
+                ]}
+            >
                 <Pressable
                     onPress={() => router.back()}
                     hitSlop={spacing.sm}
@@ -679,17 +967,16 @@ export default function RecommendScreen() {
                         Cancel
                     </Text>
                 </Pressable>
-                <Text style={[typography.heading, { color: palette.text }]}>
-                    Recommend
-                </Text>
+                {/* No centred page title — the poster + show name below are the
+                    header now. Standard modal header: Cancel · empty · Send. */}
                 {/* Send lives in the header (top-right, opposite Cancel)
                     rather than the pinned bottom bar — the header never
                     moves with the keyboard, so Send is always reachable
-                    while typing the note. Same canSend gate as before
-                    (at least one friend selected). Label keeps the
-                    recipient count so multi-friend selection stays
-                    visually obvious; spinner replaces the label while
-                    the send fan-out is in flight. */}
+                    while typing the note. It hugs its content at rest
+                    ("Send") and the LinearTransition wrapper animates its
+                    width as the label grows to "Send to N" (replaces the old
+                    minWidth:104 that killed the pop by padding "Send" out). */}
+                <Animated.View layout={LinearTransition.duration(180)}>
                 <Pressable
                     onPress={handleSend}
                     disabled={!canSend}
@@ -730,303 +1017,113 @@ export default function RecommendScreen() {
                         </Text>
                     )}
                 </Pressable>
+                </Animated.View>
             </View>
 
             {/* No KeyboardAvoidingView on this column — Send is in the
                 header (reachable while typing) and the note bar is lifted by
-                its own KeyboardStickyView below. */}
+                its own KeyboardStickyView below. The recipient list is a
+                FlatList and the title/scope/search/invite are its header, so
+                the header scrolls away and the list is the screen. */}
             <View style={styles.flex}>
-                <ScrollView
-                    style={styles.flex}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    contentContainerStyle={[
-                        styles.scrollContent,
-                        // Whenever the keyboard is up, pad the list by the IME
-                        // inset so every friend row — including the selected
-                        // recipient — can scroll clear of it. This covers BOTH
-                        // states: the collapsed-note friend search, AND writing
-                        // the note (the note bar rides up on its
-                        // KeyboardStickyView and would otherwise cover the
-                        // bottom rows, hiding the recipient you're writing
-                        // about). The note bar sits in its own flow slot below
-                        // the list, so only the keyboard-height lift needs
-                        // compensating here. keyboard-controller reports the
-                        // real inset on both platforms — no Platform fork.
-                        keyboardState.height > 0
-                            ? { paddingBottom: keyboardState.height + spacing.sm }
-                            : null,
-                    ]}
-                >
-                    {/* Pressable wraps the scroll contents so taps on the
-                        background (title context, "SEND TO" label, gaps
-                        around friend rows) dismiss the keyboard. Friend
-                        rows are themselves Pressables and capture their
-                        own taps before the wrapper sees them, so
-                        selection still works. Dragging the friend list
-                        also dismisses via keyboardDismissMode above. */}
-                    <Pressable
-                        onPress={() => Keyboard.dismiss()}
-                        accessibilityElementsHidden
-                        importantForAccessibility="no-hide-descendants"
+                {showLoader ? (
+                    <FullScreenLoader />
+                ) : error ? (
+                    <View style={styles.statusBlock}>
+                        <Text style={[typography.body, { color: palette.error }]}>
+                            {error}
+                        </Text>
+                    </View>
+                ) : friends.length === 0 ? (
+                    // Zero friends — the invite IS the primary path, so it
+                    // keeps its full-size treatment. Scrolls (no list to back).
+                    <ScrollView
+                        style={styles.flex}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
                     >
-                    {/* Title context — keeps the modal grounded in what's
-                        being recommended without needing to scroll back.
-                        Collapsed while the friend search is focused so the
-                        recipient list gets the full space above the keyboard. */}
-                    {titleCtx && !localFocused && (
-                        <View style={styles.titleContext}>
-                            {titleCtx.posterPath ? (
-                                <Image
-                                    source={{
-                                        uri: imageUrl(titleCtx.posterPath, 'w185'),
-                                    }}
-                                    style={styles.contextPoster}
-                                    contentFit="cover"
-                                    transition={150}
-                                />
-                            ) : (
-                                <View
-                                    style={[
-                                        styles.contextPoster,
-                                        { backgroundColor: palette.surfaceAlt },
-                                    ]}
-                                />
-                            )}
+                        {titleContextNode}
+                        <View style={styles.statusBlock}>
                             <Text
                                 style={[
-                                    typography.bodyEmphasis,
-                                    styles.contextTitle,
-                                    { color: palette.text },
+                                    typography.body,
+                                    { color: palette.textMuted },
                                 ]}
-                                numberOfLines={2}
+                                numberOfLines={3}
                             >
-                                {titleCtx.title}
+                                You don&apos;t have any friends yet — but you
+                                can still send this to someone.
                             </Text>
                         </View>
-                    )}
-
-                    {showLoader ? (
-                        <FullScreenLoader />
-                    ) : error ? (
-                        <View style={styles.statusBlock}>
-                            <Text style={[typography.body, { color: palette.error }]}>
-                                {error}
+                        <View style={styles.inviteGroup}>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.inviteCaption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                Know someone who&apos;s not on Seen yet?
                             </Text>
-                        </View>
-                    ) : friends.length === 0 ? (
-                        <>
-                            <View style={styles.statusBlock}>
-                                <Text
-                                    style={[typography.body, { color: palette.textMuted }]}
-                                    numberOfLines={3}
-                                >
-                                    You don&apos;t have any friends yet — but
-                                    you can still send this to someone.
-                                </Text>
-                            </View>
-                            {/* The invite path is MOST valuable with zero
-                                friends — the old copy dead-ended here. */}
-                            <View style={styles.inviteGroup}>
-                                <Text
-                                    style={[
-                                        typography.caption,
-                                        styles.inviteCaption,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    Know someone who&apos;s not on Seen yet?
-                                </Text>
-                                <Pressable
-                                    onPress={() => void handleInviteSend()}
-                                    disabled={inviteBusy}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="Recommend to someone not on Seen"
-                                    style={({ pressed }) => [
-                                        styles.inviteButton,
-                                        {
-                                            borderColor: palette.accent,
-                                            opacity:
-                                                pressed || inviteBusy
-                                                    ? 0.6
-                                                    : 1,
-                                        },
-                                    ]}
-                                >
-                                    {inviteBusy ? (
-                                        <ActivityIndicator
-                                            color={palette.accent}
-                                        />
-                                    ) : (
-                                        <Text
-                                            style={[
-                                                typography.bodyEmphasis,
-                                                { color: palette.accent },
-                                            ]}
-                                        >
-                                            Send them this rec
-                                        </Text>
-                                    )}
-                                </Pressable>
-                            </View>
-                        </>
-                    ) : (
-                        <>
-                            {/* Local recipient filter. Mirrors the Friends
-                                tab local search: borderless surface pill,
-                                inline clear-X (clear-but-stay), Cancel
-                                sibling on focus (blur + clear). Selection
-                                lives in selectedFriendIds, not the rendered
-                                list, so filtering never drops a pick. */}
-                            <View style={styles.searchRow}>
-                                <View
-                                    style={[
-                                        styles.searchBar,
-                                        { backgroundColor: palette.surface },
-                                    ]}
-                                >
-                                    <SearchIcon
-                                        color={palette.textMuted}
-                                        size={20}
-                                        strokeWidth={ICON_STROKE_WIDTH}
-                                    />
-                                    <TextInput
-                                        ref={localSearchInputRef}
-                                        value={localQuery}
-                                        onChangeText={setLocalQuery}
-                                        placeholder="Search friends"
-                                        placeholderTextColor={palette.textMuted}
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                        returnKeyType="search"
-                                        onFocus={() => setLocalFocused(true)}
-                                        onBlur={() => setLocalFocused(false)}
-                                        style={[
-                                            styles.searchInput,
-                                            typography.body,
-                                            { color: palette.text },
-                                        ]}
-                                    />
-                                    {localQuery.length > 0 ? (
-                                        <Pressable
-                                            onPress={() => setLocalQuery('')}
-                                            hitSlop={spacing.sm}
-                                            accessibilityRole="button"
-                                            accessibilityLabel="Clear search"
-                                            style={({ pressed }) => [
-                                                pressed && { opacity: 0.6 },
-                                            ]}
-                                        >
-                                            <X
-                                                color={palette.textMuted}
-                                                size={18}
-                                                strokeWidth={ICON_STROKE_WIDTH}
-                                            />
-                                        </Pressable>
-                                    ) : null}
-                                </View>
-                                {localFocused ? (
-                                    <Pressable
-                                        onPress={() => {
-                                            setLocalQuery('');
-                                            localSearchInputRef.current?.blur();
-                                        }}
-                                        hitSlop={spacing.sm}
-                                        accessibilityRole="button"
-                                        accessibilityLabel="Done searching"
-                                        style={({ pressed }) => [
-                                            styles.cancelButton,
-                                            pressed && { opacity: 0.6 },
-                                        ]}
-                                    >
-                                        <Text
-                                            style={[
-                                                typography.body,
-                                                { color: palette.accent },
-                                            ]}
-                                        >
-                                            Done
-                                        </Text>
-                                    </Pressable>
-                                ) : null}
-                            </View>
-
-                            {/* Recommend to someone NOT on Seen — a quiet
-                                ghost row ABOVE the friend list (users
-                                search the list rather than scroll it, so
-                                anything below the list is effectively
-                                invisible). Compact single line, muted +
-                                accent action — present without competing
-                                with the list as the primary path. The note
-                                below applies to this send exactly as it
-                                does to a friend send. */}
                             <Pressable
                                 onPress={() => void handleInviteSend()}
                                 disabled={inviteBusy}
                                 accessibilityRole="button"
                                 accessibilityLabel="Recommend to someone not on Seen"
                                 style={({ pressed }) => [
-                                    styles.inviteRow,
-                                    { opacity: pressed || inviteBusy ? 0.6 : 1 },
+                                    styles.inviteButton,
+                                    {
+                                        borderColor: palette.accent,
+                                        opacity: pressed || inviteBusy ? 0.6 : 1,
+                                    },
                                 ]}
                             >
                                 {inviteBusy ? (
-                                    <ActivityIndicator
-                                        size="small"
-                                        color={palette.accent}
-                                    />
+                                    <ActivityIndicator color={palette.accent} />
                                 ) : (
                                     <Text
                                         style={[
-                                            typography.caption,
-                                            { color: palette.textMuted },
+                                            typography.bodyEmphasis,
+                                            { color: palette.accent },
                                         ]}
-                                        numberOfLines={1}
                                     >
-                                        Know someone not on Seen?{' '}
-                                        <Text
-                                            style={[
-                                                typography.caption,
-                                                styles.inviteRowAction,
-                                                { color: palette.accent },
-                                            ]}
-                                        >
-                                            Send them this rec
-                                        </Text>
+                                        Send them this rec
                                     </Text>
                                 )}
                             </Pressable>
-
+                        </View>
+                    </ScrollView>
+                ) : (
+                    <FlatList
+                        style={styles.flex}
+                        data={filteredFriends}
+                        keyExtractor={(f) => f.userId}
+                        renderItem={({ item }) => renderFriendRow(item)}
+                        ListHeaderComponent={listHeaderNode}
+                        ListEmptyComponent={
                             <Text
                                 style={[
-                                    typography.micro,
-                                    styles.sectionLabel,
+                                    typography.body,
+                                    styles.noMatch,
                                     { color: palette.textMuted },
                                 ]}
                             >
-                                SEND TO
+                                No friends match “{localQuery.trim()}”.
                             </Text>
-                            {filteredFriends.length > 0 ? (
-                                <View
-                                    style={styles.friendList}
-                                >
-                                    {filteredFriends.map(renderFriendRow)}
-                                </View>
-                            ) : (
-                                <Text
-                                    style={[
-                                        typography.body,
-                                        styles.noMatch,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    No friends match “{localQuery.trim()}”.
-                                </Text>
-                            )}
-                        </>
-                    )}
-                    </Pressable>
-                </ScrollView>
+                        }
+                        contentContainerStyle={[
+                            styles.scrollContent,
+                            keyboardState.height > 0
+                                ? {
+                                      paddingBottom:
+                                          keyboardState.height + spacing.sm,
+                                  }
+                                : null,
+                        ]}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="on-drag"
+                    />
+                )}
 
                 {/* Pinned bottom bar: note input + char count. Send moved to
                     the header so it stays reachable above the keyboard. The
@@ -1042,11 +1139,16 @@ export default function RecommendScreen() {
                     <Animated.View
                         style={[
                             styles.bottomBar,
+                            // paddingBottom comes from barClearanceStyle
+                            // (animated: insets.bottom + sm when closed → sm
+                            // when open), so the tint reaches the screen edge.
                             barClearanceStyle,
                             {
-                                backgroundColor: palette.bg,
-                                borderTopColor: palette.border,
-                                paddingBottom: spacing.sm,
+                                // Slight tint (surfaceAlt) lifts the bar off
+                                // the page; the top stroke is gone (see
+                                // styles.bottomBar) — the tone is the
+                                // separation now.
+                                backgroundColor: palette.surfaceAlt,
                             },
                         ]}
                     >
@@ -1103,10 +1205,7 @@ export default function RecommendScreen() {
                         <View
                             style={[
                                 styles.noteBox,
-                                {
-                                    backgroundColor: palette.surface,
-                                    borderColor: palette.border,
-                                },
+                                { backgroundColor: palette.surface },
                             ]}
                         >
                             <TextInput
@@ -1139,7 +1238,7 @@ export default function RecommendScreen() {
                     </KeyboardStickyView>
                 ) : null}
             </View>
-        </SafeAreaView>
+        </View>
     );
 }
 
@@ -1171,39 +1270,78 @@ const styles = StyleSheet.create({
         // the Cancel / Send row edge-aligns with the title context,
         // section labels, friend list, and note box below.
         paddingHorizontal: spacing.lg,
-        // Asymmetric vertical padding: a deeper top pushes the
-        // Cancel / Recommend / Send row off the modal's top edge
-        // (iOS modal presentations don't supply a usable top safe-area
-        // inset since the modal sits below the system chrome). Bottom
-        // stays tight so the title row that follows isn't oversized.
-        paddingTop: spacing.base,
+        // paddingTop is applied inline as insets.top + sm (see the header in
+        // the render): under fullScreenModal the top inset must come from the
+        // useSafeAreaInsets() hook, not the SafeAreaView component (which
+        // reported ~0 here). sm is just the gap below the measured inset.
         paddingBottom: spacing.sm,
     },
     sendButton: {
         // Compact filled header button — the app's button radius (the
-        // shared geometry token) at header scale, matching the chat
-        // screen's header Send exactly; fill/label colors resolve per
-        // state inline (plum/white actionable, surfaceAlt/muted disabled).
+        // shared geometry token) at header scale. Fill/label colors resolve
+        // per state inline (plum/white actionable, surfaceAlt/muted disabled).
+        // It HUGS its content ("Send" at rest); the LinearTransition wrapper
+        // in the header animates the width up to "Send to N" (replaces the
+        // old minWidth:104, which killed the pop by padding "Send" out wide).
         paddingVertical: spacing.sm,
         paddingHorizontal: spacing.base,
         borderRadius: button.borderRadius,
         alignItems: 'center',
         justifyContent: 'center',
-        // Pinned to roughly the "Send to 1" width so the pill doesn't
-        // visibly jump between the disabled "Send" state and the active
-        // counted label as the selection changes.
-        minWidth: 104,
     },
     scrollContent: {
         paddingBottom: spacing.xl,
     },
-    titleContext: {
+    titleContextBlock: {
+        // Owns the vertical rhythm for the title row + the scope strip below
+        // it. gap xl (32): a real SECTION break between the poster + show name
+        // (the screen's header now) and "What to recommend" — clearly larger
+        // than the 8 section-header-to-content gap AND than the header→poster
+        // gap, so the title reads as its own zone. paddingBottom sm keeps
+        // chips → search at a normal section gap (sm + searchRow.marginTop sm).
+        paddingTop: spacing.md,
+        paddingBottom: spacing.sm,
+        gap: spacing.xl,
+    },
+    titleContextRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.md,
         paddingHorizontal: spacing.lg,
-        paddingTop: spacing.md,
-        paddingBottom: spacing.lg,
+    },
+    scopeBlock: {
+        // On the 24 spine like every other element. No right padding — the
+        // strip bleeds to the screen edge for the fade. gap sm (8) is the ONE
+        // section-header-to-content gap used everywhere (label → chips ===
+        // "Send to" → avatar === note label → box), so the rhythm is uniform.
+        paddingLeft: spacing.lg,
+        gap: spacing.sm,
+    },
+    seasonStripWrap: {
+        // Relative host for the strip + its right-edge fade overlay.
+        position: 'relative',
+    },
+    seasonScroll: {
+        // flexGrow 0 so the horizontal strip takes only its content height in
+        // the surrounding column (matches the episodes screen).
+        flexGrow: 0,
+    },
+    seasonStrip: {
+        flexDirection: 'row',
+        gap: spacing.xs,
+        // No left inset — scopeBlock provides it. Right inset ≥ the fade width
+        // so the last chip can scroll fully clear of the fade at the end.
+        paddingRight: spacing.xl,
+    },
+    seasonFade: {
+        // Right-edge mask: chips dissolve into the page bg instead of a hard
+        // clip, cueing the horizontal scroll (the variable-chip equivalent of
+        // the poster strips' half-item peek).
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        right: 0,
+        width: SEASON_FADE_W,
     },
     contextPoster: {
         width: POSTER_W,
@@ -1219,12 +1357,15 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.xxl,
         paddingHorizontal: spacing.xl,
     },
-    // "Not on Seen" ghost row — compact quiet line between the search
-    // field and the friend list. Centered, caption register, no fill or
-    // border; the accent action span is the only emphasis.
+    // "Not on Seen" link — a single left-aligned accent link on the 24 spine
+    // (was a centred two-part sentence), between the search field and the
+    // "Send to" label. No fill or border; the accent text is the affordance.
     inviteRow: {
+        // Left-aligned row on the spine: leading person-plus glyph + text.
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
+        gap: spacing.xs,
+        paddingHorizontal: spacing.lg,
         paddingVertical: spacing.sm,
         marginTop: spacing.xs,
     },
@@ -1239,6 +1380,8 @@ const styles = StyleSheet.create({
     inviteGroup: {
         gap: spacing.sm,
         marginTop: spacing.xl,
+        // On the 24 spine — the button is no longer full-bleed.
+        paddingHorizontal: spacing.lg,
     },
     inviteCaption: {
         textAlign: 'center',
@@ -1251,19 +1394,23 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     sectionLabel: {
+        // Positioning only — the typography (overline) is shared with the
+        // "What to recommend" label so the two section headers are peers. No
+        // letterSpacing override here; the overline token owns it.
         paddingHorizontal: spacing.lg,
         marginTop: spacing.lg,
         marginBottom: spacing.sm,
-        letterSpacing: 0.5,
     },
     searchRow: {
         // Hosts the search pill + conditional Cancel sibling. Horizontal
-        // inset matches sectionLabel / friendList so it edge-aligns.
+        // inset matches the other elements on the 24 spine. marginTop sm (was
+        // md) — with titleContextBlock.paddingBottom sm, the chips → search
+        // gap is 16, a normal section gap.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.lg,
-        marginTop: spacing.md,
+        marginTop: spacing.sm,
         marginBottom: spacing.sm,
     },
     searchBar: {
@@ -1289,15 +1436,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.lg,
         paddingTop: spacing.md,
     },
-    friendList: {
-        paddingHorizontal: spacing.lg,
-    },
     friendRow: {
+        // Row content sits on the 24 spine (avatar/name at lg), while the
+        // selection highlight (the row background) spans FULL width — the
+        // FlatList gives the rows no horizontal inset, so the row owns the lg
+        // padding and the highlight bleeds edge to edge (no borderRadius, so
+        // it reads as a full-width band, not an inset pill).
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: spacing.sm,
+        paddingHorizontal: spacing.lg,
         paddingVertical: spacing.md,
-        borderRadius: radius.sm,
         gap: spacing.md,
     },
     avatar: {
@@ -1322,8 +1470,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     noteBox: {
+        // Borderless — sits flat on the tinted bar. The surface fill (white)
+        // against the surfaceAlt bar is the field's edge; a border here would
+        // reintroduce the stroke removed from the bar. No strokes anywhere.
         borderRadius: radius.sm,
-        borderWidth: 1,
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
         minHeight: 80,
@@ -1341,14 +1491,12 @@ const styles = StyleSheet.create({
         textAlign: 'right',
         marginTop: spacing.xs,
     },
-    // Pinned-bottom container. Top border separates it from the
-    // scrolling friend list above. Horizontal padding matches the
-    // modal's lg inset so the note box and send button edge-align with
-    // the friend list above.
+    // Pinned-bottom container. Slight surfaceAlt tint (applied inline) lifts
+    // it off the page — no top stroke (removed); the tone is the separation.
+    // lg horizontal inset keeps the note box on the 24 spine.
     bottomBar: {
         paddingHorizontal: spacing.lg,
         paddingTop: spacing.md,
-        borderTopWidth: StyleSheet.hairlineWidth,
     },
     bottomBarLabel: {
         marginBottom: spacing.sm,

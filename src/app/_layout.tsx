@@ -205,7 +205,7 @@ function RootLayoutInner() {
                 />
                 <Stack.Screen
                     name="title/[mediaType]/[tmdbId]/recommend"
-                    options={{ presentation: 'modal' }}
+                    options={{ presentation: 'fullScreenModal' }}
                 />
                 <Stack.Screen
                     name="title/[mediaType]/[tmdbId]/review"
