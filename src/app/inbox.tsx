@@ -38,6 +38,7 @@ import { goToProfile } from '@/lib/profile-nav';
 import { promptPushAtHighIntent } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
+import { withEpisodeSuffix, withSeasonSuffix } from '@/lib/title-scope';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { imageUrl } from '@/lib/tmdb';
@@ -421,19 +422,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
-// Appends the episode coordinate to a chat's title so an episode chat reads
-// "{title} · S2 E5" and is distinguishable from a whole-show chat about the
-// same title. Whole-show chats (season/episode null) are returned unchanged.
-function withEpisodeSuffix(
-    name: string | null,
-    scope: { season: number | null; episode: number | null } | undefined,
-): string | null {
-    if (!name || !scope || scope.season === null || scope.episode === null) {
-        return name;
-    }
-    return `${name} · S${scope.season} E${scope.episode}`;
-}
-
 function pickString(payload: Record<string, unknown> | null, key: string): string | null {
     const v = payload?.[key];
     return typeof v === 'string' ? v : null;
@@ -526,7 +514,7 @@ export default function InboxScreen() {
                 supabase
                     .from('recommendations')
                     .select(
-                        'id, from_user_id, tmdb_id, media_type, note, sent_at, status',
+                        'id, from_user_id, tmdb_id, media_type, note, sent_at, status, season',
                     )
                     .eq('to_user_id', userId)
                     .eq('status', 'pending')
@@ -538,7 +526,7 @@ export default function InboxScreen() {
                 supabase
                     .from('recommendations')
                     .select(
-                        'id, from_user_id, tmdb_id, media_type, note, sent_at, status',
+                        'id, from_user_id, tmdb_id, media_type, note, sent_at, status, season',
                     )
                     .eq('to_user_id', userId)
                     .in('status', ['watched', 'dismissed'])
@@ -575,7 +563,7 @@ export default function InboxScreen() {
                 // Sent recs — one row per (title, recipient) by construction.
                 supabase
                     .from('recommendations')
-                    .select('id, to_user_id, tmdb_id, media_type, sent_at')
+                    .select('id, to_user_id, tmdb_id, media_type, sent_at, season')
                     .eq('from_user_id', userId)
                     .order('sent_at', { ascending: false })
                     .limit(MAX_ITEMS),
@@ -854,9 +842,11 @@ export default function InboxScreen() {
                     mediaType: r.media_type as MediaType,
                     note: r.note,
                     sender,
-                    titleName:
+                    titleName: withSeasonSuffix(
                         titleByKey.get(`${r.media_type}:${r.tmdb_id}`)?.title ??
-                        null,
+                            null,
+                        typeof r.season === 'number' ? r.season : null,
+                    ),
                     recStatus:
                         r.status === 'watched'
                             ? 'watched'
@@ -1344,7 +1334,13 @@ export default function InboxScreen() {
                     recId: r.id,
                     tmdbId: r.tmdb_id,
                     mediaType: r.media_type as MediaType,
-                    titleName: meta?.title ?? null,
+                    // Season suffix baked into titleName, exactly as the
+                    // received rec build (:869) and the sent-chat build below
+                    // do — the shared renderer just prints titleName.
+                    titleName: withSeasonSuffix(
+                        meta?.title ?? null,
+                        typeof r.season === 'number' ? r.season : null,
+                    ),
                     posterPath: meta?.posterPath ?? null,
                     recipient,
                 });

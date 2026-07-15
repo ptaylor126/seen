@@ -14,15 +14,19 @@ const LANDING_URL_BASE = 'https://seenrecs.com/r/?t=';
 const TOKEN_RE = /^[A-Za-z0-9_-]{16}$/;
 
 // Creates the pending rec and returns its share token. The insert supplies
-// ONLY the four client-grantable columns (20260712120000's column-level
-// INSERT grant) — id/token/created_at come from defaults, claim fields are
-// RPC-only. The CALLER stamps public.titles via ensureTitle BEFORE this
-// (and awaits it — unlike normal recs, the landing page needs the title
-// row to render, so fire-and-forget isn't enough here).
+// ONLY the client-grantable columns (20260712120000's column-level INSERT
+// grant, widened to include `season` in 20260714150000) — id/token/created_at
+// come from defaults, claim fields are RPC-only. The CALLER stamps
+// public.titles via ensureTitle BEFORE this (and awaits it — unlike normal
+// recs, the landing page needs the title row to render, so fire-and-forget
+// isn't enough here).
 export async function createPendingRec(args: {
     tmdbId: number;
     mediaType: MediaType;
     note: string | null;
+    // Optional season scope (whole show when null). Survives the claim: the
+    // claim RPC threads it onto the real recommendation.
+    season: number | null;
 }): Promise<string> {
     const {
         data: { session },
@@ -37,6 +41,7 @@ export async function createPendingRec(args: {
             tmdb_id: args.tmdbId,
             media_type: args.mediaType,
             note: args.note,
+            season: args.season,
         })
         .select('token')
         .single();

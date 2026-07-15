@@ -34,6 +34,7 @@ import { goToProfile } from '@/lib/profile-nav';
 import { type MediaType } from '@/lib/rating';
 import { maybeRequestReview } from '@/lib/review';
 import supabase from '@/lib/supabase';
+import { withSeasonSuffix } from '@/lib/title-scope';
 import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
@@ -220,7 +221,7 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
         // the items lookup.
         supabase
             .from('recommendations')
-            .select('id, from_user_id, tmdb_id, media_type, sent_at, status, note')
+            .select('id, from_user_id, tmdb_id, media_type, sent_at, status, note, season')
             .eq('to_user_id', userId)
             .eq('status', 'pending')
             .eq('hidden_from_home', false)
@@ -533,7 +534,13 @@ async function fetchHomeData(userId: string): Promise<HomeData> {
             id: r.id,
             tmdbId: r.tmdb_id,
             mediaType: r.media_type as MediaType,
-            title: titleRow.title ?? '',
+            // Season suffix via the shared helper — "{Title} · Season N" when
+            // the rec is season-scoped, exactly as the inbox rec rows read.
+            title:
+                withSeasonSuffix(
+                    titleRow.title ?? null,
+                    typeof r.season === 'number' ? r.season : null,
+                ) ?? '',
             posterPath: titleRow.poster_path,
             backdropPath: titleRow.backdrop_path,
             note: typeof r.note === 'string' && r.note.length > 0 ? r.note : null,

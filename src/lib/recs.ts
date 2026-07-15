@@ -8,6 +8,9 @@ export interface ReceivedRec {
     fromUserId: string;
     sentAt: string;
     note: string | null;
+    // Season scope of this rec (null = whole show). Display-only — the card
+    // shows "Season N" when set.
+    season: number | null;
     sender: {
         handle: string;
         displayName: string;
@@ -28,7 +31,7 @@ export async function getReceivedRecsForTitle(
 ): Promise<ReceivedRec[]> {
     const { data: recRows, error } = await supabase
         .from('recommendations')
-        .select('id, from_user_id, sent_at, note')
+        .select('id, from_user_id, sent_at, note, season')
         .eq('to_user_id', userId)
         .eq('tmdb_id', tmdbId)
         .eq('media_type', mediaType)
@@ -44,7 +47,12 @@ export async function getReceivedRecsForTitle(
     const senderIds: string[] = [];
     const bySender = new Map<
         string,
-        { recId: string; sentAt: string; note: string | null }
+        {
+            recId: string;
+            sentAt: string;
+            note: string | null;
+            season: number | null;
+        }
     >();
     for (const row of recRows) {
         const sid = row.from_user_id;
@@ -54,7 +62,12 @@ export async function getReceivedRecsForTitle(
             typeof row.note === 'string' && row.note.trim().length > 0
                 ? row.note
                 : null;
-        bySender.set(sid, { recId: row.id, sentAt: row.sent_at, note });
+        bySender.set(sid, {
+            recId: row.id,
+            sentAt: row.sent_at,
+            note,
+            season: typeof row.season === 'number' ? row.season : null,
+        });
     }
     if (senderIds.length === 0) return [];
 
@@ -74,6 +87,7 @@ export async function getReceivedRecsForTitle(
                 fromUserId: id,
                 sentAt: meta.sentAt,
                 note: meta.note,
+                season: meta.season,
                 sender: {
                     handle: p.handle,
                     displayName: p.display_name,

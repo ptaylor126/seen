@@ -102,6 +102,8 @@ interface RecSummary {
     // Rec lifecycle state. Drives the Decline action's gate (recipient +
     // 'pending' only) and is flipped optimistically on decline / undo.
     status: string;
+    // Season scope (null = whole show); shown in the title meta line.
+    season: number | null;
 }
 
 interface TitleMeta {
@@ -254,7 +256,7 @@ export default function RecScreen() {
             const { data: recRow, error: recErr } = await supabase
                 .from('recommendations')
                 .select(
-                    'id, from_user_id, to_user_id, tmdb_id, media_type, note, sent_at, status',
+                    'id, from_user_id, to_user_id, tmdb_id, media_type, note, sent_at, status, season',
                 )
                 .eq('id', recId)
                 .maybeSingle();
@@ -296,6 +298,8 @@ export default function RecScreen() {
                 note: recRow.note,
                 sentAt: recRow.sent_at,
                 status: recRow.status,
+                season:
+                    typeof recRow.season === 'number' ? recRow.season : null,
             };
             setRec(summary);
             // Load-time arrival decision (see arrivalAtNewestRef).
@@ -1558,6 +1562,11 @@ export default function RecScreen() {
                                         rec.mediaType === 'movie'
                                             ? 'Movie'
                                             : 'TV',
+                                        rec.season != null
+                                            ? rec.season === 0
+                                                ? 'Specials'
+                                                : `Season ${rec.season}`
+                                            : null,
                                     ]
                                         .filter(Boolean)
                                         .join(' · ')}

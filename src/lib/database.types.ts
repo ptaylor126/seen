@@ -486,6 +486,7 @@ export type Database = {
           id: string
           media_type: string
           note: string | null
+          season: number | null
           tmdb_id: number
           token: string
         }
@@ -497,6 +498,7 @@ export type Database = {
           id?: string
           media_type: string
           note?: string | null
+          season?: number | null
           tmdb_id: number
           token?: string
         }
@@ -508,6 +510,7 @@ export type Database = {
           id?: string
           media_type?: string
           note?: string | null
+          season?: number | null
           tmdb_id?: number
           token?: string
         }
@@ -742,6 +745,7 @@ export type Database = {
           note: string | null
           rating_thumb: string | null
           resolved_at: string | null
+          season: number | null
           sent_at: string
           status: string
           tmdb_id: number
@@ -757,6 +761,7 @@ export type Database = {
           note?: string | null
           rating_thumb?: string | null
           resolved_at?: string | null
+          season?: number | null
           sent_at?: string
           status?: string
           tmdb_id: number
@@ -772,6 +777,7 @@ export type Database = {
           note?: string | null
           rating_thumb?: string | null
           resolved_at?: string | null
+          season?: number | null
           sent_at?: string
           status?: string
           tmdb_id?: number
@@ -1081,6 +1087,7 @@ export type Database = {
         Args: {
           media_type: string
           note?: string
+          season?: number
           tmdb_id: number
           to_user_id: string
         }

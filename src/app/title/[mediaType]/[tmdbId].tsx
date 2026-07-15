@@ -130,6 +130,8 @@ interface Sender {
 interface RecAttribution {
     sender: Sender;
     note: string | null;
+    // Season scope of the rec (null = whole show); shown as "Season N".
+    season: number | null;
 }
 
 // One review row + its author profile, rendered in the Reviews
@@ -421,6 +423,7 @@ export default function TitleDetailScreen() {
                                         avatarUrl: r.sender.avatarUrl,
                                     },
                                     note: r.note,
+                                    season: r.season,
                                 })),
                             );
                         }
@@ -2188,6 +2191,13 @@ function RecommendedBySection({
                     {rec.sender.displayName}
                 </Text>
             </UserLink>
+            {rec.season !== null ? (
+                <Text
+                    style={[typography.caption, { color: palette.textMuted }]}
+                >
+                    {rec.season === 0 ? 'Specials' : `Season ${rec.season}`}
+                </Text>
+            ) : null}
             {rec.note ? (
                 <Text
                     style={[

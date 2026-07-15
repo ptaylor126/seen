@@ -72,6 +72,9 @@ interface RecBetween {
     mediaType: MediaType;
     posterPath: string | null;
     direction: 'sent' | 'received';
+    // Season scope (null = whole show); shown as a micro "Season N" line
+    // under the poster.
+    season: number | null;
 }
 
 // One written review by this friend, for the "Recent reviews" strip.
@@ -324,7 +327,7 @@ export default function FriendDetailScreen() {
 
                 const { data: recRows, error: recErr } = await supabase
                     .from('recommendations')
-                    .select('id, from_user_id, to_user_id, tmdb_id, media_type, sent_at')
+                    .select('id, from_user_id, to_user_id, tmdb_id, media_type, sent_at, season')
                     .or(
                         `and(from_user_id.eq.${me},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${me})`,
                     )
@@ -356,6 +359,7 @@ export default function FriendDetailScreen() {
                         titleByKey.get(`${r.media_type}:${r.tmdb_id}`)
                             ?.poster_path ?? null,
                     direction: r.from_user_id === me ? 'sent' : 'received',
+                    season: typeof r.season === 'number' ? r.season : null,
                 }));
                 if (active) setRecsBetween(built);
             } catch (err) {
@@ -913,6 +917,19 @@ export default function FriendDetailScreen() {
                                         ? 'From you'
                                         : `From ${profile.displayName.split(/\s+/)[0]}`}
                                 </Text>
+                                {r.season !== null ? (
+                                    <Text
+                                        style={[
+                                            typography.micro,
+                                            { color: palette.textMuted },
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {r.season === 0
+                                            ? 'Specials'
+                                            : `Season ${r.season}`}
+                                    </Text>
+                                ) : null}
                             </Pressable>
                         ))}
                     </ScrollView>

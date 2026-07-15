@@ -58,6 +58,15 @@ export async function applyWatchedRating(args: {
         if (itemError) throw itemError;
     }
 
+    // Matches open recs by (recipient, title) ONLY — deliberately
+    // SEASON-BLIND. Recs can carry a season coordinate (S1, S4…), and a title
+    // can have several open at once, but watched-tracking is title-level and
+    // high-water-mark: marking the TITLE watched means you watched the show,
+    // so ALL its open recs resolve together here. Do NOT add `.eq('season',…)`
+    // — per-season resolution would require season-level watched state, which
+    // we deliberately do not build. (Same intent recorded in migration
+    // 20260714150000's header, which also covers the season-blind
+    // reopen_recs_on_unwatch trigger.)
     const { data: openRecs, error: queryError } = await supabase
         .from('recommendations')
         .select('id')

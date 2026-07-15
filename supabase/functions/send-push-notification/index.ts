@@ -349,6 +349,9 @@ async function buildMessage(
             const recId = stringField(notif.payload, 'recommendation_id');
             const tmdbId = numberField(notif.payload, 'tmdb_id');
             const mediaType = stringField(notif.payload, 'media_type');
+            // Optional season coordinate (whole-show when absent/null). It
+            // already rides in `data` via the ...notif.payload spread above.
+            const season = numberField(notif.payload, 'season');
             if (!fromUserId || !recId || tmdbId === null || !mediaType) return null;
 
             const [senderName, title, note] = await Promise.all([
@@ -358,8 +361,13 @@ async function buildMessage(
             ]);
             if (!senderName || !title) return null;
 
+            // A season number is NOT a spoiler the way an episode title is
+            // (see the episode-chat suppression in chat_commented), so name it
+            // plainly — no redaction. null → whole show.
+            const what = season !== null ? `Season ${season} of ${title}` : title;
+
             return {
-                title: `${senderName} recommended ${title}`,
+                title: `${senderName} recommended ${what}`,
                 body: note ?? undefined,
                 data,
             };
