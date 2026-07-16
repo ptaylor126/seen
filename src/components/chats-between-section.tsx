@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { MessageCircle } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     Pressable,
     ScrollView,
@@ -63,6 +63,7 @@ export function ChatsBetweenSection({
     friendId,
     friendName,
     bandColor,
+    onPresenceChange,
 }: {
     friendId: string;
     friendName: string;
@@ -74,11 +75,20 @@ export function ChatsBetweenSection({
     // behind. The parent also owns the vertical rhythm via bandVertical
     // padding here — the section carries no outer margin of its own.
     bandColor?: string;
+    // Reports whether this section will render (has chats), once its query
+    // resolves. Needed because the friend profile now places this section
+    // BETWEEN two strips it does know about — the band parity of the strip
+    // AFTER this one depends on this section's presence. Held in a ref so
+    // the fetch effect keeps its [friendId] deps (an inline callback can't
+    // retrigger the query).
+    onPresenceChange?: (hasChats: boolean) => void;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
     const [groups, setGroups] = useState<ChatGroup[] | null>(null);
+    const onPresenceChangeRef = useRef(onPresenceChange);
+    onPresenceChangeRef.current = onPresenceChange;
 
     useEffect(() => {
         let active = true;
@@ -105,6 +115,7 @@ export function ChatsBetweenSection({
                 const rows = data ?? [];
                 if (rows.length === 0) {
                     setGroups([]);
+                    onPresenceChangeRef.current?.(false);
                     return;
                 }
 
@@ -160,7 +171,10 @@ export function ChatsBetweenSection({
                         count: g.count,
                     }),
                 );
-                if (active) setGroups(built);
+                if (active) {
+                    setGroups(built);
+                    onPresenceChangeRef.current?.(built.length > 0);
+                }
             } catch (err) {
                 console.warn('chats-between fetch failed:', err);
             }

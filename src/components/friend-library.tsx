@@ -1,11 +1,10 @@
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Search as SearchIcon, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Dimensions,
-    FlatList,
     Pressable,
     StyleSheet,
     Text,
@@ -13,10 +12,11 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
-import { Avatar } from '@/components/avatar';
-import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
+import Animated, {
+    type useAnimatedScrollHandler,
+} from 'react-native-reanimated';
+
 import { LibraryFilterControls } from '@/components/library-filter-controls';
-import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
@@ -35,20 +35,20 @@ import {
     typography,
 } from '@/theme/theme';
 
+// The friend library BODY — the items query, the shared filter/sort/search
+// state (useLibraryFilters), the persisted view mode (useLibraryView), the
+// local search field, the Watched/Watching/Watchlist SegmentedControl, the
+// filter chips (LibraryFilterControls), and the grid/list itself. Behaviour is
+// identical to the standalone friend-library route it was lifted from; it just
+// no longer resolves the friend or renders a header — the caller passes the
+// already-resolved friend in. Returns a single scrolling FlatList (no outer
+// wrapper), so the caller owns the surrounding chrome.
+//
+// The items query fires on mount (keyed on friendId), so a caller that mounts
+// this lazily still gets the lazy behaviour.
+
 type ItemStatus = 'watchlist' | 'watching' | 'watched';
 
-// The friend whose library this is. Normally handed across as route params
-// from the profile push (no resolve round-trip); resolved by handle/userId
-// only on a cold deep-link where the params are absent.
-interface Friend {
-    id: string;
-    handle: string;
-    displayName: string;
-    avatarUrl: string | null;
-}
-
-// Mirrors the friend-profile ItemRow shape — the items query and its
-// title-stitch come across unchanged from src/app/friends/[handle].tsx.
 interface ItemRow {
     id: string;
     tmdbId: number;
@@ -76,7 +76,6 @@ const TAB_LABELS: Record<ItemStatus, string> = {
 const TAB_OPTIONS: ReadonlyArray<{ value: ItemStatus; label: string }> =
     TABS.map((value) => ({ value, label: TAB_LABELS[value] }));
 
-const HEADER_AVATAR_SIZE = 28;
 const POSTER_W = 56;
 const POSTER_H = 84;
 const GRID_GAP_BY_COLS: Record<LibraryGridCols, number> = {
@@ -119,44 +118,29 @@ function emptyMessage(status: ItemStatus, displayName: string): string {
     }
 }
 
-export default function FriendLibraryScreen() {
+export function FriendLibrary({
+    friendId,
+    displayName,
+    handle,
+    onScroll,
+    contentTopInset = 0,
+}: {
+    friendId: string;
+    displayName: string;
+    handle: string;
+    // Collapse wiring (both optional — standalone use needs neither): the
+    // host's reanimated scroll handler, so the friend profile's collapsing
+    // header can track this list's offset…
+    onScroll?: ReturnType<typeof useAnimatedScrollHandler>;
+    // …and extra top padding on the content (the host's IDENTITY_H) so the
+    // expanded header has room; the list's own sticky filter zone still pins
+    // at the FRAME top, which the host places below its pinned tab bar.
+    contentTopInset?: number;
+}) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const router = useRouter();
-    // Pushed screen (edges={['top']}) — pad the list clear of the nav bar.
     const bottomInset = useBottomInset(spacing.lg);
-
-    const {
-        handle: rawHandle,
-        userId: rawUserId,
-        name: rawName,
-        avatarUrl: rawAvatar,
-    } = useLocalSearchParams<{
-        handle: string;
-        userId?: string;
-        name?: string;
-        avatarUrl?: string;
-    }>();
-    // Handles are stored lowercase (handle column CHECK constraint); coerce
-    // the URL param so a capitalized cold link still resolves.
-    const handle = (rawHandle ?? '').toLowerCase();
-    const targetUserId = rawUserId?.trim() || null;
-
-    // Fast path: the profile pushes here with the friend already in hand, so
-    // there's no resolve round-trip and no flash. Cold deep-links (params
-    // absent) fall through to the resolution effect below.
-    const [friend, setFriend] = useState<Friend | null>(() =>
-        targetUserId && rawName
-            ? {
-                  id: targetUserId,
-                  handle,
-                  displayName: rawName,
-                  avatarUrl: rawAvatar?.trim() ? rawAvatar : null,
-              }
-            : null,
-    );
-    const [notFound, setNotFound] = useState(false);
-    const showLoader = useDeferredLoading(!friend && !notFound);
 
     const [activeTab, setActiveTab] = useState<ItemStatus>('watched');
     const [items, setItems] = useState<ItemRow[]>([]);
@@ -177,50 +161,9 @@ export default function FriendLibraryScreen() {
     const { mode, gridCols, setMode, setGridCols } = useLibraryView();
     const screenWidth = Dimensions.get('window').width;
 
-    // ---- Resolve the friend only when the params didn't carry them (cold
-    // deep-link). No-op on the normal push-from-profile path.
-    useEffect(() => {
-        if (friend) return;
-        if (!handle && !targetUserId) {
-            setNotFound(true);
-            return;
-        }
-        let active = true;
-        (async () => {
-            try {
-                const q = supabase
-                    .from('profiles')
-                    .select('id, display_name, handle, avatar_url');
-                const { data, error } = await (
-                    targetUserId ? q.eq('id', targetUserId) : q.eq('handle', handle)
-                ).maybeSingle();
-                if (!active) return;
-                if (error || !data) {
-                    setNotFound(true);
-                    return;
-                }
-                setFriend({
-                    id: data.id,
-                    handle: data.handle,
-                    displayName: data.display_name,
-                    avatarUrl: data.avatar_url,
-                });
-            } catch (err) {
-                if (!active) return;
-                console.error('friend library resolve failed:', err);
-                setNotFound(true);
-            }
-        })();
-        return () => {
-            active = false;
-        };
-    }, [friend, handle, targetUserId]);
-
     // ---- Fetch items for the active tab. visibility is filtered both
     // client-side (explicit) and by RLS (defence in depth); RLS is the
-    // authoritative check. Query carried across unchanged from the friend
-    // profile.
-    const friendId = friend?.id ?? null;
+    // authoritative check.
     useEffect(() => {
         if (!friendId) return;
         let active = true;
@@ -408,55 +351,6 @@ export default function FriendLibraryScreen() {
         );
     }
 
-    // ---- Cold-link resolution states (normal push-from-profile skips these).
-    if (showLoader) {
-        return (
-            <View style={[styles.root, { backgroundColor: palette.bg }]}>
-                <ScreenHeader showBackButton hideBell />
-                <FullScreenLoader />
-            </View>
-        );
-    }
-    if (notFound || !friend) {
-        return (
-            <View style={[styles.root, { backgroundColor: palette.bg }]}>
-                <ScreenHeader showBackButton hideBell />
-                <View style={styles.fillCenter}>
-                    <Text
-                        style={[
-                            typography.heading,
-                            styles.centerText,
-                            { color: palette.text },
-                        ]}
-                    >
-                        Library unavailable
-                    </Text>
-                    <Text
-                        style={[
-                            typography.body,
-                            styles.centerText,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        This library isn&apos;t available.
-                    </Text>
-                </View>
-            </View>
-        );
-    }
-
-    // Body rows for the single scrolling FlatList. Grid mode is chunked into
-    // rows of `gridCols` cells (numColumns can't coexist with the sticky
-    // filter row); list mode is one item per row. The 'filters' item is
-    // data[0] and sticks (stickyHeaderIndices below). Loading / error / empty
-    // render in the footer so the sticky tabs stay visible.
-    //
-    // `showBody` does NOT gate on itemsLoading: switching tabs refetches (the
-    // items query is per-status), and emptying the body mid-fetch would
-    // collapse the list to just the sticky header and snap scroll to the top.
-    // Instead we keep the previous tab's rows mounted until the new ones
-    // arrive (keep-previous-data). Only a genuine first-load with no rows yet
-    // shows the spinner (see listFooter).
     const hasRows = filters.visibleRows.length > 0;
     const showBody = !itemsError && hasRows;
     const bodyItems: LibraryListItem[] = [];
@@ -477,8 +371,6 @@ export default function FriendLibraryScreen() {
     const listData: LibraryListItem[] = [{ type: 'filters' }, ...bodyItems];
 
     // Local title search — scrolls away above the sticky filter zone.
-    // Mirrors the library tab's local-filter bar (X = clear-but-stay,
-    // Cancel = exit + dismiss). Wired to the shared hook's localQuery state.
     const searchHeader = (
         <View style={styles.searchRow}>
             <View
@@ -493,7 +385,7 @@ export default function FriendLibraryScreen() {
                     ref={localSearchInputRef}
                     value={filters.localQuery}
                     onChangeText={filters.setLocalQuery}
-                    placeholder={`Search ${friend.displayName}'s library`}
+                    placeholder={`Search ${displayName}'s library`}
                     placeholderTextColor={palette.textMuted}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -545,8 +437,7 @@ export default function FriendLibraryScreen() {
     );
 
     // Sticky row (data[0]): segmented status picker + media/sort/genre
-    // controls. Pins under the fixed header once the search row scrolls past.
-    // Page-bg fill kept OPAQUE so rows don't show through when it's stuck.
+    // controls. Page-bg fill kept OPAQUE so rows don't show through when stuck.
     const filterZoneNode = (
         <View style={[styles.filterZone, { backgroundColor: palette.bg }]}>
             <View style={styles.segmentedRow}>
@@ -569,8 +460,6 @@ export default function FriendLibraryScreen() {
                 genreStripOpen={filters.genreStripOpen}
                 setGenreStripOpen={filters.setGenreStripOpen}
                 availableGenres={filters.availableGenres}
-                // Grid/list toggle at the right of the filter row; a grid-tap
-                // expands it in place to reveal the 2/3/4 density options.
                 view={{ mode, gridCols, setMode, setGridCols }}
             />
         </View>
@@ -598,13 +487,6 @@ export default function FriendLibraryScreen() {
         );
     }
 
-    // Loading / error / empty live below the sticky filter row so the tabs
-    // stay reachable in every state. Order: error first, then the spinner
-    // ONLY on a first load with no rows yet (a tab-switch reload keeps the
-    // previous rows mounted and shows no spinner, so scroll is preserved),
-    // then the empty copy once a load completes with nothing. Empty copy has
-    // three sub-cases, in priority order: typed-search → genre filter →
-    // per-tab default.
     const listFooter = itemsError ? (
         <View style={styles.footerStatus}>
             <Text
@@ -632,131 +514,70 @@ export default function FriendLibraryScreen() {
                 ]}
             >
                 {filters.localQuery.trim().length > 0
-                    ? `No matches in @${friend.handle}'s library.`
+                    ? `No matches in @${handle}'s library.`
                     : filters.genreFilter !== null
                       ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
-                      : emptyMessage(activeTab, friend.displayName)}
+                      : emptyMessage(activeTab, displayName)}
             </Text>
         </View>
     ) : null;
 
     return (
-        <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            {/* Option A header — plain page-bg bar (not the profile's plum
-                arch, that's the profile's signature). Back chevron + a small
-                avatar + "{name}'s library" in full. The grid/list toggle (and
-                its density popover) live on the filter line, so the header has
-                no right-side controls and the name keeps the whole bar. */}
-            <ScreenHeader
-                showBackButton
-                hideBell
-                leading={
-                    <View style={styles.headerLeading}>
-                        <Avatar
-                            avatarUrl={friend.avatarUrl}
-                            displayName={friend.displayName}
-                            seedId={friend.id}
-                            size={HEADER_AVATAR_SIZE}
-                        />
-                        <Text
-                            style={[
-                                typography.heading,
-                                styles.headerTitle,
-                                { color: palette.text },
-                            ]}
-                            numberOfLines={1}
-                        >
-                            {`${friend.displayName}'s library`}
-                        </Text>
-                    </View>
+        <Animated.FlatList
+            data={listData}
+            keyExtractor={(item) =>
+                item.type === 'filters'
+                    ? 'filters'
+                    : item.type === 'listRow'
+                      ? item.row.id
+                      : `gridrow-${item.rows.map((r) => r.id).join('-')}`
+            }
+            renderItem={renderListItem}
+            ListHeaderComponent={searchHeader}
+            // ListHeaderComponent (the search row) is child 0; the sticky
+            // 'filters' item (data[0]) is child 1.
+            stickyHeaderIndices={[1]}
+            ListFooterComponent={listFooter}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={[
+                styles.scrollContent,
+                { paddingTop: contentTopInset, paddingBottom: bottomInset },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            ItemSeparatorComponent={({
+                leadingItem,
+            }: {
+                leadingItem: LibraryListItem;
+            }) => {
+                if (leadingItem.type === 'listRow') {
+                    return (
+                        <View style={styles.bodyInset}>
+                            <View
+                                style={[
+                                    styles.separator,
+                                    { backgroundColor: palette.border },
+                                ]}
+                            />
+                        </View>
+                    );
                 }
-            />
-
-            <FlatList
-                data={listData}
-                keyExtractor={(item) =>
-                    item.type === 'filters'
-                        ? 'filters'
-                        : item.type === 'listRow'
-                          ? item.row.id
-                          : `gridrow-${item.rows.map((r) => r.id).join('-')}`
+                if (leadingItem.type === 'gridRow') {
+                    return <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />;
                 }
-                renderItem={renderListItem}
-                ListHeaderComponent={searchHeader}
-                // ListHeaderComponent (the search row) is child 0; the sticky
-                // 'filters' item (data[0]) is child 1.
-                stickyHeaderIndices={[1]}
-                ListFooterComponent={listFooter}
-                contentContainerStyle={[
-                    styles.scrollContent,
-                    { paddingBottom: bottomInset },
-                ]}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="on-drag"
-                ItemSeparatorComponent={({
-                    leadingItem,
-                }: {
-                    leadingItem: LibraryListItem;
-                }) => {
-                    if (leadingItem.type === 'listRow') {
-                        return (
-                            <View style={styles.bodyInset}>
-                                <View
-                                    style={[
-                                        styles.separator,
-                                        { backgroundColor: palette.border },
-                                    ]}
-                                />
-                            </View>
-                        );
-                    }
-                    if (leadingItem.type === 'gridRow') {
-                        return (
-                            <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
-                        );
-                    }
-                    // After the sticky filters row: grid gets a small top gap
-                    // (matched old gridContent paddingTop); list sat flush.
-                    return mode === 'grid' ? (
-                        <View style={{ height: spacing.sm }} />
-                    ) : null;
-                }}
-            />
-        </View>
+                // After the sticky filters row: grid gets a small top gap
+                // (matched old gridContent paddingTop); list sat flush.
+                return mode === 'grid' ? (
+                    <View style={{ height: spacing.sm }} />
+                ) : null;
+            }}
+        />
     );
 }
 
 const styles = StyleSheet.create({
-    root: { flex: 1 },
-    headerLeading: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-    },
-    headerTitle: {
-        // Flex so a long name truncates cleanly. The header carries no
-        // right-side controls now, so the name gets nearly the whole bar.
-        flex: 1,
-    },
-    fillCenter: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: spacing.xl,
-        gap: spacing.sm,
-    },
-    centerText: {
-        textAlign: 'center',
-    },
     searchRow: {
-        // Outer row hosting the search pill + the conditional Cancel sibling.
-        // Margins live here (not on the pill) so the pill can flex to fill
-        // available width when Cancel appears / disappears.
-        //
-        // marginTop is sm (8), matching the own Library tab's header→search
-        // gap. It arrived as lg (24) when the search bar moved off the friend
-        // profile (where it sat far below the overview sections and needed the
-        // air); directly under a header it read as dead space.
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
@@ -765,10 +586,6 @@ const styles = StyleSheet.create({
         marginBottom: spacing.md,
     },
     searchBar: {
-        // Local title-filter input. Mirrors the own library's pill shape,
-        // minus the `+` button (friend libraries have no add affordance).
-        // Border deliberately omitted — the surface fill against the page bg
-        // is the visual separation.
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
@@ -782,17 +599,12 @@ const styles = StyleSheet.create({
     },
     searchInput: {
         flex: 1,
-        // padding zeroed: the parent's fixed height owns vertical sizing so
-        // the icon and text stay aligned.
         paddingVertical: 0,
     },
     filterZone: {
-        // No shaded band — the controls sit on the page background (fill
-        // applied inline as palette.bg, kept opaque so rows don't show
-        // through when this sticky zone is stuck). Matches the Library
-        // screen's filter zone, including its tight paddingTop (xs): the
-        // search-to-filter gap = searchRow.marginBottom (12) + this (4)
-        // = 16pt.
+        // Sits on the page bg (fill applied inline, kept opaque so rows don't
+        // show through when stuck). Tight paddingTop (xs): search-to-filter
+        // gap = searchRow.marginBottom (12) + this (4) = 16pt.
         paddingTop: spacing.xs,
         paddingBottom: spacing.sm,
         gap: spacing.md,
@@ -800,28 +612,23 @@ const styles = StyleSheet.create({
     segmentedRow: {
         paddingHorizontal: spacing.base,
     },
-    scrollContent: {
-        // Whole-screen FlatList: horizontal insets live on the header/filter/
-        // body items, which each manage their own gutters. The bottom cushion
-        // is applied inline via useBottomInset (nav-bar clearance).
-    },
+    scrollContent: {},
     bodyInset: {
-        // Horizontal gutter for library rows / grid rows + their separators.
         paddingHorizontal: spacing.base,
     },
     gridRow: {
-        // One chunked row of grid cells. flex-start so a short last row stays
-        // left-aligned (matches the old columnWrapper behaviour).
         flexDirection: 'row',
     },
     footerStatus: {
-        // Loading / error / empty message, shown under the sticky filter row.
         alignItems: 'center',
         justifyContent: 'center',
         paddingTop: spacing.xxl,
         paddingBottom: spacing.xxl,
         paddingHorizontal: spacing.xl,
         gap: spacing.sm,
+    },
+    centerText: {
+        textAlign: 'center',
     },
     row: {
         flexDirection: 'row',
@@ -842,8 +649,6 @@ const styles = StyleSheet.create({
         height: StyleSheet.hairlineWidth,
         marginLeft: POSTER_W + spacing.md,
     },
-    // Grid cell styles mirror the Library tab so a friend's grid looks
-    // identical at the same density.
     gridCell: {
         position: 'relative',
     },

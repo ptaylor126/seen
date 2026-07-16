@@ -2,7 +2,6 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
     ChevronLeft,
-    ChevronRight,
     MessageSquarePlus,
     MoreHorizontal,
     MoreVertical,
@@ -20,15 +19,19 @@ import {
     useColorScheme,
     View,
 } from 'react-native';
+import Animated, {
+    useAnimatedRef,
+    useAnimatedScrollHandler,
+    useAnimatedStyle,
+    useSharedValue,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-// Same library glyph the nav bar uses (assets/images/navbar/icon-library.svg)
-// so the profile's Library card and the tab bar read as one mark.
-import LibraryNavIcon from '../../../assets/images/navbar/icon-library.svg';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
-import { ArchCap } from '@/components/profile-arch';
+import { ArchCap, ARCH_DEPTH } from '@/components/profile-arch';
 import { ChatsBetweenSection } from '@/components/chats-between-section';
+import { FriendLibrary } from '@/components/friend-library';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
@@ -114,6 +117,18 @@ const BANNER_ZONE = 96;
 // as the own profile, scaled to this screen's 80pt avatar.
 const AVATAR_TOP = BANNER_ZONE - AVATAR_SIZE / 2 - 4;
 
+// ── Collapsing-header geometry (mechanism validated on the Stage-1 rig) ──
+// The identity block (banner + arch + one-line name/handle) scrolls away on
+// the active tab's scroll; the tab bar pins at the top. IDENTITY_H is a HARD
+// constant — the name block is fixed-height and the name is numberOfLines={1}
+// by construction — because both the header clamp and the tab frames'
+// contentContainer paddingTop key off it; if it drifted, the pin seam would.
+const NAME_BLOCK_H = 62;
+const IDENTITY_H = BANNER_ZONE + ARCH_DEPTH + NAME_BLOCK_H;
+const TABS_H = 48;
+
+type TopTab = 'profile' | 'library';
+
 // The "Recs between you" / "Chats between you" strip dimensions live in
 // @/theme/poster-layout (imported above), so the strip sections share one
 // definition.
@@ -185,6 +200,50 @@ export default function FriendDetailScreen() {
     );
     // In-flight guard for the "Remove friend" action (overflow menu).
     const [removing, setRemoving] = useState(false);
+
+    // ── Top-level tabs + collapsing header (Stage-1 rig mechanism) ──────
+    // Library is the default: it's the primary thing you come here for.
+    const [topTab, setTopTab] = useState<TopTab>('library');
+    // Lazy inversion: the Profile tab's sections (Top 5, recs, chats,
+    // reviews) load only once the Profile tab has been OPENED. Flips true
+    // on the first switch and never back — the subtree stays mounted after,
+    // so nothing refetches on later switches. A glance at the default
+    // Library never fires the Profile queries.
+    const [profileOpened, setProfileOpened] = useState(false);
+    // Whether the chats section has chats — reported by ChatsBetweenSection
+    // once its query resolves. Drives the band parity of the strip AFTER it
+    // (Top 5), which the parent can't otherwise know.
+    const [chatsPresent, setChatsPresent] = useState(false);
+
+    // One shared value PER TAB — independent collapse; each tab owns its
+    // own scroll. The header reads the ACTIVE tab's value; switching tabs
+    // changes the header instantly (no animation) via the [topTab] dep.
+    const libraryY = useSharedValue(0);
+    const profileY = useSharedValue(0);
+    const onLibraryScroll = useAnimatedScrollHandler((e) => {
+        libraryY.value = e.contentOffset.y;
+    });
+    const onProfileScroll = useAnimatedScrollHandler((e) => {
+        profileY.value = e.contentOffset.y;
+    });
+    const headerStyle = useAnimatedStyle(() => {
+        const y = topTab === 'library' ? libraryY.value : profileY.value;
+        const clamped = Math.min(Math.max(y, 0), IDENTITY_H);
+        return { transform: [{ translateY: -clamped }] };
+    }, [topTab]);
+
+    // Asymmetric retention (validated on the rig): LIBRARY keeps its offset
+    // across switches (browsing it is the task); PROFILE resets to top on
+    // leave (short overview, no place to lose). The reset runs AFTER the
+    // switch commits — the profile frame is already hidden, so the jump is
+    // invisible by construction. profileY = 0 keeps the header worklet
+    // deterministic: reopening Profile always starts expanded.
+    const profileScrollRef = useAnimatedRef<Animated.ScrollView>();
+    useEffect(() => {
+        if (topTab !== 'library') return;
+        profileScrollRef.current?.scrollTo({ y: 0, animated: false });
+        profileY.value = 0;
+    }, [topTab, profileScrollRef, profileY]);
 
     // ---- Phase 1: resolve friend by handle + friendship status.
     // useFocusEffect so we re-resolve on return (e.g. user accepted a
@@ -277,17 +336,16 @@ export default function FriendDetailScreen() {
         }, [handle, targetUserId, router]),
     );
 
-    // The friend's library items are no longer fetched here — the library
-    // moved to its own screen (src/app/friends/[handle]/library.tsx), which
-    // fires the items query on mount. A glance-only profile visit no longer
-    // pays for it.
+    // The friend's library items are fetched by <FriendLibrary> (mounted in
+    // the default Library tab), so its query fires on mount — eager, which is
+    // correct: the library is the primary content. The PROFILE tab's queries
+    // below are the lazy side of the inversion, gated on profileOpened.
 
-    // ---- Phase 2b: fetch the friend's top 5 lists. Separate from the
-    // items effect because it doesn't depend on activeTab (tab switches
-    // would needlessly re-fetch). Best-effort: a transient read failure
-    // degrades to "no top 5 shown," not a broken profile screen.
+    // ---- Phase 2b: fetch the friend's top 5 lists. Gated on the Profile
+    // tab having been opened (lazy inversion). Best-effort: a transient read
+    // failure degrades to "no top 5 shown," not a broken profile screen.
     useEffect(() => {
-        if (state.kind !== 'friends') {
+        if (state.kind !== 'friends' || !profileOpened) {
             setFavorites({ movies: [], tv: [] });
             return;
         }
@@ -303,15 +361,15 @@ export default function FriendDetailScreen() {
         return () => {
             active = false;
         };
-    }, [state]);
+    }, [state, profileOpened]);
 
     // ---- Phase 2c: recommendation history between the two users (both
-    // directions). Best-effort: a failure degrades to "no strip," not a
-    // broken profile. RLS (recommendations_select_party: from = auth.uid()
-    // OR to = auth.uid()) already returns both directions — every row here
-    // has me as one party.
+    // directions). Gated on profileOpened (lazy inversion). Best-effort: a
+    // failure degrades to "no strip," not a broken profile. RLS
+    // (recommendations_select_party: from = auth.uid() OR to = auth.uid())
+    // already returns both directions — every row here has me as one party.
     useEffect(() => {
-        if (state.kind !== 'friends') {
+        if (state.kind !== 'friends' || !profileOpened) {
             setRecsBetween(null);
             return;
         }
@@ -369,15 +427,16 @@ export default function FriendDetailScreen() {
         return () => {
             active = false;
         };
-    }, [state]);
+    }, [state, profileOpened]);
 
-    // ---- Phase 2d: this friend's recently-WRITTEN reviews. Ordered by
-    // reviews.updated_at (when the review was written/edited), NOT watch
-    // date. RLS (reviews_select_own_or_visible_via_item) only returns
-    // reviews whose parent items row is friends-visible — same privacy
-    // model as the rest of the screen. Best-effort.
+    // ---- Phase 2d: this friend's recently-WRITTEN reviews. Gated on
+    // profileOpened (lazy inversion). Ordered by reviews.updated_at (when
+    // the review was written/edited), NOT watch date. RLS
+    // (reviews_select_own_or_visible_via_item) only returns reviews whose
+    // parent items row is friends-visible — same privacy model as the rest
+    // of the screen. Best-effort.
     useEffect(() => {
-        if (state.kind !== 'friends') {
+        if (state.kind !== 'friends' || !profileOpened) {
             setRecentReviews(null);
             return;
         }
@@ -448,7 +507,7 @@ export default function FriendDetailScreen() {
         return () => {
             active = false;
         };
-    }, [state]);
+    }, [state, profileOpened]);
 
     // ---- Render branches per state.
 
@@ -606,15 +665,21 @@ export default function FriendDetailScreen() {
     //      the title page's social cards, the library card below). A band is
     //      the page itself, not an object on it. Round everything and
     //      roundedness stops meaning anything.
+    // Section order (Profile tab): Recs between you → Chats between you →
+    // Top 5 → Recent reviews. Shared-with-you content first; their all-time
+    // Top 5 is context below it. Chats presence is async (the section owns
+    // its query), so it reports presence via onPresenceChange and Top 5's
+    // parity keys off that state — the tone may settle once on first load
+    // as the chats query resolves.
     const top5Present =
         favorites.movies.length > 0 || favorites.tv.length > 0;
     const recsPresent = !!(recsBetween && recsBetween.length > 0);
     const stripBand = (presentBefore: number) =>
         presentBefore % 2 === 0 ? palette.surfaceAlt : palette.bg;
-    const top5Band = stripBand(0);
-    const recsBand = stripBand(top5Present ? 1 : 0);
-    const chatsBand = stripBand(
-        (top5Present ? 1 : 0) + (recsPresent ? 1 : 0),
+    const recsBand = stripBand(0);
+    const chatsBand = stripBand(recsPresent ? 1 : 0);
+    const top5Band = stripBand(
+        (recsPresent ? 1 : 0) + (chatsPresent ? 1 : 0),
     );
 
     // Remove friend — overflow menu → confirm → unfriend RPC (symmetric,
@@ -722,42 +787,18 @@ export default function FriendDetailScreen() {
         ]);
     }
 
-    // Profile content — the whole scrolling body. Plum banner + arched
-    // sheet: the banner continues the fixed bar's plum down to the arch
-    // crest; the avatar straddles the crest; name, handle, friends-since and
-    // the action buttons sit on the sheet below, then Top 5, recs, chats,
-    // reviews, and the library door.
-    const profileContent = (
+    // Profile TAB content — friends-since + the action buttons at top (moved
+    // out of the shared header: they're profile actions, not identity), then
+    // the sections in order: Recs between you, Chats between you, Top 5,
+    // Recent reviews. The identity block (banner, arch, avatar, name) lives
+    // in the collapsing header overlay in the return below, shared by both
+    // tabs.
+    const profileTabContent = (
         <>
-            {/* Top-bounce cap: plum extended above the header so an iOS
-                overscroll at the top shows plum, never a bg seam. */}
-            <View
-                style={[styles.bounceCap, { backgroundColor: palette.accent }]}
-            />
-            <View
-                style={[styles.bannerZone, { backgroundColor: palette.accent }]}
-            />
-            <ArchCap />
-            {/* Avatar straddling the crest — absolute over the banner/sheet
-                boundary. */}
-            <View style={styles.archAvatar} pointerEvents="box-none">
-                <Avatar
-                    avatarUrl={profile.avatarUrl}
-                    displayName={profile.displayName}
-                    seedId={profile.id}
-                    size={AVATAR_SIZE}
-                />
-            </View>
+            {/* bg gap under the tab row so the first band doesn't read as
+                the tabs' background. */}
+            <View style={styles.tabContentGap} />
             <View style={styles.profileBlock}>
-                <Text
-                    style={[typography.heading, { color: palette.text }]}
-                    numberOfLines={1}
-                >
-                    {profile.displayName}
-                </Text>
-                <Text style={[typography.caption, { color: palette.textMuted }]}>
-                    @{profile.handle}
-                </Text>
                 <Text style={[typography.micro, { color: palette.textMuted }]}>
                     {formatFriendsSince(friendshipCreatedAt)}
                 </Text>
@@ -824,27 +865,6 @@ export default function FriendDetailScreen() {
                     </Text>
                 </Pressable>
             </View>
-
-            {/* Friend's top 5 sections. Full-width band (first strip → ALT
-                tone) so it separates from the Recs strip below. Conditional
-                so no empty band paints when the friend has no favorites. */}
-            {top5Present && (
-                <View
-                    style={[styles.sectionBand, { backgroundColor: top5Band }]}
-                >
-                    <TopFiveSections
-                        movies={favorites.movies}
-                        tv={favorites.tv}
-                        palette={palette}
-                        onSelect={(mediaType, tmdbId) =>
-                            router.push({
-                                pathname: '/title/[mediaType]/[tmdbId]',
-                                params: { mediaType, tmdbId: String(tmdbId) },
-                            })
-                        }
-                    />
-                </View>
-            )}
 
             {/* Recs between you — the recommendation history both
                 directions, most-recent first. Hidden entirely when there
@@ -937,16 +957,37 @@ export default function FriendDetailScreen() {
             )}
 
             {/* Chats between you — directly below Recs between you, above
-                Recent reviews. Self-contained component; renders nothing when
-                the pair has no chats. It paints its own full-width band
-                (chatsBand, computed from how many strips precede it) only
-                when it renders, so the alternation stays correct without the
-                parent knowing this async section's presence. */}
+                Top 5. Self-contained component; renders nothing when the
+                pair has no chats. It paints its own full-width band
+                (chatsBand) when it renders, and reports its presence up so
+                Top 5's band parity (the strip AFTER it) stays correct. */}
             <ChatsBetweenSection
                 friendId={profile.id}
                 friendName={profile.displayName}
                 bandColor={chatsBand}
+                onPresenceChange={setChatsPresent}
             />
+
+            {/* Friend's top 5 sections — their all-time context, below the
+                shared-with-you strips. Conditional so no empty band paints
+                when the friend has no favorites curated. */}
+            {top5Present && (
+                <View
+                    style={[styles.sectionBand, { backgroundColor: top5Band }]}
+                >
+                    <TopFiveSections
+                        movies={favorites.movies}
+                        tv={favorites.tv}
+                        palette={palette}
+                        onSelect={(mediaType, tmdbId) =>
+                            router.push({
+                                pathname: '/title/[mediaType]/[tmdbId]',
+                                params: { mediaType, tmdbId: String(tmdbId) },
+                            })
+                        }
+                    />
+                </View>
+            )}
 
             {/* Recent reviews — this friend's recently-WRITTEN reviews
                 (newest review first, by reviews.updated_at). Each row:
@@ -1097,64 +1138,6 @@ export default function FriendDetailScreen() {
                 </View>
             )}
 
-            {/* Library — pushes the friend's whole library to its own screen
-                (search + status tabs + filter chips + grid + view controls).
-                Kept off the profile so a glance-only visit doesn't pay for
-                the items query. Params hand the friend across so the library
-                screen needs no resolve round-trip. Treated as a card with an
-                accent icon tile — this is the thing you'd most want to browse,
-                so it carries real weight (not the thin settings row it was),
-                without borrowing the solid-plum register of "Recommend". */}
-            <View style={styles.libraryCardBand}>
-                <Pressable
-                    onPress={() =>
-                        router.push({
-                            pathname: '/friends/[handle]/library',
-                            params: {
-                                handle: profile.handle,
-                                userId: profile.id,
-                                name: profile.displayName,
-                                avatarUrl: profile.avatarUrl ?? '',
-                            },
-                        })
-                    }
-                    accessibilityRole="button"
-                    accessibilityLabel={`${profile.displayName}'s library`}
-                    style={({ pressed }) => [
-                        styles.libraryCard,
-                        { backgroundColor: palette.surfaceElevated },
-                        pressed && { opacity: 0.6 },
-                    ]}
-                >
-                    <View
-                        style={[
-                            styles.libraryCardIconTile,
-                            { backgroundColor: palette.accentWash },
-                        ]}
-                    >
-                        <LibraryNavIcon
-                            color={palette.accent}
-                            width={22}
-                            height={22}
-                        />
-                    </View>
-                    <Text
-                        style={[
-                            typography.heading,
-                            styles.libraryCardTitle,
-                            { color: palette.text },
-                        ]}
-                        numberOfLines={1}
-                    >
-                        Library
-                    </Text>
-                    <ChevronRight
-                        color={palette.textMuted}
-                        size={22}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                </Pressable>
-            </View>
         </>
     );
 
@@ -1162,9 +1145,8 @@ export default function FriendDetailScreen() {
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
             {/* Fixed chrome on the plum banner — the plum reaches the
                 physical top of the screen (safe area included); chevron and
-                overflow go white. The view controls live on the library
-                screen (meaningless here), so the right slot holds only the
-                overflow menu. */}
+                overflow go white. Always on screen; the identity block below
+                slides up and clips beneath it. */}
             <SafeAreaView
                 edges={['top']}
                 style={{ backgroundColor: palette.accent }}
@@ -1193,20 +1175,136 @@ export default function FriendDetailScreen() {
                 </View>
             </SafeAreaView>
 
-            {/* With the library grid gone, the profile no longer needs a
-                sticky-header FlatList — its remaining sections (Top 5, recs,
-                chats, reviews, the library door) are all bounded, so a plain
-                ScrollView carries them. Section markup + margins are carried
-                across unchanged. */}
-            <ScrollView
-                contentContainerStyle={[
-                    styles.scrollContent,
-                    { paddingBottom: bottomInset },
-                ]}
-                showsVerticalScrollIndicator={false}
-            >
-                {profileContent}
-            </ScrollView>
+            {/* Collapse zone (Stage-1 rig mechanism, validated on device).
+                overflow hidden so the identity block clips cleanly at the top
+                edge as it slides away. Both tab frames stay MOUNTED (scroll +
+                filter state preserved); the inactive one is invisible and
+                untouchable. Frame top = TABS_H so each list's own sticky pins
+                below the pinned tab bar; content paddingTop = IDENTITY_H so
+                expanded content starts below the full header. */}
+            <View style={styles.collapseZone}>
+                <View
+                    style={[
+                        styles.tabFrame,
+                        topTab !== 'library' && styles.tabFrameHidden,
+                    ]}
+                    pointerEvents={topTab === 'library' ? 'auto' : 'none'}
+                >
+                    {/* Default tab → mounts immediately → its items query
+                        fires on mount (eager, correct: it's the primary
+                        content). Library RETAINS its scroll across switches. */}
+                    <FriendLibrary
+                        friendId={profile.id}
+                        displayName={profile.displayName}
+                        handle={profile.handle}
+                        onScroll={onLibraryScroll}
+                        contentTopInset={IDENTITY_H}
+                    />
+                </View>
+
+                <View
+                    style={[
+                        styles.tabFrame,
+                        topTab !== 'profile' && styles.tabFrameHidden,
+                    ]}
+                    pointerEvents={topTab === 'profile' ? 'auto' : 'none'}
+                >
+                    {/* Lazy: mounts on FIRST open of the Profile tab (its
+                        section queries are gated on profileOpened too) and
+                        stays mounted after. Resets to top on leave (see the
+                        reset effect above). */}
+                    {profileOpened && (
+                        <Animated.ScrollView
+                            ref={profileScrollRef}
+                            onScroll={onProfileScroll}
+                            scrollEventThrottle={16}
+                            contentContainerStyle={{
+                                paddingTop: IDENTITY_H,
+                                paddingBottom: bottomInset,
+                            }}
+                            showsVerticalScrollIndicator={false}
+                        >
+                            {profileTabContent}
+                        </Animated.ScrollView>
+                    )}
+                </View>
+
+                {/* Header overlay — identity block + tab bar, translating up
+                    on the active tab's scroll (clamped so the tabs pin).
+                    box-none so only children catch touches: the identity is
+                    pointerEvents none (drags over it scroll the list
+                    beneath); the tab bar is tappable and OPAQUE (content
+                    passes under it once collapsed). */}
+                <Animated.View
+                    style={[styles.headerOverlay, headerStyle]}
+                    pointerEvents="box-none"
+                >
+                    <View
+                        style={[
+                            styles.identityBlock,
+                            { backgroundColor: palette.bg },
+                        ]}
+                        pointerEvents="none"
+                    >
+                        <View
+                            style={[
+                                styles.bannerZone,
+                                { backgroundColor: palette.accent },
+                            ]}
+                        />
+                        <ArchCap />
+                        <View style={styles.archAvatar}>
+                            <Avatar
+                                avatarUrl={profile.avatarUrl}
+                                displayName={profile.displayName}
+                                seedId={profile.id}
+                                size={AVATAR_SIZE}
+                            />
+                        </View>
+                        <View style={styles.nameBlock}>
+                            <Text
+                                style={[
+                                    typography.heading,
+                                    { color: palette.text },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {profile.displayName}
+                            </Text>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                @{profile.handle}
+                            </Text>
+                        </View>
+                    </View>
+
+                    <View
+                        style={[styles.tabsRow, { backgroundColor: palette.bg }]}
+                    >
+                        <TabButton
+                            label="Profile"
+                            active={topTab === 'profile'}
+                            onPress={() => {
+                                setTopTab('profile');
+                                // Lazy gate: first open mounts the tab's
+                                // subtree + fires its section queries.
+                                if (!profileOpened) setProfileOpened(true);
+                            }}
+                            palette={palette}
+                        />
+                        <TabButton
+                            label="Library"
+                            active={topTab === 'library'}
+                            onPress={() => setTopTab('library')}
+                            palette={palette}
+                        />
+                    </View>
+                </Animated.View>
+            </View>
 
             <RequestRecSheet
                 visible={requestRec.target !== null}
@@ -1216,6 +1314,52 @@ export default function FriendDetailScreen() {
                 onSend={requestRec.send}
             />
         </View>
+    );
+}
+
+// Large-text top-level tab — heading 22/600, active in full colour with a
+// 2pt accent underline, inactive muted. Deliberately a different visual
+// register from the pill SegmentedControl inside the Library tab (validated
+// on the tabs prototype): big underlined bare text vs small wash-filled pill.
+function TabButton({
+    label,
+    active,
+    onPress,
+    palette,
+}: {
+    label: string;
+    active: boolean;
+    onPress: () => void;
+    palette: ReturnType<typeof getPalette>;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            hitSlop={spacing.sm}
+            style={({ pressed }) => [
+                styles.tabButton,
+                pressed && { opacity: 0.6 },
+            ]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+        >
+            <Text
+                style={[
+                    typography.heading,
+                    { color: active ? palette.text : palette.textMuted },
+                ]}
+            >
+                {label}
+            </Text>
+            {/* Always rendered (height reserved) so there's no jump; accent
+                only when active. */}
+            <View
+                style={[
+                    styles.tabUnderline,
+                    { backgroundColor: active ? palette.accent : 'transparent' },
+                ]}
+            />
+        </Pressable>
     );
 }
 
@@ -1238,15 +1382,6 @@ const styles = StyleSheet.create({
     overflowButton: {
         padding: spacing.xs,
     },
-    // Top-bounce cap: plum extended 600pt above the list header so an iOS
-    // overscroll never exposes a bg seam above the banner.
-    bounceCap: {
-        position: 'absolute',
-        top: -600,
-        left: 0,
-        right: 0,
-        height: 600,
-    },
     // Plum banner zone inside the list header — from below the fixed bar
     // down to the arch crest.
     bannerZone: {
@@ -1263,13 +1398,71 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         zIndex: 2,
     },
+    // Actions block at the top of the Profile TAB — friends-since line +
+    // the Recommend/Request buttons (moved here from the identity header;
+    // they're profile actions, not identity). Centered, matching the old
+    // under-avatar treatment.
+    // ── Collapsing header + tabs (Stage-1 rig styles) ──────────────────
+    collapseZone: {
+        flex: 1,
+        position: 'relative',
+        // Clip the identity block as it translates up past the zone's top
+        // edge (iOS defaults to overflow visible — without this the banner
+        // and avatar would ride up OVER the fixed plum bar).
+        overflow: 'hidden',
+    },
+    tabFrame: {
+        // Frame top = TABS_H: each list's own native sticky pins at its
+        // frame top, i.e. exactly below where the tab bar pins.
+        position: 'absolute',
+        top: TABS_H,
+        left: 0,
+        right: 0,
+        bottom: 0,
+    },
+    tabFrameHidden: {
+        // Hidden-not-unmounted: scroll offset and filter state survive the
+        // switch (pointerEvents flips off alongside, in the render).
+        opacity: 0,
+    },
+    headerOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+    },
+    identityBlock: {
+        // Hard-coded height — IDENTITY_H is load-bearing for the clamp and
+        // the frames' paddingTop; the name is one line by construction.
+        height: IDENTITY_H,
+    },
+    nameBlock: {
+        height: NAME_BLOCK_H,
+        alignItems: 'center',
+        paddingTop: spacing.xs,
+        gap: spacing.xs,
+    },
+    tabsRow: {
+        // Centred large-text tabs — they belong to the centred identity
+        // block above, not the content. Opaque: list content scrolls
+        // beneath once collapsed.
+        height: TABS_H,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: spacing.xl,
+    },
+    tabButton: { alignItems: 'center' },
+    tabUnderline: {
+        height: 2,
+        alignSelf: 'stretch',
+        marginTop: 2,
+        borderRadius: 1,
+    },
+    tabContentGap: { height: spacing.base },
     profileBlock: {
         alignItems: 'center',
         paddingHorizontal: spacing.base,
-        // On the sheet, directly after the arch cap; xs (was base) pulls
-        // the name up closer under the avatar — ~21pt from its bottom edge
-        // (this avatar clears the cap higher than the own profile's, so
-        // the smaller pad here lands the SAME visual gap as its md there).
         paddingTop: spacing.xs,
         paddingBottom: spacing.lg,
         gap: spacing.xs,
@@ -1358,34 +1551,6 @@ const styles = StyleSheet.create({
     reviewSpoiler: {
         fontStyle: 'italic',
     },
-    // Library door — the card sits in a base-tone band so it shares the
-    // 32pt section rhythm and gets a horizontal gutter (the card is inset,
-    // not full-bleed like the strips).
-    libraryCardBand: {
-        paddingVertical: spacing.base,
-        paddingHorizontal: spacing.base,
-    },
-    // The card itself — a plum-tinted surface (surfaceElevated) with an
-    // accent icon tile. Presence from fill + radius + the tile + heading-tier
-    // title, deliberately NOT the solid-plum register of "Recommend". Title
-    // flexes so the chevron pins right.
-    libraryCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.base,
-        padding: spacing.base,
-        borderRadius: radius.md,
-    },
-    libraryCardIconTile: {
-        width: 44,
-        height: 44,
-        borderRadius: radius.sm,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    libraryCardTitle: {
-        flex: 1,
-    },
     notFriendsBlock: {
         paddingHorizontal: spacing.xl,
         paddingTop: spacing.lg,
@@ -1446,10 +1611,5 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm,
         paddingHorizontal: spacing.base,
         marginTop: spacing.md,
-    },
-    scrollContent: {
-        // Whole-screen ScrollView: horizontal insets live on the individual
-        // sections, which each manage their own gutters. The bottom cushion
-        // is applied inline via useBottomInset (nav-bar clearance).
     },
 });
