@@ -1040,7 +1040,10 @@ export default function TitleDetailScreen() {
                     {detail.data.backdrop_path ? (
                         <Image
                             source={{
-                                uri: imageUrl(detail.data.backdrop_path, 'w780'),
+                                // w1280: the hero renders full screen width
+                                // (~1170 physical px on a 3x phone) — w780
+                                // was a 1.5x upscale and read soft.
+                                uri: imageUrl(detail.data.backdrop_path, 'w1280'),
                             }}
                             style={styles.backdrop}
                             contentFit="cover"

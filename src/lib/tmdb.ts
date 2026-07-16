@@ -28,7 +28,16 @@ import supabase from './supabase';
 
 const TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/';
 
-export type TMDBImageSize = 'w185' | 'w342' | 'w500' | 'w780' | 'original';
+// TMDB's served rungs for the image types we use: posters/profiles (w185,
+// w342, w500), backdrops/stills (w300, w780, w1280), plus 'original'.
+export type TMDBImageSize =
+    | 'w185'
+    | 'w300'
+    | 'w342'
+    | 'w500'
+    | 'w780'
+    | 'w1280'
+    | 'original';
 
 /**
  * Build a direct TMDB CDN URL. `path` is the `poster_path` / `backdrop_path`

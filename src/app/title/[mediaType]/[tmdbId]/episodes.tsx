@@ -288,7 +288,14 @@ export default function EpisodeListScreen() {
                             {ep.still_path ? (
                                 <Image
                                     source={{
-                                        uri: imageUrl(ep.still_path, 'w342'),
+                                        // w780: stills render near full width
+                                        // (~1074 physical px on a 3x phone) —
+                                        // w342 was a 2-3x upscale, the softest
+                                        // image in the app. NOT w1280/original:
+                                        // this is a scrolling list of many
+                                        // stills, so w780 is the sharpness/
+                                        // weight balance.
+                                        uri: imageUrl(ep.still_path, 'w780'),
                                     }}
                                     style={styles.still}
                                     contentFit="cover"
