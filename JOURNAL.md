@@ -37,6 +37,24 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-07-16 (cont.) — Android invite-path audit ahead of Play production
+
+**Lessons**
+
+- **A platform-neutral core hides un-migrated platform edges.** The invite claim is paste-based, so it worked on Android by construction — but the seenrecs.com `/r/` and `/i/` landing pages still carry an iOS-era branch routing Android visitors to email capture instead of a store, dead-ending every Android invitee. The core being platform-neutral is exactly what let the broken edge go unnoticed. When a core is platform-agnostic, audit the platform-specific edges it lets you stop thinking about.
+
+---
+
+## 2026-07-16 — Season recs across six surfaces; the collapse stays hand-rolled
+
+**Lessons**
+
+- **Enumerate surfaces from grep, not memory.** The season-rec feature was scoped at four display surfaces, then five (the sent inbox row), then six (home "Recommended for you") — each miss found only by grepping every query against the `recommendations` table, never by listing from memory. Recommendations have no shared display type, so one field threads through six hand-copied render paths. Same root as the four watcher-rule copies and the density-persistence bug: one value, many private copies. The suffix helper (`withSeasonSuffix`) is shared now (`title-scope.ts`); the rec shape still is not.
+- **A feature is done when device-tested across its surfaces, not when built.** The season feature stood "built" for several rounds while two of its six surfaces (sent inbox, home) silently rendered the bare title — the sending screen was redesigned repeatedly before the thing it sends was ever verified on the receiving surfaces.
+- **A native dependency can invert an OTA workflow — cost it before adopting.** `react-native-collapsible-tab-view` solved the collapsing-header interaction exactly, but it peer-requires native modules (`react-native-pager-view`, `@shopify/flash-list`) plus an unverified reanimated-4 compat — breaking OTA and forcing a binary build for a feature that otherwise ships JS-only. Hand-rolled on Reanimated instead, OTA-safe. A library that solves the visible problem but breaks your deploy model is the more expensive choice.
+
+---
+
 ## 2026-07-14 — Stale bundle made a correct overlap fix look broken
 
 **Lessons**
