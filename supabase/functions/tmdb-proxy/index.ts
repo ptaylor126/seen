@@ -40,6 +40,13 @@ const ALLOWED_PATH_PATTERNS: RegExp[] = [
     // movie_credits and tv_credits separately.
     /^person\/\d+$/,
     /^person\/\d+\/combined_credits$/,
+    // /find/{external_id} — exact-id resolution for the library import
+    // (stage 2): IMDb tt-ids (ratings.csv `Const`) and TVDB numeric ids
+    // (TV Time export) → TMDB ids, no fuzzy matching. Anchored to exactly
+    // those two id shapes. The required `external_source=imdb_id|tvdb_id`
+    // rides as a query param — params are forwarded, not path-validated,
+    // so this regex is the whole gate.
+    /^find\/(tt\d+|\d+)$/,
     /^configuration$/,
     // --- Onboarding poster-grid blend (TMDB list endpoints). Exact paths
     //     only; list params (page, with_genres, sort_by) ride as forwarded

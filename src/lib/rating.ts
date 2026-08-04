@@ -45,7 +45,11 @@ export async function applyWatchedRating(args: {
     // Rec ids whose sender should NOT get a rec_watched notification (they're
     // receiving a comment from the post-watched sheet instead).
     suppressRecIds?: ReadonlySet<string>;
-}): Promise<void> {
+    // Returns how many open recs this rating advanced to 'watched' — the
+    // "this title reached the user as a recommendation and they just closed
+    // the loop" signal the store-review prompt keys on (review.ts). 0 = the
+    // title wasn't an open rec (self-added, or its recs already resolved).
+}): Promise<{ advancedRecCount: number }> {
     const { userId, tmdbId, mediaType, rating, suppressRecIds } = args;
 
     if (rating !== null) {
@@ -102,4 +106,6 @@ export async function applyWatchedRating(args: {
         });
         if (rpcError) throw rpcError;
     }
+
+    return { advancedRecCount: (openRecs ?? []).length };
 }

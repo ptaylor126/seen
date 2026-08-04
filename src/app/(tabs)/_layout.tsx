@@ -15,6 +15,7 @@ import {
     useUnreadCountValue,
 } from '@/hooks/use-unread-count';
 import { ensurePushRegistrationOnLaunch } from '@/lib/push';
+import { ensureInstallTimestamp } from '@/lib/review';
 
 // Icon-badge sync — the ONE place that writes the OS app-icon badge. Rendered
 // as a child of UnreadCountProvider so it reads the SAME shared count state
@@ -84,6 +85,12 @@ export default function TabsLayout() {
     //   - denied       → no-op (the OS won't re-show the prompt)
     useEffect(() => {
         if (!userId) return;
+        // Stamp the review-prompt install timestamp at app entry (was implicit
+        // in the old every-Home-focus trigger call; the trigger is event-based
+        // now — see review.ts — but the ts must still be born at FIRST LAUNCH
+        // so the first-session guard keeps its meaning). No-op after the
+        // first ever launch; cheap AsyncStorage read, no settle delay needed.
+        void ensureInstallTimestamp();
         const timer = setTimeout(() => {
             void ensurePushRegistrationOnLaunch(userId);
         }, 800);

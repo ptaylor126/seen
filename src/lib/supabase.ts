@@ -15,7 +15,7 @@
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
-import { LogBox } from 'react-native';
+import { AppState, LogBox } from 'react-native';
 
 import type { Database } from './database.types';
 import { env } from './env';
@@ -38,6 +38,26 @@ const supabase = createClient<Database>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY,
         persistSession: true,
         detectSessionInUrl: false,
     },
+});
+
+// Token refresh ↔ app lifecycle (the standard supabase-js RN wiring).
+// RN timers don't fire in the background, so the auto-refresh loop that
+// autoRefreshToken starts silently stalls while the app is backgrounded —
+// come back hours later and the access token can be expired until the
+// next tick happens to run, surfacing as mysterious 401s / hung queries
+// right after foregrounding. startAutoRefresh() on 'active' runs a
+// refresh check IMMEDIATELY (not just re-arming the timer), so a stale
+// session is healed at the moment of return; stopAutoRefresh() on
+// background parks the loop instead of leaving a timer that can't fire.
+// Module scope, alongside the singleton: registered exactly once for the
+// app's lifetime, never removed — this listener should live as long as
+// the client does.
+AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+        supabase.auth.startAutoRefresh();
+    } else {
+        supabase.auth.stopAutoRefresh();
+    }
 });
 
 export default supabase;

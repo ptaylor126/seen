@@ -31,6 +31,7 @@ import { postRecComment } from '@/lib/comments';
 import { setItemVisibility } from '@/lib/item-status';
 import { applyWatchedRating, ratingGlyphs, type MediaType } from '@/lib/rating';
 import { getReceivedRecsForTitle, type ReceivedRec } from '@/lib/recs';
+import { maybeRequestReviewAfterRecRating } from '@/lib/review';
 import supabase from '@/lib/supabase';
 import {
     button,
@@ -234,6 +235,16 @@ export function RatingSheet({
         [],
     );
 
+    // Loop-completion facts from a completed submit, held until the sheet
+    // has FULLY closed — the store-review prompt (an OS dialog) must never
+    // appear over the dismissing sheet. Consumed by the effect on `mounted`
+    // below; all decision logic (rating threshold, once-only, first-session)
+    // lives in review.ts — this just reports what happened.
+    const pendingReviewFactsRef = useRef<{
+        rating: number;
+        advancedRecCount: number;
+    } | null>(null);
+
     // Snapshot initialRating at the open edge (visible false → true) so a later
     // change to the prop while the sheet is open can't re-seed it. An initial
     // value must stay initial: on the rec screen a realtime load() rewrites the
@@ -360,6 +371,20 @@ export function RatingSheet({
             },
         );
     }, [visible, mounted, active, progress]);
+
+    // Store-review prompt, AFTER the sheet has fully closed. `mounted` flips
+    // false via runOnJS exactly when the close animation finishes (the timing
+    // callback above), so this is animation-completion-derived — no timers —
+    // and the OS dialog can never appear over the dismissing sheet. Fires at
+    // most once per banked submit (the ref is consumed); review.ts self-limits
+    // to once ever.
+    useEffect(() => {
+        if (mounted) return;
+        const facts = pendingReviewFactsRef.current;
+        if (!facts) return;
+        pendingReviewFactsRef.current = null;
+        void maybeRequestReviewAfterRecRating(facts);
+    }, [mounted]);
 
     const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
     // Panel slide (translateY) always runs — it IS the exit animation. The
@@ -517,13 +542,22 @@ export function RatingSheet({
             //    the trigger sees the visibility). Independent of the writes
             //    above.
             try {
-                await applyWatchedRating({
+                const { advancedRecCount } = await applyWatchedRating({
                     userId: uid,
                     tmdbId,
                     mediaType,
                     rating: selected,
                     suppressRecIds,
                 });
+                // Bank the loop-completion facts for the store-review prompt;
+                // fired only after the sheet has fully closed (see the effect
+                // on `mounted`). review.ts owns the thresholds and guards.
+                if (selected !== null) {
+                    pendingReviewFactsRef.current = {
+                        rating: selected,
+                        advancedRecCount,
+                    };
+                }
             } catch (err) {
                 console.error('rating sheet: mark watched failed', err);
                 Alert.alert("Couldn't finish", 'Please try again.');
