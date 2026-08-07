@@ -573,6 +573,25 @@ export function getPersonCombinedCredits(
     return callProxy(`person/${personId}/combined_credits`);
 }
 
+// /find/{imdb_id} response — exact-id resolution for the library
+// import. TMDB returns per-media buckets; for a tt-id only the movie
+// and tv buckets can populate (person/episode/season buckets exist on
+// the wire but are never read here). Summaries carry the same fields
+// as search results, including genre_ids + original_language, so the
+// import can stamp `titles` without a detail round-trip.
+export interface TMDBFindResult {
+    movie_results: TMDBMovieSummary[];
+    tv_results: TMDBTVSummary[];
+}
+
+// Exact resolution of an IMDb tt-id via /find. The proxy allowlist
+// anchors the path shape (find/tt\d+); external_source rides as a
+// forwarded param. TVDB ids (TV Time, stage 3) will get a sibling
+// wrapper with external_source=tvdb_id.
+export function findByImdbId(imdbId: string): Promise<TMDBFindResult> {
+    return callProxy(`find/${imdbId}`, { external_source: 'imdb_id' });
+}
+
 // Configuration changes very rarely; caller is expected to fetch this once
 // per app session and cache the result in memory (or persist it). Caching
 // itself is intentionally not wired here — keep this file a thin wrapper.

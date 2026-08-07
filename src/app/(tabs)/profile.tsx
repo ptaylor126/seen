@@ -21,6 +21,7 @@ import { TopFiveSections } from '@/components/top-five-sections';
 import { useProfile } from '@/hooks/use-profile';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
+import { LIBRARY_IMPORT_ENABLED } from '@/lib/feature-flags';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
 import {
     button,
@@ -134,6 +135,18 @@ export default function ProfileScreen() {
             // Function). Replaced the previous mailto: composer.
             onPress: () => router.push('/profile/feedback'),
         },
+        // Library import (stage 2) — hidden until the OTA that flips
+        // LIBRARY_IMPORT_ENABLED. Spread-conditional so the flag leaves
+        // no dead row behind.
+        ...(LIBRARY_IMPORT_ENABLED
+            ? [
+                  {
+                      id: 'import',
+                      label: 'Import your library',
+                      onPress: () => router.push('/profile/import'),
+                  },
+              ]
+            : []),
         {
             id: 'account',
             label: 'Account',
