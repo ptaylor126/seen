@@ -9,4 +9,4 @@
 // expo-document-picker ships in the iOS 1.0.6 / Android vc6 binaries for
 // this; the parsers, preview UI, and import screens are stage 2, by OTA.
 // Flip to true when stage 2 lands.
-export const LIBRARY_IMPORT_ENABLED = false;
+export const LIBRARY_IMPORT_ENABLED = true;
