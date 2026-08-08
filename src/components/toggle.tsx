@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { getPalette, spacing } from '@/theme/theme';
+import { getPalette, radius, spacing } from '@/theme/theme';
 
 // Small on/off switch (track + sliding thumb). Extracted verbatim from the
 // rating sheet (its share-rating + visibility toggles) so the title page's
@@ -47,14 +47,14 @@ const styles = StyleSheet.create({
     toggleTrack: {
         width: 46,
         height: 28,
-        borderRadius: 14,
-        padding: 2,
+        borderRadius: radius.full,
+        padding: spacing.xxs,
         flexDirection: 'row',
         alignItems: 'center',
     },
     toggleThumb: {
         width: 24,
         height: 24,
-        borderRadius: 12,
+        borderRadius: radius.full,
     },
 });

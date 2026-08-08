@@ -236,7 +236,7 @@ export default function AccountScreen() {
                     style={styles.modalFlex}
                     behavior="padding"
                 >
-                    <View style={styles.modalContainer}>
+                    <View style={[styles.modalContainer, { backgroundColor: palette.overlay }]}>
                         <Pressable
                             style={StyleSheet.absoluteFill}
                             onPress={closeConfirm}
@@ -393,7 +393,6 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
         paddingHorizontal: spacing.lg,
     },
     modalCard: {

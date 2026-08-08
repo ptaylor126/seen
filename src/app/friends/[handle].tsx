@@ -1456,8 +1456,8 @@ const styles = StyleSheet.create({
     tabUnderline: {
         height: 2,
         alignSelf: 'stretch',
-        marginTop: 2,
-        borderRadius: 1,
+        marginTop: spacing.xxs,
+        borderRadius: radius.full,
     },
     tabContentGap: { height: spacing.base },
     profileBlock: {

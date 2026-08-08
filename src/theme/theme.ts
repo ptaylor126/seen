@@ -223,6 +223,10 @@ export const typography = {
 } as const;
 
 export const spacing = {
+    // Sub-scale optical nudge — the 2pt micro-gap used between tightly
+    // stacked text lines, underlines, and badge insets. Added when token
+    // consolidation found seventeen literal `2`s serving this one role.
+    xxs: 2,
     xs: 4,
     sm: 8,
     md: 12,
@@ -329,6 +333,24 @@ export const fontFamily = {
 // the app. 1.5 reads as "thin and elegant" against the default 2;
 // keeps icon weight consistent across nav, headers, and inline.
 export const ICON_STROKE_WIDTH = 1.5;
+
+// On-image ink — fixed colours for text, icons and chip fills rendered
+// on top of photography (backdrops, posters, hero cards). Deliberately
+// scheme-INDEPENDENT and outside the palette: the surface behind them
+// is an image, not the theme background, so they must not flip with the
+// colour scheme (palette.textInverse would — wrong tool here).
+export const onImage = {
+    text: '#FFFFFF',
+    // Muted tier. Canonical value is the home hero's 0.82; the 0.78 and
+    // 0.85 variants that had accreted around the same role were
+    // consolidated onto it (sub-2% alpha shifts).
+    textMuted: 'rgba(255,255,255,0.82)',
+    textFaint: 'rgba(255,255,255,0.6)',
+    // Dark plum-tint pill/chip fill over images (home hero action chips,
+    // rec-screen pills). Canonical 0.88; the rec pill's 0.85 consolidated
+    // here.
+    chip: 'rgba(36, 26, 32, 0.88)',
+} as const;
 
 export type ColorScheme = 'light' | 'dark';
 

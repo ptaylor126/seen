@@ -993,7 +993,7 @@ const styles = StyleSheet.create({
         // radius.lg (24) and the poster is inset spacing.sm (8) on its top/
         // left/bottom, so its corners are 24 − 8 = 16 to stay concentric with
         // the bar's rounding rather than looking pasted on.
-        borderRadius: 16,
+        borderRadius: radius.lg - spacing.sm,
     },
     // Title + "· type" group; flex:1 fills the bar so the chevron pins to the
     // right edge and the title truncates instead of pushing it off.

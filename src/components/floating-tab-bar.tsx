@@ -70,7 +70,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getPalette, radius, spacing } from '@/theme/theme';
+import { getPalette, onImage, radius, spacing } from '@/theme/theme';
 
 // Bar's intrinsic height — sized for clear breathing room around the
 // active pill. Consumers of useFloatingTabBarInset() pick up changes
@@ -114,7 +114,7 @@ const BAR_TINT_DARK = 'rgba(42, 32, 48, 0.82)';
 const BLUR_INTENSITY = 40;
 // Icon on the coral active pill — white in both schemes. (palette.textInverse
 // is dark in dark mode, so it can't be reused here.) Reads on accent in both.
-const ON_PILL_ICON_COLOR = '#FFFFFF';
+const ON_PILL_ICON_COLOR = onImage.text;
 // Active-state motion — subtle + quick, no spring/bounce (frequent everyday
 // transition).
 const SLIDE_MS = 220;

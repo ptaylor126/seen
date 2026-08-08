@@ -538,7 +538,7 @@ const styles = StyleSheet.create({
     check: {
         width: 24,
         height: 24,
-        borderRadius: 12,
+        borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',
         margin: spacing.xs,

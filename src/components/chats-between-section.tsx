@@ -23,6 +23,7 @@ import {
     POSTER_STRIP_W,
 } from '@/theme/poster-layout';
 import {
+    onImage,
     getPalette,
     ICON_STROKE_WIDTH,
     radius,
@@ -244,7 +245,7 @@ export function ChatsBetweenSection({
                                 {g.count > 1 ? (
                                     <View style={styles.countPill}>
                                         <MessageCircle
-                                            color="#FFFFFF"
+                                            color={onImage.text}
                                             size={11}
                                             strokeWidth={ICON_STROKE_WIDTH}
                                         />
@@ -316,11 +317,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 3,
         paddingHorizontal: 5,
-        paddingVertical: 2,
+        paddingVertical: spacing.xxs,
         borderRadius: radius.sm,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
     },
     countText: {
-        color: '#FFFFFF',
+        color: onImage.text,
     },
 });

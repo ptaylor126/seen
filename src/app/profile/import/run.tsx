@@ -596,7 +596,7 @@ export default function ImportRunScreen() {
                 animationType="slide"
                 onRequestClose={() => setSheetKey(null)}
             >
-                <View style={styles.sheetScrim}>
+                <View style={[styles.sheetScrim, { backgroundColor: palette.overlay }]}>
                     <Pressable
                         style={StyleSheet.absoluteFill}
                         onPress={() => setSheetKey(null)}
@@ -941,7 +941,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
         paddingVertical: spacing.sm,
     },
-    previewRowText: { flex: 1, gap: 2 },
+    previewRowText: { flex: 1, gap: spacing.xxs },
     poster: {
         width: POSTER_W,
         height: POSTER_H,
@@ -988,7 +988,6 @@ const styles = StyleSheet.create({
     sheetScrim: {
         flex: 1,
         justifyContent: 'flex-end',
-        backgroundColor: 'rgba(0,0,0,0.5)',
     },
     sheet: {
         borderTopLeftRadius: radius.lg,

@@ -37,6 +37,7 @@ import { withSeasonSuffix } from '@/lib/title-scope';
 import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    onImage,
     button,
     fontFamily,
     getPalette,
@@ -879,9 +880,9 @@ export default function HomeScreen() {
         // case sits on the dark end of the gradient (white text
         // regardless of the page palette), the fallback case adapts
         // to light tokens since it's on surfaceAlt with no dark image.
-        const titleColor = hasBackdrop ? '#FFFFFF' : palette.text;
+        const titleColor = hasBackdrop ? onImage.text : palette.text;
         const noteColor = hasBackdrop
-            ? 'rgba(255,255,255,0.82)'
+            ? onImage.textMuted
             : palette.textMuted;
         return (
             <Pressable
@@ -959,7 +960,7 @@ export default function HomeScreen() {
                     accessibilityLabel={`View ${rec.sender.displayName}'s profile`}
                     style={[
                         styles.recommenderPill,
-                        { backgroundColor: 'rgba(36, 26, 32, 0.88)' },
+                        { backgroundColor: onImage.chip },
                     ]}
                 >
                     <Avatar
@@ -971,7 +972,7 @@ export default function HomeScreen() {
                     <Text
                         style={[
                             typography.caption,
-                            { color: 'rgba(255,255,255,0.6)' },
+                            { color: onImage.textFaint },
                         ]}
                         numberOfLines={1}
                     >
@@ -1001,11 +1002,11 @@ export default function HomeScreen() {
                     accessibilityLabel="Recommendation options"
                     style={({ pressed }) => [
                         styles.recOverflowButton,
-                        { backgroundColor: 'rgba(36, 26, 32, 0.88)' },
+                        { backgroundColor: onImage.chip },
                         pressed && { opacity: 0.6 },
                     ]}
                 >
-                    <MoreHorizontal color="#FFFFFF" size={18} strokeWidth={2} />
+                    <MoreHorizontal color={onImage.text} size={18} strokeWidth={2} />
                 </Pressable>
 
                 {/* Title + note, bottom-left, sitting on the dark end
@@ -1716,7 +1717,7 @@ const styles = StyleSheet.create({
         right: spacing.md,
         width: 28,
         height: 28,
-        borderRadius: 14,
+        borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -1838,7 +1839,7 @@ const styles = StyleSheet.create({
         // Stacked title + relative-time column. flex: 1 so it fills
         // the row between the poster and the Mark-watched pill.
         flex: 1,
-        gap: 2,
+        gap: spacing.xxs,
     },
     watchingSeparator: {
         height: StyleSheet.hairlineWidth,

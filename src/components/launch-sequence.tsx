@@ -25,9 +25,10 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { AnimatedLogo } from '@/components/animated-logo';
+import { palette } from '@/theme/theme';
 
 // MUST match app.json expo-splash-screen config for a seamless handoff.
-const SPLASH_BG = '#EFE7EC'; // = backgroundColor
+const SPLASH_BG = palette.light.bg; // = backgroundColor
 const SPLASH_LOGO_WIDTH = 240; // = imageWidth
 const FADE_MS = 250;
 // Minimum time the launch screen stays up so the eyes-loader phase is always

@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
         // the 48-tall row so the typed glyph baselines line up with
         // the @ baseline. Tune this value if the seam still reads off
         // — higher = more upward shift.
-        paddingBottom: 4,
+        paddingBottom: spacing.xs,
     },
     footerSticky: {
         // KeyboardStickyView pinned to the screen bottom; it lifts the footer

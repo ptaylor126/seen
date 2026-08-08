@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
         right: -6,
         width: 22,
         height: 22,
-        borderRadius: 11,
+        borderRadius: radius.full,
         borderWidth: 2,
         alignItems: 'center',
         justifyContent: 'center',

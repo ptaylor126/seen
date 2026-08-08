@@ -2667,7 +2667,7 @@ const styles = StyleSheet.create({
         top: spacing.md + AVATAR_SIZE / 2 - 4,
         width: 8,
         height: 8,
-        borderRadius: 4,
+        borderRadius: radius.full,
     },
     rowText: {
         flex: 1,
@@ -2691,7 +2691,7 @@ const styles = StyleSheet.create({
         // spacing from its sibling rows.
         alignSelf: 'flex-start',
         paddingHorizontal: spacing.sm,
-        paddingVertical: 2,
+        paddingVertical: spacing.xxs,
         borderRadius: radius.full,
     },
     watchedMarker: {
@@ -2703,7 +2703,7 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
         alignSelf: 'flex-start',
         paddingHorizontal: spacing.sm,
-        paddingVertical: 2,
+        paddingVertical: spacing.xxs,
         borderRadius: radius.full,
     },
     passedMarker: {
@@ -2715,7 +2715,7 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
         alignSelf: 'flex-start',
         paddingHorizontal: spacing.sm,
-        paddingVertical: 2,
+        paddingVertical: spacing.xxs,
         borderRadius: radius.full,
     },
     rowDimmed: {

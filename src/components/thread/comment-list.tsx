@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
         right: -12,
     },
     expandedTime: {
-        marginTop: 2,
+        marginTop: spacing.xxs,
     },
     expandedTimeMine: {
         alignSelf: 'flex-end',

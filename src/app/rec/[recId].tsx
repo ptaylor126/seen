@@ -63,6 +63,7 @@ import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    onImage,
     button,
     fontFamily,
     getPalette,
@@ -88,7 +89,7 @@ const REC_PILL_AVATAR_SIZE = 20;
 // composite is still ~(69,60,65) → ~9.5:1 against the white name text and
 // ~6:1 against the 0.78-alpha muted text; over a dark backdrop the text
 // carries (the pill edge may melt into the image, which is fine).
-const REC_PILL_FILL = 'rgba(36, 26, 32, 0.85)';
+const REC_PILL_FILL = onImage.chip;
 
 interface RecSummary {
     id: string;
@@ -1438,7 +1439,7 @@ export default function RecScreen() {
                                     style={[
                                         typography.caption,
                                         styles.recommenderName,
-                                        { color: '#FFFFFF' },
+                                        { color: onImage.text },
                                     ]}
                                     onPress={
                                         isMeSender
@@ -1472,7 +1473,7 @@ export default function RecScreen() {
                                     ]}
                                 >
                                     <MoreHorizontal
-                                        color="rgba(255,255,255,0.78)"
+                                        color={onImage.textMuted}
                                         size={16}
                                         strokeWidth={ICON_STROKE_WIDTH}
                                     />
@@ -1535,7 +1536,7 @@ export default function RecScreen() {
                                     style={[
                                         styles.overlayTitle,
                                         styles.overlayShadow,
-                                        { color: '#FFFFFF' },
+                                        { color: onImage.text },
                                     ]}
                                     numberOfLines={2}
                                 >
@@ -1545,7 +1546,7 @@ export default function RecScreen() {
                                     style={[
                                         typography.caption,
                                         styles.overlayShadow,
-                                        { color: 'rgba(255,255,255,0.85)' },
+                                        { color: onImage.textMuted },
                                     ]}
                                 >
                                     {[
@@ -2101,7 +2102,7 @@ const styles = StyleSheet.create({
         // Muted white for the verb + timeago (the name inside is full
         // white via recommenderName). Shrinks before the ⋯ if the row is
         // tight.
-        color: 'rgba(255,255,255,0.78)',
+        color: onImage.textMuted,
         flexShrink: 1,
     },
     recReportButton: {

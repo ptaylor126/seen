@@ -2,7 +2,7 @@ import { MotiView } from 'moti';
 import { StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
 
 import { type ReactionRow } from '@/components/thread/shared';
-import { getPalette, radius } from '@/theme/theme';
+import { getPalette, radius, spacing } from '@/theme/theme';
 
 // Fixed width per emoji in the reaction badge — generous enough that any
 // emoji's drawn bitmap (which iOS can render wider than its measured
@@ -74,8 +74,8 @@ const styles = StyleSheet.create({
         elevation: 1,
         borderRadius: radius.full,
         borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 4,
-        paddingVertical: 2,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: spacing.xxs,
     },
     // Small emoji text metrics on iOS are unreliable: the measured advance
     // differs from the drawn bitmap width, and the mismatch VARIES BY

@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Text, useColorScheme } from 'react-native';
 
-import { fontFamily, getPalette } from '@/theme/theme';
+import { fontFamily, getPalette, onImage } from '@/theme/theme';
 
 interface AvatarProps {
     avatarUrl: string | null;
@@ -98,7 +98,7 @@ export function Avatar({ avatarUrl, displayName, seedId, size }: AvatarProps) {
                     // dark-theme gradients aren't bright enough for
                     // near-black text (palette.textInverse) — the
                     // colour stays consistent regardless of scheme.
-                    color: '#FFFFFF',
+                    color: onImage.text,
                 }}
             >
                 {letter}

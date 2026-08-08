@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import NotificationsIcon from '../../assets/images/icon-notifications.svg';
-import { getPalette, ICON_STROKE_WIDTH, spacing, typography } from '@/theme/theme';
+import { ICON_STROKE_WIDTH, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface ScreenHeaderProps {
     title?: string;
@@ -160,7 +160,7 @@ const styles = StyleSheet.create({
         right: -6,
         minWidth: 16,
         height: 16,
-        borderRadius: 8,
+        borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 3,

@@ -2902,7 +2902,7 @@ const styles = StyleSheet.create({
         // Pill-styled region badge sitting opposite the section label.
         // surfaceAlt background keeps it quiet against the section.
         paddingHorizontal: spacing.sm,
-        paddingVertical: 2,
+        paddingVertical: spacing.xxs,
         borderRadius: radius.full,
         letterSpacing: 0.5,
     },
