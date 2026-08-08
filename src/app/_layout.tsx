@@ -30,6 +30,7 @@ import { ProfileProvider, useProfile } from '@/hooks/use-profile';
 import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
 import {
+    palette,
     paletteV2,
     STATUS_BAR_STYLE,
     THEME_V2_ENABLED,
@@ -220,24 +221,31 @@ function RootLayoutInner() {
     return (
         <LaunchReadyContext.Provider value={{ markDestinationReady }}>
             {/* App-wide default; banner screens override on focus and
-                restore to the same theme-driven value on blur.
-                backgroundColor is ANDROID-ONLY (iOS has no bar surface):
-                the binary's baked bar colour is the app.json-era light
-                value, which rendered as a white strip over the navy V2
-                app. Painted ground under V2, untouched under V1; the
-                translucency flag is deliberately NOT set — flipping it
-                changes Android's window-inset math app-wide (hero bleed,
-                sticky caps), and painting alone fixes the strip with
-                zero layout change. Prop is ignored with a warning on
-                edge-to-edge builds, where no bar surface exists to be
-                white in the first place. */}
-            <StatusBar
-                barStyle={STATUS_BAR_STYLE}
-                backgroundColor={
-                    THEME_V2_ENABLED ? paletteV2.bg : undefined
-                }
-            />
-            <Stack screenOptions={{ headerShown: false }}>
+                restore to the same theme-driven value on blur. NOTE: no
+                backgroundColor prop — the vc6 binary is edge-to-edge
+                (SDK 54 default: prebuild resolves edgeToEdgeEnabled =
+                `raw !== false` and app.json sets no key), where RN
+                ignores it with a warning; there IS no bar surface. The
+                white strip is an app-side view behind the transparent
+                bar — painted via the Stack contentStyle below. */}
+            <StatusBar barStyle={STATUS_BAR_STYLE} />
+            <Stack
+                screenOptions={{
+                    headerShown: false,
+                    // The native-stack content background behind every
+                    // screen. Default is a light platform colour — on the
+                    // edge-to-edge Android build it shows as a white strip
+                    // in the status-bar zone wherever a screen's own
+                    // background doesn't win the first frame, and as white
+                    // flashes during transitions. Theme ground under V2;
+                    // V1 keeps its light bg.
+                    contentStyle: {
+                        backgroundColor: THEME_V2_ENABLED
+                            ? paletteV2.bg
+                            : palette.light.bg,
+                    },
+                }}
+            >
                 {/* fullScreenModal (not 'modal'): the title page is reached
                     both standalone AND stacked over the rec view (itself a
                     modal). A nested 'modal' renders as a reduced card sheet
