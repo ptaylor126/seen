@@ -7,7 +7,7 @@ import {
     Users,
     X,
 } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
     Dimensions,
     FlatList,
@@ -39,7 +39,7 @@ import {
     setItemVisibility,
     type ItemVisibility,
 } from '@/lib/item-status';
-import { formatRatingStars } from '@/lib/rating';
+import { formatRatingStars, ratingGlyphs } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
@@ -139,6 +139,15 @@ const EMPTY_MESSAGES: Record<ItemStatus, string> = {
 // re-runs in useLibraryFilters while a tab is still loading).
 const NO_ROWS: LibraryRow[] = [];
 
+// One scroll container drives the whole screen (mirrors FriendLibrary):
+// data[0] is the sticky filter zone, the rest are list rows or manually
+// chunked grid rows — FlatList's numColumns is incompatible with
+// stickyHeaderIndices, so the grid chunks itself.
+type LibraryListItem =
+    | { type: 'filters' }
+    | { type: 'listRow'; row: LibraryRow }
+    | { type: 'gridRow'; rows: LibraryRow[] };
+
 const POSTER_WIDTH = 56;
 const POSTER_HEIGHT = 84;
 
@@ -207,6 +216,7 @@ export default function LibraryScreen() {
     const screenWidth = Dimensions.get('window').width;
     const insets = useSafeAreaInsets();
     const search = useSearchBar();
+    const listRef = useRef<FlatList<LibraryListItem>>(null);
     // Local-filter mode focus state — Home's SearchBarInput tracks
     // focus inside useSearchBar (via overlayVisible) and uses that
     // to render the Cancel button. Library's TextInput is custom
@@ -446,12 +456,6 @@ export default function LibraryScreen() {
         );
     }
 
-    // Leading-star variant for grid chips — "★4.5" reads tighter at
-    // small sizes than the trailing-star "4.5★" used in list rows.
-    function compactRatingStars(rating: number): string {
-        return `★${rating / 2}`;
-    }
-
     function renderGridCell({ item }: { item: LibraryRow }) {
         const cellWidth = getGridCellWidth(gridCols, screenWidth);
         const cellHeight = Math.floor(cellWidth * POSTER_ASPECT);
@@ -475,12 +479,16 @@ export default function LibraryScreen() {
                     })
                 }
                 style={({ pressed }) => [
-                    { width: cellWidth, height: cellHeight },
-                    styles.gridCell,
+                    { width: cellWidth },
                     pressed && { opacity: 0.6 },
                 ]}
                 accessibilityLabel={item.title}
             >
+                {/* Fixed-height poster box: the sender chip anchors to the
+                    POSTER's corner, not the (now taller) cell. */}
+                <View
+                    style={[styles.gridCell, { width: cellWidth, height: cellHeight }]}
+                >
                 {item.posterPath ? (
                     <Image
                         source={{ uri: imageUrl(item.posterPath, 'w342') }}
@@ -500,24 +508,6 @@ export default function LibraryScreen() {
                         ]}
                     />
                 )}
-
-                {showRating && item.rating !== null ? (
-                    <View
-                        style={[
-                            styles.gridRatingChip,
-                            { backgroundColor: palette.bg },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                styles.gridRatingText,
-                                { color: palette.text },
-                            ]}
-                        >
-                            {compactRatingStars(item.rating)}
-                        </Text>
-                    </View>
-                ) : null}
 
                 {firstSender ? (
                     <View
@@ -550,6 +540,19 @@ export default function LibraryScreen() {
                             </View>
                         ) : null}
                     </View>
+                ) : null}
+                </View>
+                {showRating && item.rating !== null ? (
+                    <Text
+                        style={[
+                            typography.micro,
+                            styles.gridStars,
+                            { color: palette.textMuted },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {ratingGlyphs(item.rating)}
+                    </Text>
                 ) : null}
             </Pressable>
         );
@@ -717,13 +720,18 @@ export default function LibraryScreen() {
         );
     }
 
-    return (
-        <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            {/* Header carries the bell alone. The grid/list toggle (and its
-                density popover) live on the filter line — a grid setting has
-                no business in the header. */}
-            <ScreenHeader title="Library" unreadCount={unreadCount} />
+    // ---- Single-scroll assembly. Header + search scroll away with the
+    // content; the filter zone (data[0]) pins at the top via
+    // stickyHeaderIndices. Mirrors FriendLibrary — same list shape, same
+    // chunked grid, same footer-borne status states — so the two library
+    // surfaces stay one pattern, not two collapse variants.
 
+    const listHeader = (
+        <>
+            {/* Header carries the bell alone; it scrolls away with the
+                search row. noTopInset: the screen renders a fixed
+                status-bar cap outside the scroll instead. */}
+            <ScreenHeader title="Library" unreadCount={unreadCount} noTopInset />
             {/* Search row: local-filter bar + adjacent "+" add affordance.
                 The bar dual-modes — wired to localQuery for in-library
                 filtering most of the time, swapping to the shared
@@ -873,6 +881,10 @@ export default function LibraryScreen() {
                             // so the keyboard comes up immediately
                             // (saves the second tap of "now tap the
                             // bar").
+                            listRef.current?.scrollToOffset({
+                                offset: 0,
+                                animated: false,
+                            });
                             search.handleFocus();
                             search.inputRef.current?.focus();
                         }}
@@ -895,15 +907,13 @@ export default function LibraryScreen() {
                     </Pressable>
                 )}
             </View>
+        </>
+    );
 
-            {/* Filter zone — the segmented status picker + the
-                media/sort/genre controls. No fill and no divider: the
-                controls sit on the page bg like everything else, with no
-                separator between them and the poster grid below. Vertical
-                padding only — children handle their own paddingHorizontal
-                so the genre chip strip inside LibraryFilterControls can
-                still scroll edge-to-edge. */}
-            <View style={styles.filterZone}>
+    // Sticky zone (data[0]): segmented status picker + filter controls.
+    // OPAQUE page-bg fill so rows scroll under it cleanly when pinned.
+    const filterZoneNode = (
+        <View style={[styles.filterZone, { backgroundColor: palette.bg }]}>
                 <View style={styles.segmentedRow}>
                     <SegmentedControl
                         options={TAB_OPTIONS}
@@ -936,105 +946,147 @@ export default function LibraryScreen() {
                     // grid-tap expands it in place to reveal 2/3/4 density.
                     view={{ mode, gridCols, setMode, setGridCols }}
                 />
-            </View>
+        </View>
+    );
 
-            {showLoader ? (
-                <FullScreenLoader style={styles.loaderTop} />
-            ) : error && !hasLoaded ? (
-                // Only surface the error when the tab has no cached rows. A
-                // failed background revalidation on an already-loaded tab
-                // keeps the last-good rows on screen instead.
-                <View style={styles.statusBlock}>
-                    <Text
-                        style={[typography.body, { color: palette.error }]}
-                        numberOfLines={3}
-                    >
-                        {error}
-                    </Text>
-                </View>
-            ) : filters.visibleRows.length === 0 ? (
-                // Two sub-cases share this branch:
-                //   1. No query → static empty copy for the tab, vertically
-                //      centered (keyboard isn't up — the user hasn't
-                //      started typing).
-                //   2. Query present → "no matches" copy + the Add
-                //      fallback, top-aligned because the keyboard is up
-                //      mid-search and a centered block + fallback would
-                //      sit behind it. Top-alignment keeps the fallback
-                //      visible and tappable without forcing the user to
-                //      dismiss the keyboard to reach it.
+    const showError = Boolean(error) && !hasLoaded;
+    const bodyItems: LibraryListItem[] = [];
+    if (!showLoader && !showError) {
+        if (mode === 'list') {
+            for (const row of filters.visibleRows) {
+                bodyItems.push({ type: 'listRow', row });
+            }
+        } else {
+            for (let i = 0; i < filters.visibleRows.length; i += gridCols) {
+                bodyItems.push({
+                    type: 'gridRow',
+                    rows: filters.visibleRows.slice(i, i + gridCols),
+                });
+            }
+        }
+    }
+    const listData: LibraryListItem[] = [{ type: 'filters' }, ...bodyItems];
+
+    // Status states render as the list FOOTER (below the pinned filter
+    // zone) so the sticky assembly never unmounts — switching to an
+    // empty/loading tab keeps the chrome stable.
+    const statusFooter = showLoader ? (
+        <View style={styles.footerLoader}>
+            <FullScreenLoader style={styles.loaderTop} />
+        </View>
+    ) : showError ? (
+        <View style={styles.footerStatus}>
+            <Text
+                style={[typography.body, { color: palette.error }]}
+                numberOfLines={3}
+            >
+                {error}
+            </Text>
+        </View>
+    ) : filters.visibleRows.length === 0 ? (
+        <View style={styles.footerStatus}>
+            <Text
+                style={[
+                    typography.body,
+                    styles.statusBlockText,
+                    { color: palette.textMuted },
+                ]}
+            >
+                {filters.localQuery.trim().length > 0
+                    ? rows.length === 0
+                        ? 'No matches — nothing in this tab yet.'
+                        : 'No matches in your library.'
+                    : filters.genreFilter !== null
+                      ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
+                      : EMPTY_MESSAGES[activeTab]}
+            </Text>
+            {renderAddFallback()}
+        </View>
+    ) : (
+        // Non-empty: the add fallback keeps its footer placement (covers
+        // the partial-match case where the user wanted a different title).
+        renderAddFallback()
+    );
+
+    function renderListItem({ item }: { item: LibraryListItem }) {
+        if (item.type === 'filters') return filterZoneNode;
+        if (item.type === 'gridRow') {
+            return (
                 <View
                     style={[
-                        styles.statusBlock,
-                        filters.localQuery.trim().length > 0 &&
-                            styles.statusBlockSearching,
+                        styles.bodyInset,
+                        styles.gridRow,
+                        { columnGap: GRID_GAP_BY_COLS[gridCols] },
                     ]}
                 >
-                    <Text
-                        style={[
-                            typography.body,
-                            styles.statusBlockText,
-                            { color: palette.textMuted },
-                        ]}
-                    >
-                        {filters.localQuery.trim().length > 0
-                            ? rows.length === 0
-                                ? 'No matches — nothing in this tab yet.'
-                                : 'No matches in your library.'
-                            : filters.genreFilter !== null
-                              ? `No ${TMDB_GENRE_NAMES.get(filters.genreFilter) ?? 'matching'} titles.`
-                              : EMPTY_MESSAGES[activeTab]}
-                    </Text>
-                    {renderAddFallback()}
+                    {item.rows.map((row) => (
+                        <View key={row.id}>{renderGridCell({ item: row })}</View>
+                    ))}
                 </View>
-            ) : mode === 'list' ? (
-                <FlatList
-                    key="list"
-                    data={filters.visibleRows}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderRow}
-                    contentContainerStyle={[
-                        styles.listContent,
-                        { paddingBottom: tabBarInset },
-                    ]}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    ItemSeparatorComponent={() => (
-                        <View
-                            style={[styles.separator, { backgroundColor: palette.border }]}
-                        />
-                    )}
-                    // Footer surfaces the Add fallback whenever there's
-                    // an active query — closes the partial-match gap
-                    // where "lord" matches one library item but the
-                    // user wanted a different Lord of the Rings.
-                    ListFooterComponent={renderAddFallback()}
-                />
-            ) : (
-                // FlatList can't change numColumns in place — key includes
-                // the column count so density changes trigger a clean
-                // unmount + remount.
-                <FlatList
-                    key={`grid-${gridCols}`}
-                    data={filters.visibleRows}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderGridCell}
-                    numColumns={gridCols}
-                    contentContainerStyle={[
-                        styles.gridContent,
-                        { paddingBottom: tabBarInset },
-                    ]}
-                    columnWrapperStyle={{
-                        columnGap: GRID_GAP_BY_COLS[gridCols],
-                    }}
-                    keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    ItemSeparatorComponent={() => (
-                        <View style={{ height: GRID_GAP_BY_COLS[gridCols] }} />
-                    )}
-                    ListFooterComponent={renderAddFallback()}
-                />
-            )}
+            );
+        }
+        return (
+            <View style={styles.bodyInset}>{renderRow({ item: item.row })}</View>
+        );
+    }
+
+    return (
+        <View style={[styles.root, { backgroundColor: palette.bg }]}>
+            {/* Fixed status-bar cap — the header scrolls away inside the
+                list below, so this keeps the clock/battery zone on an
+                opaque page bg (the sticky filter zone pins right under
+                it). */}
+            <View style={{ height: insets.top, backgroundColor: palette.bg }} />
+            <FlatList
+                ref={listRef}
+                data={listData}
+                keyExtractor={(item) =>
+                    item.type === 'filters'
+                        ? 'filters'
+                        : item.type === 'listRow'
+                          ? item.row.id
+                          : `gridrow-${item.rows.map((r) => r.id).join('-')}`
+                }
+                renderItem={renderListItem}
+                ListHeaderComponent={listHeader}
+                // ListHeaderComponent (header + search) is child 0; the
+                // sticky 'filters' item (data[0]) is child 1.
+                stickyHeaderIndices={[1]}
+                ListFooterComponent={statusFooter}
+                contentContainerStyle={{ paddingBottom: tabBarInset }}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                ItemSeparatorComponent={({
+                    leadingItem,
+                }: {
+                    leadingItem: LibraryListItem;
+                }) => {
+                    if (leadingItem.type === 'listRow') {
+                        return (
+                            <View style={styles.bodyInset}>
+                                <View
+                                    style={[
+                                        styles.separator,
+                                        { backgroundColor: palette.border },
+                                    ]}
+                                />
+                            </View>
+                        );
+                    }
+                    if (leadingItem.type === 'gridRow') {
+                        return (
+                            <View
+                                style={{ height: GRID_GAP_BY_COLS[gridCols] }}
+                            />
+                        );
+                    }
+                    // After the sticky filters row: grid gets a small top
+                    // gap (the old gridContent paddingTop); list sits flush.
+                    return mode === 'grid' ? (
+                        <View style={{ height: spacing.sm }} />
+                    ) : null;
+                }}
+            />
             {search.overlayVisible && (
                 <SearchBarOverlay
                     state={search}
@@ -1044,7 +1096,6 @@ export default function LibraryScreen() {
         </View>
     );
 }
-
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
@@ -1065,24 +1116,18 @@ const styles = StyleSheet.create({
         // gutters (paddingHorizontal: spacing.base elsewhere).
         paddingHorizontal: spacing.base,
     },
-    statusBlock: {
-        flex: 1,
+    footerStatus: {
         alignItems: 'center',
         justifyContent: 'center',
+        paddingTop: spacing.xl,
+        paddingBottom: spacing.xxl,
         paddingHorizontal: spacing.xl,
         gap: spacing.md,
     },
-    statusBlockSearching: {
-        // Override the centering of the default statusBlock when the
-        // user is actively searching: the keyboard is up, and a
-        // centered block would put the empty-state copy + the Add
-        // fallback link directly behind it. Top-aligned with a
-        // generous-but-bounded top padding so the content sits just
-        // below the controls row, well clear of any keyboard. Same
-        // style works portrait/landscape (app is portrait-locked, but
-        // robust regardless).
-        justifyContent: 'flex-start',
-        paddingTop: spacing.xl,
+    // Fixed-height box so FullScreenLoader's flex:1 has something to
+    // fill — as a plain list footer its height would collapse to 0.
+    footerLoader: {
+        height: 260,
     },
     // Top-anchor the loading eyes just under the filter row where list content
     // appears, instead of centring them in the tall content area below the
@@ -1162,10 +1207,11 @@ const styles = StyleSheet.create({
         // sizing so the icon and text stay perfectly aligned.
         paddingVertical: 0,
     },
-    listContent: {
-        // paddingBottom set inline at the FlatList via
-        // useFloatingTabBarInset.
+    bodyInset: {
         paddingHorizontal: spacing.base,
+    },
+    gridRow: {
+        flexDirection: 'row',
     },
     row: {
         flexDirection: 'row',
@@ -1201,39 +1247,18 @@ const styles = StyleSheet.create({
     recAttributionText: {
         flex: 1,
     },
-    gridContent: {
-        // paddingBottom set inline at the FlatList via
-        // useFloatingTabBarInset.
-        // paddingTop spacing.md (12) matches searchRow.marginBottom (12,
-        // the page-bg air strip ABOVE the filter zone) so the gap below
-        // the zone (band bottom edge → first poster) is symmetric with
-        // the gap above it.
-        paddingHorizontal: spacing.base,
-        paddingTop: spacing.md,
-    },
+
     gridCell: {
         position: 'relative',
     },
     gridPoster: {
         borderRadius: radius.sm,
     },
-    gridRatingChip: {
-        // Height tuned to match the sender chip's outer height: text
-        // lineHeight (18) + 2 × paddingVertical (3) = 24pt, same as the
-        // sender chip's 20pt avatar + 2 × 2pt border. Both anchored at
-        // bottom: spacing.xs so they sit on identical baselines, with
-        // identical tops — mirrored left / right corners.
-        position: 'absolute',
-        bottom: spacing.xs,
-        left: spacing.xs,
-        paddingHorizontal: spacing.xs,
-        paddingVertical: 3,
-        borderRadius: radius.sm,
-        opacity: 0.92,
-    },
-    gridRatingText: {
-        ...typography.caption,
-        fontWeight: '600',
+    // Star glyphs under the poster (replaced the on-poster overlay
+    // chip). Left-aligned; unrated cells render nothing below the
+    // poster — grid rows top-align, so poster rhythm is unchanged.
+    gridStars: {
+        marginTop: spacing.xxs,
     },
     gridSenderChip: {
         // Inset to match the rating chip on the opposite corner — same

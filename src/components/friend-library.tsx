@@ -21,7 +21,7 @@ import { SegmentedControl } from '@/components/segmented-control';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { type LibraryGridCols, useLibraryView } from '@/lib/library-view';
-import { formatRatingStars, type MediaType } from '@/lib/rating';
+import { formatRatingStars, ratingGlyphs, type MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
@@ -103,10 +103,6 @@ type LibraryListItem =
 
 // Leading-star variant — "★4.5" reads tighter at small chip sizes than the
 // trailing-star "4.5★" used in list rows. Mirrors the Library tab.
-function compactRatingStars(rating: number): string {
-    return `★${rating / 2}`;
-}
-
 function emptyMessage(status: ItemStatus, displayName: string): string {
     switch (status) {
         case 'watchlist':
@@ -236,8 +232,7 @@ export function FriendLibrary({
                     })
                 }
                 style={({ pressed }) => [
-                    { width: cellWidth, height: cellHeight },
-                    styles.gridCell,
+                    { width: cellWidth },
                     pressed && { opacity: 0.6 },
                 ]}
                 accessibilityLabel={item.title}
@@ -265,21 +260,16 @@ export function FriendLibrary({
                     />
                 )}
                 {showRating && item.rating !== null ? (
-                    <View
+                    <Text
                         style={[
-                            styles.gridRatingChip,
-                            { backgroundColor: palette.bg },
+                            typography.micro,
+                            styles.gridStars,
+                            { color: palette.textMuted },
                         ]}
+                        numberOfLines={1}
                     >
-                        <Text
-                            style={[
-                                styles.gridRatingText,
-                                { color: palette.text },
-                            ]}
-                        >
-                            {compactRatingStars(item.rating)}
-                        </Text>
-                    </View>
+                        {ratingGlyphs(item.rating)}
+                    </Text>
                 ) : null}
             </Pressable>
         );
@@ -649,23 +639,13 @@ const styles = StyleSheet.create({
         height: StyleSheet.hairlineWidth,
         marginLeft: POSTER_W + spacing.md,
     },
-    gridCell: {
-        position: 'relative',
-    },
     gridPoster: {
         borderRadius: radius.sm,
     },
-    gridRatingChip: {
-        position: 'absolute',
-        bottom: spacing.xs,
-        left: spacing.xs,
-        paddingHorizontal: spacing.xs,
-        paddingVertical: 3,
-        borderRadius: radius.sm,
-        opacity: 0.92,
-    },
-    gridRatingText: {
-        ...typography.caption,
-        fontWeight: '600',
+    // Star glyphs under the poster (replaced the on-poster overlay
+    // chip). Left-aligned; unrated cells render nothing — rows
+    // top-align so poster rhythm is unchanged either way.
+    gridStars: {
+        marginTop: spacing.xxs,
     },
 });

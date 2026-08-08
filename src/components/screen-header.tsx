@@ -22,6 +22,11 @@ interface ScreenHeaderProps {
     hideBell?: boolean;
     /** Extra right-side actions rendered before the Mail bell. */
     rightActions?: ReactNode;
+    /** Skip the built-in top safe-area inset. For headers rendered
+     *  INSIDE a scroll container (the Library tab scrolls its header
+     *  away) where the screen provides its own fixed status-bar cap —
+     *  keeping the SafeAreaView here would double the inset. */
+    noTopInset?: boolean;
     /** Renders the header on a plum (accent) background with inverse
      *  chrome — title, back chevron, and bell go white; the unread badge
      *  flips to white-on-plum so it doesn't vanish accent-on-accent. Used
@@ -37,6 +42,7 @@ export function ScreenHeader({
     hideBell = false,
     rightActions,
     onAccent = false,
+    noTopInset = false,
 }: ScreenHeaderProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -45,7 +51,7 @@ export function ScreenHeader({
 
     return (
         <SafeAreaView
-            edges={['top']}
+            edges={noTopInset ? [] : ['top']}
             style={{
                 backgroundColor: onAccent ? palette.accent : palette.bg,
             }}
