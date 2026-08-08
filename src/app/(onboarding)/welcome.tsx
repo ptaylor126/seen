@@ -1,4 +1,6 @@
 import { Image } from 'expo-image';
+
+import { WORDMARK } from '@/lib/brand';
 import { useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
@@ -15,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { OnboardingProgress } from '@/components/onboarding-progress';
 import { fontFamily, button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
-const logoSource = require('../../../assets/logo.png');
+const logoSource = WORDMARK;
 
 // ---------------------------------------------------------------------------
 // Animation choreography. One marquee moment — the Seen logo tunes in

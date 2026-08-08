@@ -1,6 +1,8 @@
 import { isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Image } from 'expo-image';
+
+import { WORDMARK } from '@/lib/brand';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import {
@@ -71,7 +73,7 @@ export default function SignInScreen() {
         <SafeAreaView style={[styles.root, { backgroundColor: palette.bg }]}>
             <View style={styles.centerCluster}>
                 <Image
-                    source={require('../../../assets/logo.png')}
+                    source={WORDMARK}
                     style={styles.logo}
                     contentFit="contain"
                     accessibilityLabel="Seen"

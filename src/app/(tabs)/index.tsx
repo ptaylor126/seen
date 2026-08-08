@@ -1,4 +1,6 @@
 import { Image } from 'expo-image';
+
+import { WORDMARK } from '@/lib/brand';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -1589,12 +1591,14 @@ export default function HomeScreen() {
             {/* Shared header (same code path as Profile/Friends/Library) so
                 the inbox bell aligns by construction. Home's left slot is the
                 logo wordmark instead of a title string — passed via `leading`.
-                logo.png is the bright-plum wordmark (#7A3960, the brand
-                accent), the same asset used by onboarding / sign-in / splash. */}
+                WORDMARK resolves the theme-correct bitmap (navy-era under
+                V2, plum under V1) via src/lib/brand.ts — split from the
+                native splash asset so the OTA can restyle it without
+                touching the fingerprint. */}
             <ScreenHeader
                 leading={
                     <Image
-                        source={require('../../../assets/logo.png')}
+                        source={WORDMARK}
                         style={styles.headerLogo}
                         contentFit="contain"
                         accessibilityLabel="Seen"
