@@ -29,7 +29,11 @@ import { LaunchReadyContext } from '@/hooks/use-launch-ready';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
 import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
-import { STATUS_BAR_STYLE } from '@/theme/theme';
+import {
+    paletteV2,
+    STATUS_BAR_STYLE,
+    THEME_V2_ENABLED,
+} from '@/theme/theme';
 
 // Pin the root navigator's initial/anchor route to (tabs). With three root
 // groups — (auth), (onboarding), (tabs) — and no app/index.tsx, expo-router
@@ -216,8 +220,23 @@ function RootLayoutInner() {
     return (
         <LaunchReadyContext.Provider value={{ markDestinationReady }}>
             {/* App-wide default; banner screens override on focus and
-                restore to the same theme-driven value on blur. */}
-            <StatusBar barStyle={STATUS_BAR_STYLE} />
+                restore to the same theme-driven value on blur.
+                backgroundColor is ANDROID-ONLY (iOS has no bar surface):
+                the binary's baked bar colour is the app.json-era light
+                value, which rendered as a white strip over the navy V2
+                app. Painted ground under V2, untouched under V1; the
+                translucency flag is deliberately NOT set — flipping it
+                changes Android's window-inset math app-wide (hero bleed,
+                sticky caps), and painting alone fixes the strip with
+                zero layout change. Prop is ignored with a warning on
+                edge-to-edge builds, where no bar surface exists to be
+                white in the first place. */}
+            <StatusBar
+                barStyle={STATUS_BAR_STYLE}
+                backgroundColor={
+                    THEME_V2_ENABLED ? paletteV2.bg : undefined
+                }
+            />
             <Stack screenOptions={{ headerShown: false }}>
                 {/* fullScreenModal (not 'modal'): the title page is reached
                     both standalone AND stacked over the rec view (itself a
