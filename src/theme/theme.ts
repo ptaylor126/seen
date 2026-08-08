@@ -12,6 +12,15 @@
 
 import { StyleSheet } from 'react-native';
 
+// ─── V2 redesign switch ────────────────────────────────────────────────
+// The exploratory redesign: navy V2 palette + Bricolage Grotesque/Manrope
+// type system. Flip to true LOCALLY to render V2; flip back before any
+// commit — shipping the redesign is a deliberate, separate act. A Metro
+// reload is required after flipping: typography and palette tokens are
+// consumed inside module-scope StyleSheet.create calls, so the value is
+// baked at bundle evaluation, not at render.
+export const THEME_V2_ENABLED = true;
+
 export const palette = {
     light: {
         // Light surface ramp carries a subtle plum undertone (R>B>G,
@@ -47,6 +56,10 @@ export const palette = {
         surfaceAlt: '#E4DAE1',
         text: '#1A1614',
         textMuted: '#6B6661',
+        // No V1 consumers yet — added so the Palette contract covers the
+        // V2 redesign's third text tier. Placeholder value a step lighter
+        // than textMuted; tune if a V1 surface ever adopts the tier.
+        textFaint: '#8C8781',
         textInverse: '#FFFFFF',
         border: '#D9CBD4',
         borderStrong: '#D4CCC1',
@@ -116,6 +129,8 @@ export const palette = {
         surfaceAlt: '#2A2420',
         text: '#F5F1EB',
         textMuted: '#A39E97',
+        // Parallel placeholder to light.textFaint (dark unvalidated).
+        textFaint: '#736E67',
         textInverse: '#15110F',
         border: '#2E2823',
         borderStrong: '#3F3832',
@@ -153,57 +168,113 @@ export const palette = {
     },
 } as const;
 
-// Each typography token references a specific Geist variant by its
-// loaded family name. RN's fontWeight prop is unreliable when a font
-// family has multiple weights — naming the exact face is the safest
-// way to render the intended weight on both platforms. fontWeight is
-// kept for accessibility tooling (VoiceOver weight reads) and as
-// fallback if the font hasn't loaded yet.
+// OS status-bar style follows the theme: V1 keeps dark icons over the
+// light palette; V2 is light icons everywhere over the navy. The root
+// layout renders this as the app-wide default; screens that flip the
+// bar over a banner (own profile, friend profile) restore to THIS, not
+// a hardcoded style, so the restore stays theme-correct.
+export const STATUS_BAR_STYLE: 'light-content' | 'dark-content' =
+    THEME_V2_ENABLED ? 'light-content' : 'dark-content';
+
+// ─── Type faces ────────────────────────────────────────────────────────
+// V1: Geist everywhere. V2: Manrope for everything except the display
+// tier (hero / display / headingDisplay), which takes Bricolage
+// Grotesque — scoped to screen titles, profile header names, and future
+// empty-state headlines, nothing else. Weight-for-weight mapping
+// (400/500/600/700), size scale untouched — hierarchy tuning comes
+// after the palette settles.
+const BODY_FACES = THEME_V2_ENABLED
+    ? {
+          default: 'Manrope_400Regular',
+          medium: 'Manrope_500Medium',
+          semibold: 'Manrope_600SemiBold',
+          bold: 'Manrope_700Bold',
+      }
+    : {
+          default: 'Geist_400Regular',
+          medium: 'Geist_500Medium',
+          semibold: 'Geist_600SemiBold',
+          bold: 'Geist_700Bold',
+      };
+const DISPLAY_FACE_BOLD = THEME_V2_ENABLED
+    ? 'BricolageGrotesque_700Bold'
+    : 'Geist_700Bold';
+const DISPLAY_FACE_SEMIBOLD = THEME_V2_ENABLED
+    ? 'BricolageGrotesque_600SemiBold'
+    : 'Geist_600SemiBold';
+
+// Each typography token references a specific loaded face by family
+// name — the ONLY weight mechanism in the app. fontWeight is banned
+// with custom families: Android resolves it by synthesizing (fake-bold
+// on top of an already-bold face, or fallback for weights the family
+// name can't satisfy) while iOS resolves differently, which is exactly
+// the cross-platform type drift the 2026-08 parity pass removed. Weight
+// changes go through fontFamily.<tier> / the display faces, never
+// fontWeight.
 export const typography = {
     // hero: reserved for marquee moments (onboarding welcome, splash).
     // Tight letter-spacing reads as confident headline copy rather
     // than generic large body text.
     hero: {
-        fontFamily: 'Geist_700Bold',
+        fontFamily: DISPLAY_FACE_BOLD,
         fontSize: 44,
-        fontWeight: '700' as const,
         lineHeight: 50,
         letterSpacing: -0.5,
     },
     display: {
-        fontFamily: 'Geist_700Bold',
+        fontFamily: DISPLAY_FACE_BOLD,
         fontSize: 32,
-        fontWeight: '700' as const,
         lineHeight: 38,
     },
     heading: {
-        fontFamily: 'Geist_600SemiBold',
+        fontFamily: BODY_FACES.semibold,
         fontSize: 22,
-        fontWeight: '600' as const,
+        lineHeight: 28,
+    },
+    // heading metrics in the DISPLAY face. Exists for the V2 role
+    // "profile header names get the display face at heading size" —
+    // under V1 it's identical to `heading`, so adopting it early is
+    // visually free. Do not reach for it outside the display-tier
+    // roles (screen titles / header names / empty-state headlines).
+    headingDisplay: {
+        fontFamily: DISPLAY_FACE_SEMIBOLD,
+        fontSize: 22,
         lineHeight: 28,
     },
     body: {
-        fontFamily: 'Geist_400Regular',
+        fontFamily: BODY_FACES.default,
         fontSize: 16,
-        fontWeight: '400' as const,
+        lineHeight: 22,
+    },
+    // Connective tissue in activity sentences ("X watched Y", "A is now
+    // your friend") — one step LIGHTER than body under V2 so the
+    // emphasized names/titles pop without pushing emphasis heavier.
+    // Long-form text (overviews, chat messages) stays on `body`. V1:
+    // identical to body.
+    bodyQuiet: {
+        fontFamily: THEME_V2_ENABLED ? 'Manrope_300Light' : BODY_FACES.default,
+        fontSize: 16,
         lineHeight: 22,
     },
     bodyEmphasis: {
-        fontFamily: 'Geist_600SemiBold',
+        // V2: BOLD, not semibold. Manrope's 400↔600 distance is smaller
+        // than Geist's, and the Geist-era emphasis was additionally
+        // inflated on Android by the (since-removed) redundant
+        // fontWeight's fake-bold — inline name/title emphasis inside
+        // body text (inbox activity rows) read as one weight at 600.
+        // V1 keeps Geist SemiBold, its original face.
+        fontFamily: THEME_V2_ENABLED ? 'Manrope_700Bold' : BODY_FACES.semibold,
         fontSize: 16,
-        fontWeight: '600' as const,
         lineHeight: 22,
     },
     caption: {
-        fontFamily: 'Geist_400Regular',
+        fontFamily: BODY_FACES.default,
         fontSize: 14,
-        fontWeight: '400' as const,
         lineHeight: 18,
     },
     micro: {
-        fontFamily: 'Geist_500Medium',
+        fontFamily: BODY_FACES.medium,
         fontSize: 12,
-        fontWeight: '500' as const,
         lineHeight: 16,
     },
     // Section-label tier — an uppercase, letter-spaced eyebrow that labels a
@@ -213,9 +284,8 @@ export const typography = {
     // rendered in textMuted by its consumers, so heading vs content read as
     // two distinct tiers. Used by the friend profile's banded sections.
     overline: {
-        fontFamily: 'Geist_600SemiBold',
+        fontFamily: BODY_FACES.semibold,
         fontSize: 12,
-        fontWeight: '600' as const,
         lineHeight: 16,
         letterSpacing: 0.8,
         textTransform: 'uppercase' as const,
@@ -278,8 +348,10 @@ export const chip = {
 // existing pills, ghost/text buttons, icon circles, the tab bar, segmented
 // controls, or chips.
 export const button = {
-    paddingVertical: 14,
-    borderRadius: radius.md,
+    // V2 exploration: one spacing step taller (base 16 vs the custom 14 —
+    // ~54pt vs ~50pt) and fully-rounded pill ends. V1 unchanged.
+    paddingVertical: THEME_V2_ENABLED ? spacing.base : 14,
+    borderRadius: THEME_V2_ENABLED ? radius.full : radius.md,
 } as const;
 
 export const motion = {
@@ -322,12 +394,7 @@ export const elevation = {
 // Font family — values come into effect once @expo-google-fonts/geist is
 // loaded via expo-font in the root layout. Until then, components fall
 // through to the system font.
-export const fontFamily = {
-    default: 'Geist_400Regular',
-    medium: 'Geist_500Medium',
-    semibold: 'Geist_600SemiBold',
-    bold: 'Geist_700Bold',
-} as const;
+export const fontFamily = BODY_FACES;
 
 // Single-source stroke width for every lucide-react-native icon in
 // the app. 1.5 reads as "thin and elegant" against the default 2;
@@ -346,10 +413,13 @@ export const onImage = {
     // consolidated onto it (sub-2% alpha shifts).
     textMuted: 'rgba(255,255,255,0.82)',
     textFaint: 'rgba(255,255,255,0.6)',
-    // Dark plum-tint pill/chip fill over images (home hero action chips,
-    // rec-screen pills). Canonical 0.88; the rec pill's 0.85 consolidated
-    // here.
-    chip: 'rgba(36, 26, 32, 0.88)',
+    // Dark pill/chip fill over images (home hero action chips, rec-screen
+    // pills, title-page close button). V1: the plum-era warm black
+    // (canonical 0.88; the rec pill's 0.85 consolidated here). V2: re-hued
+    // to the ground family — the warm black read brown over warm artwork.
+    chip: THEME_V2_ENABLED
+        ? 'rgba(10, 12, 32, 0.9)'
+        : 'rgba(36, 26, 32, 0.88)',
 } as const;
 
 export type ColorScheme = 'light' | 'dark';
@@ -376,4 +446,74 @@ export type Palette = {
     >;
 };
 
-export const getPalette = (scheme: ColorScheme): Palette => palette[scheme];
+// ─── V2 palette (exploratory redesign) ─────────────────────────────────
+// Deep-navy system. Values marked "provisional" are expected to move
+// during on-device tuning rounds — treat this block as the live tuning
+// surface. onImage.* stays scheme-independent by design and is shared.
+// Reserved, not yet a token: solid #D5CFEB for rare high-emphasis chips
+// with dark text — introduce a named token with its first consumer.
+export const paletteV2: Palette = {
+    // The darkest navy — the canvas.
+    bg: '#0B0D26',
+    bgTransparent: 'rgba(11,13,38,0)',
+    // Ground lifted ~6% lightness, same hue. PROVISIONAL — tune on device.
+    surface: '#151838',
+    // PROVISIONAL (unspecified in the brief): elevated cards, a step
+    // above surface toward surfaceAlt, same hue family.
+    surfaceElevated: '#1D2150',
+    // The mid navy — EMPHASIS surfaces only (selected states, sticky
+    // filter zone, tab bar). Not the default card colour.
+    surfaceAlt: '#162954',
+    text: '#E6E6E6',
+    // PROVISIONAL — stepped down, warmed toward the navy. WCAG-checked:
+    // 5.68:1 on surfaceAlt (clears the 4.5:1 bar for metadata on the
+    // sticky zone), 6.89:1 on surface, 7.64:1 on ground.
+    textMuted: '#9FA3B8',
+    // PROVISIONAL.
+    textFaint: '#6B6F85',
+    // Dark navy on the light lavender accent (ground reused).
+    textInverse: '#0B0D26',
+    // TUNING: alpha temporarily 0.3 (spec value 0.08) to make every
+    // border consumer visible while dialling by eye. Walk down
+    // 0.3 → 0.15 → 0.12 → 0.10 with fast refresh, then settle.
+    border: 'rgba(230,230,230,0.25)',
+    // PROVISIONAL — border at double alpha.
+    borderStrong: 'rgba(230,230,230,0.16)',
+    accent: '#9D8DF0',
+    // PROVISIONAL — accent stepped down for pressed states.
+    accentPressed: '#8878DC',
+    // accentMuted per the brief: #D5CFEB at 18% over surface, for wash
+    // and selected fills. Both wash-role tokens share it.
+    accentSubtle: 'rgba(213,207,235,0.18)',
+    accentWash: 'rgba(213,207,235,0.18)',
+    // PROVISIONAL — carried from the dark palette (built for dark bg).
+    success: '#6FA86E',
+    warning: '#E4AC4D',
+    error: '#D75B4D',
+    overlay: 'rgba(0,0,0,0.6)',
+    shadow: '#000000',
+    // Carried from the dark palette: contrast-verified for the white
+    // initial on dark grounds. PROVISIONAL until an accent-family pass.
+    avatarFallbacks: palette.dark.avatarFallbacks,
+};
+
+// V2: hairline frame on poster artwork so dark posters keep a defined
+// edge against ground (dark art on dark canvas otherwise dissolves).
+// Empty object under V1 — spreading it into a style is a no-op, so the
+// 28 duplicated poster styles across the app all take `...posterFrame`
+// unconditionally. Border colour is the V2 border token; the frame only
+// exists under V2 so it never needs the V1 palette.
+export const posterFrame = THEME_V2_ENABLED
+    ? {
+          // TUNING: bumped from StyleSheet.hairlineWidth so the frame is
+          // clearly visible while dialling the border alpha by eye.
+          borderWidth: 1,
+          borderColor: paletteV2.border,
+      }
+    : {};
+
+// V2 ignores the colour scheme: the redesign is a single dark-navy
+// system (the app pins userInterfaceStyle to light anyway, so `scheme`
+// is 'light' today in both branches).
+export const getPalette = (scheme: ColorScheme): Palette =>
+    THEME_V2_ENABLED ? paletteV2 : palette[scheme];

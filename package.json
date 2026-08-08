@@ -13,8 +13,10 @@
     "postinstall": "patch-package"
   },
   "dependencies": {
+    "@expo-google-fonts/bricolage-grotesque": "^0.4.1",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo-google-fonts/geist": "^0.4.2",
+    "@expo-google-fonts/manrope": "^0.4.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-google-signin/google-signin": "^16.1.2",
     "@react-navigation/bottom-tabs": "^7.4.0",
@@ -52,6 +54,7 @@
     "fflate": "^0.8.3",
     "lucide-react-native": "^1.16.0",
     "moti": "^0.30.0",
+    "phosphor-react-native": "^3.0.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",

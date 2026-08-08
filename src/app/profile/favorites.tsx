@@ -1,6 +1,10 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { GripVertical, Plus, X } from 'lucide-react-native';
+import {
+    DotsSixVertical,
+    Plus,
+    X,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -38,8 +42,8 @@ import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -727,10 +731,9 @@ export default function EditFavoritesScreen() {
                         pressed && { opacity: 0.6 },
                     ]}
                 >
-                    <GripVertical
+                    <DotsSixVertical
                         color={palette.textMuted}
                         size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text
@@ -783,7 +786,6 @@ export default function EditFavoritesScreen() {
                     <X
                         color={palette.textMuted}
                         size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
             </View>
@@ -867,7 +869,6 @@ export default function EditFavoritesScreen() {
                 <Plus
                     color={palette.accent}
                     size={18}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
                 <Text style={[typography.bodyEmphasis, { color: palette.accent }]}>
                     {isFull
@@ -1215,6 +1216,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     rowPoster: {
+        ...posterFrame,
         width: 40,
         height: 60,
         borderRadius: radius.sm,

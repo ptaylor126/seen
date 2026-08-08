@@ -2,7 +2,12 @@ import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
-import { Check, ChevronLeft, ImagePlus, X } from 'lucide-react-native';
+import {
+    CaretLeft,
+    Check,
+    ImageSquare,
+    X,
+} from 'phosphor-react-native';
 import { useState } from 'react';
 import {
     ActivityIndicator,
@@ -23,7 +28,6 @@ import supabase from '@/lib/supabase';
 import {
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -172,10 +176,9 @@ export default function FeedbackScreen() {
                         pressed && { opacity: 0.6 },
                     ]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.text}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text
@@ -211,7 +214,6 @@ export default function FeedbackScreen() {
                         <Check
                             color={palette.accent}
                             size={32}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </View>
                     <Text
@@ -375,7 +377,6 @@ export default function FeedbackScreen() {
                                         <X
                                             color={palette.bg}
                                             size={14}
-                                            strokeWidth={ICON_STROKE_WIDTH}
                                         />
                                     </Pressable>
                                 </View>
@@ -403,10 +404,9 @@ export default function FeedbackScreen() {
                                     <ActivityIndicator color={palette.accent} />
                                 ) : (
                                     <>
-                                        <ImagePlus
+                                        <ImageSquare
                                             color={palette.textMuted}
                                             size={20}
-                                            strokeWidth={ICON_STROKE_WIDTH}
                                         />
                                         <Text
                                             style={[

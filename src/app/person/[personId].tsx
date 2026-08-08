@@ -1,6 +1,8 @@
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { X } from 'lucide-react-native';
+import {
+    X,
+} from 'phosphor-react-native';
 import { useEffect, useState } from 'react';
 import {
     Dimensions,
@@ -24,8 +26,8 @@ import {
     type TMDBPersonDetail,
 } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -208,7 +210,7 @@ export default function PersonScreen() {
                     },
                 ]}
             >
-                <X color={palette.text} size={20} strokeWidth={ICON_STROKE_WIDTH} />
+                <X color={palette.text} size={20} />
             </Pressable>
 
             {showLoader ? (
@@ -399,6 +401,7 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     poster: {
+        ...posterFrame,
         width: CELL_WIDTH,
         height: CELL_HEIGHT,
         borderRadius: radius.sm,

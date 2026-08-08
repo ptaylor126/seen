@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Check, ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+    Check,
+} from 'phosphor-react-native';
 import { useEffect, useState } from 'react';
 import {
     Alert,
@@ -35,9 +38,9 @@ import {
     type TMDBTVSummary,
 } from '@/lib/tmdb';
 import {
+    posterFrame,
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -378,10 +381,9 @@ export default function PosterGridScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
             </View>
@@ -505,7 +507,6 @@ function PosterTileView({
                         <Check
                             color={palette.textInverse}
                             size={16}
-                            strokeWidth={3}
                         />
                     </View>
                 </View>
@@ -523,6 +524,7 @@ const styles = StyleSheet.create({
     gridContent: { paddingTop: spacing.xs, paddingBottom: spacing.lg },
     gridRow: { gap: spacing.sm, marginBottom: spacing.sm },
     tile: {
+        ...posterFrame,
         flex: 1,
         aspectRatio: 2 / 3, // poster ratio (taller than wide)
         borderRadius: radius.sm,

@@ -1,6 +1,8 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { MessageCircle } from 'lucide-react-native';
+import {
+    ChatCircle,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     Pressable,
@@ -23,9 +25,9 @@ import {
     POSTER_STRIP_W,
 } from '@/theme/poster-layout';
 import {
+    posterFrame,
     onImage,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -244,10 +246,9 @@ export function ChatsBetweenSection({
                                     badge (accent, top-right). Only when >1. */}
                                 {g.count > 1 ? (
                                     <View style={styles.countPill}>
-                                        <MessageCircle
+                                        <ChatCircle
                                             color={onImage.text}
                                             size={11}
-                                            strokeWidth={ICON_STROKE_WIDTH}
                                         />
                                         <Text
                                             style={[
@@ -306,6 +307,7 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     poster: {
+        ...posterFrame,
         width: '100%',
         height: '100%',
     },

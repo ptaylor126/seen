@@ -1,13 +1,13 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
-    ChevronLeft,
-    MessageSquarePlus,
-    MoreHorizontal,
-    MoreVertical,
-    Send,
+    CaretLeft,
+    ChatText,
+    DotsThree,
+    DotsThreeVertical,
+    PaperPlaneTilt,
     UserPlus,
-} from 'lucide-react-native';
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -49,11 +49,12 @@ import {
     POSTER_STRIP_W as REC_BETWEEN_POSTER_W,
 } from '@/theme/poster-layout';
 import {
+    posterFrame,
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
+    STATUS_BAR_STYLE,
     typography,
 } from '@/theme/theme';
 
@@ -178,7 +179,7 @@ export default function FriendDetailScreen() {
         useCallback(() => {
             if (!isFriendsBranch) return;
             StatusBar.setBarStyle('light-content');
-            return () => StatusBar.setBarStyle('dark-content');
+            return () => StatusBar.setBarStyle(STATUS_BAR_STYLE);
         }, [isFriendsBranch]),
     );
     // Friend's top 5 lists. RLS gates the read at the DB layer (favorites
@@ -519,10 +520,9 @@ export default function FriendDetailScreen() {
             hitSlop={spacing.sm}
             style={({ pressed }) => [pressed && { opacity: 0.6 }]}
         >
-            <ChevronLeft
+            <CaretLeft
                 color={color}
                 size={28}
-                strokeWidth={ICON_STROKE_WIDTH}
             />
         </Pressable>
     );
@@ -591,7 +591,7 @@ export default function FriendDetailScreen() {
                         size={AVATAR_SIZE}
                     />
                     <Text
-                        style={[typography.heading, { color: palette.text }]}
+                        style={[typography.headingDisplay, { color: palette.text }]}
                         numberOfLines={1}
                     >
                         {state.profile.displayName}
@@ -626,7 +626,6 @@ export default function FriendDetailScreen() {
                         <UserPlus
                             color={palette.textInverse}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
@@ -822,10 +821,9 @@ export default function FriendDetailScreen() {
                         },
                     ]}
                 >
-                    <Send
+                    <PaperPlaneTilt
                         color={palette.textInverse}
                         size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
                         style={[
@@ -850,10 +848,9 @@ export default function FriendDetailScreen() {
                         { opacity: pressed ? 0.6 : 1 },
                     ]}
                 >
-                    <MessageSquarePlus
+                    <ChatText
                         color={palette.textMuted}
                         size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
                         style={[
@@ -1126,10 +1123,9 @@ export default function FriendDetailScreen() {
                                         pressed && { opacity: 0.5 },
                                     ]}
                                 >
-                                    <MoreHorizontal
+                                    <DotsThree
                                         color={palette.textMuted}
                                         size={18}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </Pressable>
                             </Pressable>
@@ -1165,10 +1161,9 @@ export default function FriendDetailScreen() {
                                 (pressed || removing) && { opacity: 0.5 },
                             ]}
                         >
-                            <MoreVertical
+                            <DotsThreeVertical
                                 size={22}
                                 color={palette.textInverse}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     </View>
@@ -1264,7 +1259,11 @@ export default function FriendDetailScreen() {
                         <View style={styles.nameBlock}>
                             <Text
                                 style={[
-                                    typography.heading,
+                                    // Display face at heading size — the
+                                    // friend-profile header name is a V2
+                                    // display-tier role (identical to
+                                    // heading while V1 is active).
+                                    typography.headingDisplay,
                                     { color: palette.text },
                                 ]}
                                 numberOfLines={1}
@@ -1505,6 +1504,7 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     recBetweenPoster: {
+        ...posterFrame,
         width: REC_BETWEEN_POSTER_W,
         height: REC_BETWEEN_POSTER_H,
         borderRadius: radius.sm,
@@ -1525,6 +1525,7 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
     },
     reviewPoster: {
+        ...posterFrame,
         width: REVIEW_POSTER_W,
         height: REVIEW_POSTER_H,
         borderRadius: radius.sm,

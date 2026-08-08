@@ -25,10 +25,10 @@
  */
 
 import {
-    ArrowDownUp,
-    LayoutGrid,
-    LayoutList,
-} from 'lucide-react-native';
+    ArrowsDownUp,
+    Rows,
+    SquaresFour,
+} from 'phosphor-react-native';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, {
@@ -52,8 +52,8 @@ import {
     type SortOption,
 } from '@/lib/use-library-filters';
 import {
+    fontFamily,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
 } from '@/theme/theme';
@@ -242,10 +242,9 @@ export function LibraryFilterControls({
                             accessibilityLabel={`Sort by ${SORT_LABELS[sortBy]}`}
                             accessibilityRole="button"
                         >
-                            <ArrowDownUp
+                            <ArrowsDownUp
                                 color={palette.text}
                                 size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     </View>
@@ -304,14 +303,13 @@ export function LibraryFilterControls({
                                     onPress={handleList}
                                     accessibilityLabel="List view"
                                 >
-                                    <LayoutList
+                                    <Rows
                                         color={
                                             view.mode === 'list'
                                                 ? palette.accent
                                                 : palette.textMuted
                                         }
                                         size={18}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </ToggleCell>
                                 <ToggleCell
@@ -326,14 +324,13 @@ export function LibraryFilterControls({
                                             : 'Grid view'
                                     }
                                 >
-                                    <LayoutGrid
+                                    <SquaresFour
                                         color={
                                             view.mode === 'grid'
                                                 ? palette.accent
                                                 : palette.textMuted
                                         }
                                         size={18}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </ToggleCell>
                             </View>
@@ -535,7 +532,7 @@ const styles = StyleSheet.create({
     },
     densityNumber: {
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: fontFamily.bold,
         lineHeight: 16,
     },
     genreScrollRow: {

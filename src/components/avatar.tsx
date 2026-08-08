@@ -90,7 +90,6 @@ export function Avatar({ avatarUrl, displayName, seedId, size }: AvatarProps) {
                     // the rest of the Geist-rendered UI.
                     fontFamily: fontFamily.semibold,
                     fontSize,
-                    fontWeight: '600',
                     // White in BOTH themes — every gradient's lighter
                     // stop is dark enough for white at ≥4.5:1 (see the
                     // contrast note in theme.ts). Using a fixed white

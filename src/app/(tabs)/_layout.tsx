@@ -3,12 +3,14 @@ import { Tabs } from 'expo-router';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
-import FriendsIcon from '../../../assets/images/navbar/icon-friends.svg';
-import HomeIcon from '../../../assets/images/navbar/icon-home.svg';
-import LibraryIcon from '../../../assets/images/navbar/icon-library.svg';
-import ProfileIcon from '../../../assets/images/navbar/icon-profile.svg';
+import {
+    FilmStrip,
+    House,
+    Users,
+} from 'phosphor-react-native';
 
 import { FloatingTabBar } from '@/components/floating-tab-bar';
+import { ProfileTabAvatar } from '@/components/profile-tab-avatar';
 import { useSession } from '@/hooks/use-session';
 import {
     UnreadCountProvider,
@@ -119,21 +121,22 @@ export default function TabsLayout() {
                     headerShown: false,
                 }}
             >
-                {/* Custom Figma nav icons (assets/images/navbar/). The
-                    color prop resolves the SVGs' `stroke="currentColor"`
-                    so the tab bar's tabBarActiveTintColor /
-                    tabBarInactiveTintColor (plum / textMuted) recolour
-                    each icon automatically. width/height take react
-                    navigation's size token. strokeWidth not passed —
-                    each SVG bakes its own stroke (1.2 as exported from
-                    Figma; design pass may bump to ICON_STROKE_WIDTH=1.5
-                    later). */}
+                {/* Phosphor nav icons (replaced the custom Figma SVGs in
+                    the V2 icon pass). `focused` maps to weight: linear
+                    (regular) at rest, filled when active — the floating
+                    bar calls each icon with focused:false for its muted
+                    base layer and focused:true for the white on-pill
+                    overlay, so the pill slide cross-fades regular→fill. */}
                 <Tabs.Screen
                     name="index"
                     options={{
                         title: 'Home',
-                        tabBarIcon: ({ color, size }) => (
-                            <HomeIcon color={color} width={size} height={size} />
+                        tabBarIcon: ({ focused, color, size }) => (
+                            <House
+                                color={color}
+                                size={size}
+                                weight={focused ? 'fill' : 'regular'}
+                            />
                         ),
                     }}
                 />
@@ -141,8 +144,12 @@ export default function TabsLayout() {
                     name="library"
                     options={{
                         title: 'Library',
-                        tabBarIcon: ({ color, size }) => (
-                            <LibraryIcon color={color} width={size} height={size} />
+                        tabBarIcon: ({ focused, color, size }) => (
+                            <FilmStrip
+                                color={color}
+                                size={size}
+                                weight={focused ? 'fill' : 'regular'}
+                            />
                         ),
                     }}
                 />
@@ -150,8 +157,12 @@ export default function TabsLayout() {
                     name="friends"
                     options={{
                         title: 'Friends',
-                        tabBarIcon: ({ color, size }) => (
-                            <FriendsIcon color={color} width={size} height={size} />
+                        tabBarIcon: ({ focused, color, size }) => (
+                            <Users
+                                color={color}
+                                size={size}
+                                weight={focused ? 'fill' : 'regular'}
+                            />
                         ),
                     }}
                 />
@@ -159,8 +170,15 @@ export default function TabsLayout() {
                     name="profile"
                     options={{
                         title: 'Profile',
-                        tabBarIcon: ({ color, size }) => (
-                            <ProfileIcon color={color} width={size} height={size} />
+                        // The signed-in user's avatar (shared Avatar via
+                        // the root ProfileProvider). Active = accent ring,
+                        // not fill — see ProfileTabAvatar.
+                        tabBarIcon: ({ focused, color, size }) => (
+                            <ProfileTabAvatar
+                                focused={focused}
+                                color={color}
+                                size={size}
+                            />
                         ),
                     }}
                 />

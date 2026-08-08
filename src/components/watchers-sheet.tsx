@@ -1,5 +1,9 @@
 import { Image } from 'expo-image';
-import { Check, ChevronRight, MessageCircle } from 'lucide-react-native';
+import {
+    CaretRight,
+    ChatCircle,
+    Check,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     Animated,
@@ -19,8 +23,9 @@ import { Avatar } from '@/components/avatar';
 import { ratingGlyphs } from '@/lib/rating';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    fontFamily,
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -190,10 +195,9 @@ export function WatchersSheet({
                         pressed && { opacity: 0.6 },
                     ]}
                 >
-                    <MessageCircle
+                    <ChatCircle
                         color={palette.textMuted}
                         size={14}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
                         style={[
@@ -336,10 +340,9 @@ export function WatchersSheet({
                                     {titleHeader.caption}
                                 </Text>
                             </View>
-                            <ChevronRight
+                            <CaretRight
                                 color={palette.textMuted}
                                 size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     ) : null}
@@ -426,9 +429,6 @@ export function WatchersSheet({
                                                 <Check
                                                     color={palette.textInverse}
                                                     size={14}
-                                                    strokeWidth={
-                                                        ICON_STROKE_WIDTH
-                                                    }
                                                 />
                                             </View>
                                         ) : null}
@@ -478,16 +478,13 @@ export function WatchersSheet({
                                                     pressed && { opacity: 0.5 },
                                                 ]}
                                             >
-                                                <MessageCircle
+                                                <ChatCircle
                                                     color={
                                                         expanded
                                                             ? palette.accent
                                                             : palette.textMuted
                                                     }
                                                     size={20}
-                                                    strokeWidth={
-                                                        ICON_STROKE_WIDTH
-                                                    }
                                                 />
                                             </Pressable>
                                         </Pressable>
@@ -565,6 +562,7 @@ const styles = StyleSheet.create({
         marginBottom: spacing.base,
     },
     titleHeaderPoster: {
+        ...posterFrame,
         width: 44,
         height: 66,
         borderRadius: radius.sm / 2,
@@ -596,8 +594,10 @@ const styles = StyleSheet.create({
         flexShrink: 1,
     },
     rating: {
-        // Medium weight so the stars read as a value, not body text.
-        fontWeight: '500',
+        // Semibold so the stars read as a value, not body text — medium
+        // was one step from the surrounding regular text, imperceptible
+        // at caption size (weight-contrast pass, 2026-08-08).
+        fontFamily: fontFamily.semibold,
         flexShrink: 0,
     },
     chatIcon: {
@@ -632,7 +632,7 @@ const styles = StyleSheet.create({
         borderRadius: radius.full,
     },
     messageChipText: {
-        fontWeight: '500',
+        fontFamily: fontFamily.medium,
     },
     writeChip: {
         flexDirection: 'row',

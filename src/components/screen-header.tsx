@@ -1,11 +1,13 @@
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import NotificationsIcon from '../../assets/images/icon-notifications.svg';
-import { ICON_STROKE_WIDTH, getPalette, radius, spacing, typography } from '@/theme/theme';
+import { fontFamily, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface ScreenHeaderProps {
     title?: string;
@@ -63,10 +65,9 @@ export function ScreenHeader({
                         hitSlop={spacing.sm}
                         style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                     >
-                        <ChevronLeft
+                        <CaretLeft
                             color={onAccent ? palette.textInverse : palette.accent}
                             size={28}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 )}
@@ -173,6 +174,6 @@ const styles = StyleSheet.create({
     },
     badgeText: {
         fontSize: 10,
-        fontWeight: '700',
+        fontFamily: fontFamily.bold,
     },
 });

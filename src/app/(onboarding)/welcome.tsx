@@ -13,7 +13,7 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { button, getPalette, radius, spacing, typography } from '@/theme/theme';
+import { fontFamily, button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 const logoSource = require('../../../assets/logo.png');
 
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
     },
     subtext: {
         fontSize: 18,
-        fontWeight: '500',
+        fontFamily: fontFamily.medium,
         lineHeight: 26,
         textAlign: 'center',
     },

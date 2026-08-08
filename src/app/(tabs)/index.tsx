@@ -1,7 +1,10 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Film, MoreHorizontal } from 'lucide-react-native';
+import {
+    DotsThree,
+    FilmStrip,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
@@ -18,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { AvatarStack } from '@/components/avatar-stack';
 import { UserLink } from '@/components/user-link';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { RatingSheet } from '@/components/rating-sheet';
@@ -37,6 +41,7 @@ import { withSeasonSuffix } from '@/lib/title-scope';
 import { ensureTitle, type EnsureTitleArgs, fetchTitlesByItems } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    posterFrame,
     onImage,
     button,
     fontFamily,
@@ -44,6 +49,7 @@ import {
     radius,
     spacing,
     typography,
+    THEME_V2_ENABLED,
 } from '@/theme/theme';
 
 interface RecForYou {
@@ -169,6 +175,12 @@ const FRIENDS_GRID_MAX_AVATARS = 3;
 // watchers there are. The leftmost chip (the +N pill when present,
 // else the back avatar) leads fully visible.
 const FRIENDS_GRID_OVERLAP = 4;
+
+// Name colour on the hero's dark chip. V1: light plum, contrast-tuned
+// (8.2:1 on the chip base). V2: light lavender from the accent family —
+// measured 9.8:1 on the chip base, 6.8:1 worst-case (chip at 0.88 over
+// pure white imagery).
+const HERO_CHIP_NAME_COLOR = THEME_V2_ENABLED ? '#C9BEF5' : '#D4A8C5';
 
 function firstName(displayName: string): string {
     const trimmed = displayName.trim();
@@ -864,7 +876,7 @@ export default function HomeScreen() {
     // carries it; only the surrounding screen chrome adapts.
     //
     // Fallback for the ~0.2% of titles with no TMDB backdrop (2 of 861
-    // in the backfill): solid palette.surfaceAlt with a faint Film
+    // in the backfill): solid palette.surfaceAlt with a faint FilmStrip
     // glyph, and the text/pill recolour onto light tokens. Clean and
     // intentional rather than a hacked-up version of the backdrop
     // card; rare enough that minimum-viable is the right scope.
@@ -932,10 +944,9 @@ export default function HomeScreen() {
                             { backgroundColor: palette.surfaceAlt },
                         ]}
                     >
-                        <Film
+                        <FilmStrip
                             color={palette.textMuted}
                             size={64}
-                            strokeWidth={1.25}
                             style={styles.recHeroFallbackIcon}
                         />
                     </View>
@@ -972,7 +983,20 @@ export default function HomeScreen() {
                     <Text
                         style={[
                             typography.caption,
-                            { color: onImage.textFaint },
+                            // Same sentence grammar as the inbox activity
+                            // rows, at caption size — but REGULAR face,
+                            // not bodyQuiet's Light: 300-weight at caption
+                            // size over the translucent chip shimmered on
+                            // artwork. Inbox connectives (solid bg, body
+                            // size) keep the Light face; this is the
+                            // pre-approved dial for the hero only.
+                            { fontFamily: fontFamily.default },
+                            // Full white: the reduced-alpha tiers over the
+                            // translucent chip read as thinness, not
+                            // hierarchy — the 400-vs-bold face contrast
+                            // against the name carries the quiet register
+                            // alone.
+                            { color: onImage.text },
                         ]}
                         numberOfLines={1}
                     >
@@ -980,7 +1004,7 @@ export default function HomeScreen() {
                             style={[
                                 typography.caption,
                                 styles.recommenderName,
-                                { color: '#D4A8C5' },
+                                { color: HERO_CHIP_NAME_COLOR },
                             ]}
                         >
                             {firstName(rec.sender.displayName)}
@@ -1006,7 +1030,7 @@ export default function HomeScreen() {
                         pressed && { opacity: 0.6 },
                     ]}
                 >
-                    <MoreHorizontal color={onImage.text} size={18} strokeWidth={2} />
+                    <DotsThree color={onImage.text} size={18} />
                 </Pressable>
 
                 {/* Title + note, bottom-left, sitting on the dark end
@@ -1179,21 +1203,33 @@ export default function HomeScreen() {
                                             ]}
                                         />
                                     )}
-                                    {/* Stacked-avatar social proof.
-                                        Visual L→R:
-                                        [+N (if any)][av3][av2][av1].
-                                        Render order is left-to-right
-                                        (front-of-stack = last drawn =
-                                        rightmost), so the most-recent
-                                        watcher (first item in `shown`)
-                                        lands rightmost and on top.
-                                        Every chip after the leftmost
-                                        overlaps its left neighbour by
-                                        the SAME amount (negative
-                                        marginLeft), so the gaps are
-                                        uniform across the whole stack —
-                                        image avatars and the +N chip
-                                        alike. */}
+                                    {/* Stacked-avatar social proof. V2:
+                                        the stack moves UNDER the poster
+                                        (normal flow — the shared
+                                        AvatarStack finally applies, the
+                                        absolute-positioning quirk that
+                                        kept this inline is gone) with a
+                                        hairline ground-colour ring. V1:
+                                        the original on-poster overlay,
+                                        unchanged below. */}
+                                    {THEME_V2_ENABLED ? (
+                                        <View style={styles.friendsGridStackBelow}>
+                                            <AvatarStack
+                                                items={card.watchers}
+                                                limit={FRIENDS_GRID_MAX_AVATARS}
+                                                size={FRIENDS_GRID_AVATAR_SIZE}
+                                                overlap={FRIENDS_GRID_OVERLAP}
+                                                borderColor={palette.bg}
+                                                borderWidth={
+                                                    StyleSheet.hairlineWidth
+                                                }
+                                                // Avatars lead, +N chip
+                                                // trails right: "these
+                                                // people, plus N more."
+                                                leadFirst
+                                            />
+                                        </View>
+                                    ) : (
                                     <View style={styles.friendsGridStack}>
                                         {extra > 0 ? (
                                             <View
@@ -1256,6 +1292,7 @@ export default function HomeScreen() {
                                                 );
                                             })}
                                     </View>
+                                    )}
                                 </Pressable>
                             );
                         })}
@@ -1398,7 +1435,7 @@ export default function HomeScreen() {
                                                     typography.caption,
                                                     {
                                                         color: palette.textInverse,
-                                                        fontWeight: '600',
+                                                        fontFamily: fontFamily.semibold,
                                                     },
                                                 ]}
                                             >
@@ -1594,6 +1631,7 @@ export default function HomeScreen() {
                     state={search}
                     top={insets.top + SEARCH_OVERLAY_TOP_OFFSET}
                     showDiscover
+                    showFriends
                 />
             )}
         </View>
@@ -1668,14 +1706,17 @@ const styles = StyleSheet.create({
         // fixed-height tile that hosts a full-bleed backdrop (or
         // fallback wash) behind absolutely-positioned overlay
         // children — overflow: 'hidden' clips both the image and the
-        // gradient to the rounded corners.
+        // gradient to the rounded corners. posterFrame on THIS
+        // container (not the image) so the V2 frame follows the
+        // card's radius.
+        ...posterFrame,
         height: REC_CARD_H,
         borderRadius: radius.md,
         overflow: 'hidden',
         position: 'relative',
     },
     recHeroFallback: {
-        // Used only when backdropPath is null. Centers the Film glyph
+        // Used only when backdropPath is null. Centers the FilmStrip glyph
         // as a quiet hint that the card is intentionally image-less,
         // rather than looking like a broken/missing image.
         alignItems: 'center',
@@ -1703,8 +1744,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
-        paddingLeft: spacing.xs,
-        paddingRight: spacing.sm,
+        // One step up from the original xs/sm pair — breathing room for
+        // the full-white connective; the asymmetry (avatar side tighter)
+        // is deliberate and preserved.
+        paddingLeft: spacing.sm,
+        paddingRight: spacing.md,
         paddingVertical: spacing.xs,
         borderRadius: radius.full,
     },
@@ -1729,7 +1773,6 @@ const styles = StyleSheet.create({
         // alone falls back to a synthesized bold which doesn't render
         // as cleanly as the real Geist_700Bold face.
         fontFamily: fontFamily.bold,
-        fontWeight: '700',
     },
     recHeroContent: {
         // Bottom-anchored title + note block. Sits inside the dark
@@ -1768,6 +1811,7 @@ const styles = StyleSheet.create({
         position: 'relative',
     },
     friendsGridPoster: {
+        ...posterFrame,
         width: FRIENDS_ROW_POSTER_W,
         height: FRIENDS_ROW_POSTER_H,
         borderRadius: radius.sm,
@@ -1784,6 +1828,15 @@ const styles = StyleSheet.create({
         right: spacing.xs,
         flexDirection: 'row',
         alignItems: 'center',
+    },
+    // V2: the watcher stack sits in normal flow UNDER the poster.
+    // Left-aligned to the poster edge; small top gap. The cell grows
+    // taller — the horizontal strip's row height follows the tallest
+    // cell, so V1's fixed-height cells are unaffected when the flag
+    // is off.
+    friendsGridStackBelow: {
+        marginTop: spacing.xs,
+        alignItems: 'flex-start',
     },
     friendsGridStackChip: {
         // Outer = avatar + 2×border on each side. Without this the
@@ -1811,7 +1864,7 @@ const styles = StyleSheet.create({
         // Same proportional weight inside the chip's inner content
         // area; reads as a peer to the avatar letterforms.
         fontSize: 12,
-        fontWeight: '700',
+        fontFamily: fontFamily.bold,
     },
     // Currently watching — compact list rows: small poster + inline
     // title/relative-time + primary-action pill on the right.
@@ -1831,6 +1884,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     watchingPoster: {
+        ...posterFrame,
         width: WATCHING_POSTER_W,
         height: WATCHING_POSTER_H,
         borderRadius: radius.sm,

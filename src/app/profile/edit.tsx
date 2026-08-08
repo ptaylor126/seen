@@ -1,6 +1,9 @@
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import { Check, ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+    Check,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -13,17 +16,16 @@ import {
     View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { useToast } from '@/components/toast';
 import { useProfile } from '@/hooks/use-profile';
 import { pickAndUploadAvatar, removeAvatar } from '@/lib/avatar-upload';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -31,9 +33,6 @@ import {
 
 const MAX_DISPLAY_NAME_LENGTH = 30;
 const AVATAR_SIZE = 96;
-const SAVED_TOAST_VISIBLE_MS = 1500;
-const SAVED_TOAST_FADE_MS = 150;
-
 export default function EditProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -41,7 +40,6 @@ export default function EditProfileScreen() {
     const { status, profile, refresh } = useProfile();
     const showLoader = useDeferredLoading(status === 'loading' || !profile);
 
-    const insets = useSafeAreaInsets();
     const nameInputRef = useRef<TextInput | null>(null);
 
     const [displayName, setDisplayName] = useState('');
@@ -64,35 +62,13 @@ export default function EditProfileScreen() {
         }
     }, [profile]);
 
-    // ---- Saved toast (ambient success confirmation)
-    //
-    // Local-to-screen because there's no other consumer of toast/snackbar
-    // feedback in the app today. Reanimated FadeIn/FadeOut wraps a small
-    // pill; a single timer governs visibility. Re-triggering while a
-    // toast is up resets the timer so the user sees a fresh ~1.8s.
-    const [toastVisible, setToastVisible] = useState(false);
-    const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+    // ---- Saved toast — the shared ambient toast (extracted from this
+    // screen's original local implementation once a second consumer
+    // appeared; see src/components/toast.tsx).
+    const { showToast, toast } = useToast();
     const showSavedToast = useCallback(() => {
-        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-        setToastVisible(true);
-        toastTimerRef.current = setTimeout(() => {
-            setToastVisible(false);
-            toastTimerRef.current = null;
-        }, SAVED_TOAST_VISIBLE_MS);
-    }, []);
-
-    useEffect(() => {
-        // Cancel a pending toast-hide timer on unmount so a fast back-
-        // navigation mid-toast doesn't leave a setTimeout pointing at an
-        // unmounted setState.
-        return () => {
-            if (toastTimerRef.current) {
-                clearTimeout(toastTimerRef.current);
-                toastTimerRef.current = null;
-            }
-        };
-    }, []);
+        showToast('Saved', <Check color={palette.success} size={16} />);
+    }, [showToast, palette.success]);
 
     // ---- Display-name commit
     //
@@ -278,10 +254,9 @@ export default function EditProfileScreen() {
                         pressed && { opacity: 0.6 },
                     ]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.text}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text
@@ -470,30 +445,7 @@ export default function EditProfileScreen() {
                     </View>
                 </SafeAreaView>
             </KeyboardAvoidingView>
-            {toastVisible ? (
-                <Animated.View
-                    entering={FadeIn.duration(SAVED_TOAST_FADE_MS)}
-                    exiting={FadeOut.duration(SAVED_TOAST_FADE_MS)}
-                    pointerEvents="none"
-                    style={[
-                        styles.toast,
-                        {
-                            bottom: insets.bottom + spacing.xl,
-                            backgroundColor: palette.surface,
-                            borderColor: palette.border,
-                        },
-                    ]}
-                >
-                    <Check
-                        color={palette.success}
-                        size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
-                    />
-                    <Text style={[typography.body, { color: palette.text }]}>
-                        Saved
-                    </Text>
-                </Animated.View>
-            ) : null}
+            {toast}
         </View>
     );
 }
@@ -555,22 +507,5 @@ const styles = StyleSheet.create({
     },
     counter: {
         alignSelf: 'flex-end',
-    },
-    toast: {
-        // Pill-shaped success confirmation pinned at the bottom of the
-        // screen. `bottom` is set inline from useSafeAreaInsets so the
-        // toast clears the home indicator on iOS without a fixed magic
-        // offset. pointerEvents="none" on the wrapping Animated.View
-        // means the toast can never block taps on the underlying form
-        // — important because it overlays the keyboard-adjacent area.
-        position: 'absolute',
-        alignSelf: 'center',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.xs,
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.sm,
-        borderRadius: radius.full,
-        borderWidth: StyleSheet.hairlineWidth,
     },
 });

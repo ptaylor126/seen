@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Search, X } from 'lucide-react-native';
+import {
+    MagnifyingGlass,
+    X,
+} from 'phosphor-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -21,8 +24,8 @@ import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -377,7 +380,6 @@ export default function LibraryAddScreen() {
                         <X
                             color={palette.text}
                             size={24}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                     <Text
@@ -397,10 +399,9 @@ export default function LibraryAddScreen() {
 
             <View style={styles.searchBar}>
                 <View style={[styles.bar, { backgroundColor: palette.surface }]}>
-                    <Search
+                    <MagnifyingGlass
                         color={palette.textMuted}
                         size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <TextInput
                         value={query}
@@ -523,6 +524,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     poster: {
+        ...posterFrame,
         width: POSTER_WIDTH,
         height: POSTER_HEIGHT,
         borderRadius: radius.sm,
@@ -544,6 +546,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
     },
     suggestPoster: {
+        ...posterFrame,
         borderRadius: radius.sm,
     },
 });

@@ -1,10 +1,10 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
-    ChevronRight,
+    CaretRight,
+    MagnifyingGlass as SearchIcon,
     Plus,
-    Search as SearchIcon,
     X,
-} from 'lucide-react-native';
+} from 'phosphor-react-native';
 import { useCallback, useRef, useState } from 'react';
 import {
     FlatList,
@@ -27,7 +27,6 @@ import supabase from '@/lib/supabase';
 import {
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -308,10 +307,9 @@ export default function FriendsScreen() {
                 {/* No inline per-row actions — requesting a rec lives on
                     the friend's profile (one tap away), keeping rows to
                     identity + navigation. */}
-                <ChevronRight
+                <CaretRight
                     color={palette.textMuted}
                     size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
             </Pressable>
         );
@@ -398,7 +396,6 @@ export default function FriendsScreen() {
                         <Plus
                             color={palette.textInverse}
                             size={20}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
@@ -505,10 +502,9 @@ export default function FriendsScreen() {
                                     ? '1 pending request'
                                     : `${pendingIncoming} pending requests`}
                             </Text>
-                            <ChevronRight
+                            <CaretRight
                                 color={palette.textMuted}
                                 size={20}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     )}
@@ -530,7 +526,6 @@ export default function FriendsScreen() {
                                     <SearchIcon
                                         color={palette.textMuted}
                                         size={20}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                     <TextInput
                                         ref={localSearchInputRef}
@@ -562,7 +557,6 @@ export default function FriendsScreen() {
                                             <X
                                                 color={palette.textMuted}
                                                 size={18}
-                                                strokeWidth={ICON_STROKE_WIDTH}
                                             />
                                         </Pressable>
                                     ) : null}

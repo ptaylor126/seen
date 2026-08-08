@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronLeft, MessageCircle } from 'lucide-react-native';
+import {
+    CaretLeft,
+    ChatCircle,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -26,7 +29,6 @@ import {
 } from '@/lib/tmdb';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -199,10 +201,9 @@ export default function EpisodeListScreen() {
                 accessibilityLabel="Back"
                 style={({ pressed }) => [pressed && { opacity: 0.6 }]}
             >
-                <ChevronLeft
+                <CaretLeft
                     color={palette.accent}
                     size={28}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
             </Pressable>
             <Text style={[typography.heading, { color: palette.text }]}>
@@ -341,10 +342,9 @@ export default function EpisodeListScreen() {
                                         { opacity: pressed ? 0.6 : 1 },
                                     ]}
                                 >
-                                    <MessageCircle
+                                    <ChatCircle
                                         color={palette.accent}
                                         size={18}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                     <Text
                                         style={[

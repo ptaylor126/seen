@@ -3,15 +3,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
-    ChevronRight,
-    ExternalLink,
-    ListVideo,
-    MessageCircle,
-    MoreHorizontal,
+    ArrowSquareOut,
+    CaretRight,
+    ChatCircle,
+    DotsThree,
+    Eye,
+    EyeSlash,
+    PaperPlaneTilt,
     Play,
-    Send,
+    ListNumbers,
     X,
-} from 'lucide-react-native';
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
     Alert,
@@ -32,6 +34,7 @@ import { AvatarStack } from '@/components/avatar-stack';
 import { EpisodeProgress } from '@/components/episode-progress';
 import { RatingSheet } from '@/components/rating-sheet';
 import { Toggle } from '@/components/toggle';
+import { useToast } from '@/components/toast';
 import {
     WatchersSheet,
     type WatcherSheetItem,
@@ -69,13 +72,15 @@ import {
     type TMDBWatchProvidersRegion,
 } from '@/lib/tmdb';
 import {
+    onImage,
+    posterFrame,
     button,
     fontFamily,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
+    THEME_V2_ENABLED,
 } from '@/theme/theme';
 
 // Discriminated union so render code can narrow on `type` and access the
@@ -211,6 +216,7 @@ export default function TitleDetailScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    const { showToast, toast } = useToast();
 
     const mediaType: MediaType | null =
         params.mediaType === 'movie' || params.mediaType === 'tv'
@@ -866,6 +872,17 @@ export default function TitleDetailScreen() {
         }
         const previous = currentVisibility;
         setCurrentVisibility(next);
+        // Ambient confirmation, both directions — fired with the
+        // optimistic flip so feedback is immediate; a failure reverts
+        // the switch and surfaces the error Alert as before.
+        showToast(
+            next === 'private' ? 'Hidden from friends' : 'Visible to friends',
+            next === 'private' ? (
+                <EyeSlash color={palette.textMuted} size={16} />
+            ) : (
+                <Eye color={palette.accent} size={16} />
+            ),
+        );
         setVisibilityBusy(true);
         try {
             const {
@@ -922,8 +939,8 @@ export default function TitleDetailScreen() {
                 <FullScreenLoader />
                 <CloseButton
                     top={closeButtonTop}
-                    bg={palette.overlay}
-                    fg={palette.textInverse}
+                    bg={onImage.chip}
+                    fg={onImage.text}
                     onPress={router.back}
                 />
             </View>
@@ -945,8 +962,8 @@ export default function TitleDetailScreen() {
                 />
                 <CloseButton
                     top={closeButtonTop}
-                    bg={palette.overlay}
-                    fg={palette.textInverse}
+                    bg={onImage.chip}
+                    fg={onImage.text}
                     onPress={router.back}
                 />
             </View>
@@ -1062,6 +1079,22 @@ export default function TitleDetailScreen() {
                         locations={[HERO_GRADIENT_START, HERO_GRADIENT_END]}
                         style={StyleSheet.absoluteFill}
                     />
+                    {/* V2: top scrim for OS-chrome legibility — ground at
+                        ~0.4 fading to 0 over roughly the safe-area inset,
+                        mirroring the bottom fade. V1 unchanged. */}
+                    {THEME_V2_ENABLED ? (
+                        <LinearGradient
+                            colors={[
+                                'rgba(11, 13, 38, 0.4)',
+                                'rgba(11, 13, 38, 0)',
+                            ]}
+                            style={[
+                                styles.heroTopScrim,
+                                { height: insets.top + spacing.md },
+                            ]}
+                            pointerEvents="none"
+                        />
+                    ) : null}
                     {trailerKey ? (
                         <View
                             style={[
@@ -1076,8 +1109,7 @@ export default function TitleDetailScreen() {
                             <Play
                                 color={palette.textInverse}
                                 size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
-                                fill={palette.textInverse}
+                                weight="fill"
                             />
                         </View>
                     ) : null}
@@ -1280,10 +1312,9 @@ export default function TitleDetailScreen() {
                         ]}
                     >
                         <View style={styles.episodesRowLabel}>
-                            <ListVideo
+                            <ListNumbers
                                 color={palette.accent}
                                 size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                             <Text
                                 style={[
@@ -1294,10 +1325,9 @@ export default function TitleDetailScreen() {
                                 Episodes
                             </Text>
                         </View>
-                        <ChevronRight
+                        <CaretRight
                             color={palette.textMuted}
                             size={20}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 ) : null}
@@ -1355,6 +1385,39 @@ export default function TitleDetailScreen() {
                     })}
                 </View>
 
+                {/* Visibility — one quiet line in the same zone as the
+                    status pills, directly beneath them: muted label with
+                    a small eye glyph echoing the state, switch at the
+                    right. Rendered only when the title is in the library.
+                    Same optimistic handler + busy guard as ever; the
+                    toast confirms both directions. */}
+                {currentStatus !== null && (
+                    <View style={styles.visibilityLine}>
+                        {currentVisibility !== 'private' ? (
+                            <Eye color={palette.textMuted} size={16} />
+                        ) : (
+                            <EyeSlash color={palette.textMuted} size={16} />
+                        )}
+                        <Text
+                            style={[
+                                typography.body,
+                                styles.visibilityLabel,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            Visible to friends
+                        </Text>
+                        <Toggle
+                            value={currentVisibility !== 'private'}
+                            onValueChange={(v) =>
+                                handleSetVisibility(v ? 'friends' : 'private')
+                            }
+                            palette={palette}
+                            disabled={visibilityBusy}
+                        />
+                    </View>
+                )}
+
                 {/* Episode progress — TV only, and only while Watching. One
                     compact stepper row (Season −/+, Episode −/+) under the
                     status control. Progress is kept in the data across status
@@ -1369,9 +1432,9 @@ export default function TitleDetailScreen() {
                     />
                 )}
 
-                {/* Sharing card — the sharing group as one semantic unit:
-                    who can see this (Visible to friends), and how you
-                    share it (Recommend, Chat about it). Same card
+                {/* Sharing card — how you share it (Recommend, Chat
+                    about it). The visibility control moved to the eye
+                    toggle on the status row above. Same card
                     treatment as the "recommended by"/"watched by" social
                     cards below (surfaceElevated fill, radius.md, no
                     shadow) — NOT white/surface. The status pills above
@@ -1383,37 +1446,6 @@ export default function TitleDetailScreen() {
                         { backgroundColor: palette.surfaceElevated },
                     ]}
                 >
-                    {/* Visible to friends — the privacy control, an
-                        explicit labeled row. Same Toggle component and
-                        polarity as the rating sheet: ON = friends can see
-                        this title in your activity, OFF = private. Only
-                        meaningful once the title is in the library.
-                        Optimistic via handleSetVisibility (reverts on
-                        failure); toggling to private hides activity, it
-                        does NOT remove the title. */}
-                    {currentStatus !== null && (
-                        <View style={styles.visibilityRow}>
-                            <Text
-                                style={[
-                                    typography.body,
-                                    { color: palette.text },
-                                ]}
-                            >
-                                Visible to friends
-                            </Text>
-                            <Toggle
-                                value={currentVisibility !== 'private'}
-                                onValueChange={(v) =>
-                                    handleSetVisibility(
-                                        v ? 'friends' : 'private',
-                                    )
-                                }
-                                palette={palette}
-                                disabled={visibilityBusy}
-                            />
-                        </View>
-                    )}
-
                     {/* Recommend — a primary outgoing action. Filled accent
                         (vs. the outlined status pills above) so the visual
                         hierarchy reads "pick where this sits in your
@@ -1432,10 +1464,9 @@ export default function TitleDetailScreen() {
                             },
                         ]}
                     >
-                        <Send
+                        <PaperPlaneTilt
                             color={palette.textInverse}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
@@ -1468,10 +1499,9 @@ export default function TitleDetailScreen() {
                             { opacity: pressed ? 0.6 : 1 },
                         ]}
                     >
-                        <MessageCircle
+                        <ChatCircle
                             color={palette.accent}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                         <Text
                             style={[
@@ -1557,11 +1587,12 @@ export default function TitleDetailScreen() {
 
             <CloseButton
                 top={closeButtonTop}
-                bg={palette.overlay}
-                fg={palette.textInverse}
+                bg={onImage.chip}
+                fg={onImage.text}
                 onPress={router.back}
             />
 
+            {toast}
             <RatingSheet
                 visible={showRatingSheet}
                 busy={ratingBusy}
@@ -1732,7 +1763,7 @@ function CloseButton({
             hitSlop={spacing.sm}
             style={[styles.closeButton, { top, backgroundColor: bg }]}
         >
-            <X color={fg} size={20} strokeWidth={ICON_STROKE_WIDTH} />
+            <X color={fg} size={20} />
         </Pressable>
     );
 }
@@ -2103,10 +2134,9 @@ function ReviewsSection({
                                         pressed && { opacity: 0.5 },
                                     ]}
                                 >
-                                    <MoreHorizontal
+                                    <DotsThree
                                         color={palette.textMuted}
                                         size={18}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </Pressable>
                             ) : null}
@@ -2691,10 +2721,9 @@ function WhereToWatch({
                 >
                     More details on JustWatch
                 </Text>
-                <ExternalLink
+                <ArrowSquareOut
                     color={palette.accent}
                     size={16}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
             </Pressable>
         </View>
@@ -2758,6 +2787,12 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
+    heroTopScrim: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+    },
     // Trailer play badge on the hero. Centred horizontally; vertically in
     // the band's upper region (badge centre at ~38% of the band height) so
     // it clears both the gradient fade and the poster overlap below, and
@@ -2780,6 +2815,7 @@ const styles = StyleSheet.create({
         marginTop: -POSTER_HEIGHT / 2,
     },
     poster: {
+        ...posterFrame,
         width: POSTER_WIDTH,
         height: POSTER_HEIGHT,
         borderRadius: radius.sm,
@@ -2832,7 +2868,6 @@ const styles = StyleSheet.create({
         // 14/Medium — same label treatment as the Library chips.
         ...typography.caption,
         fontFamily: fontFamily.medium,
-        fontWeight: '500',
     },
     tagline: {
         paddingHorizontal: spacing.base,
@@ -3014,7 +3049,7 @@ const styles = StyleSheet.create({
     // "Your relationship" line — last child of the title column, under the
     // genre chips: the star-glyph rating row (watched) or a quiet status
     // caption (watchlist/watching). The privacy lock that used to share
-    // this row moved to the visibilityRow above Recommend.
+    // this row lives on the status row's eye toggle now.
     statusLine: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -3076,8 +3111,10 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
     },
     reviewRating: {
-        fontFamily: fontFamily.medium,
-        fontWeight: '500',
+        // Semibold, not medium: the stars sit on the same meta line as a
+        // regular-weight timestamp, and 400-vs-500 is imperceptible at
+        // caption size (weight-contrast pass, 2026-08-08).
+        fontFamily: fontFamily.semibold,
     },
     reviewSpoilerCover: {
         fontStyle: 'italic',
@@ -3094,14 +3131,18 @@ const styles = StyleSheet.create({
         padding: spacing.md,
         gap: spacing.md,
     },
-    // "Visible to friends" label + switch, full-width row at the card's
-    // top. Plain row (no fill/border) — a setting, not a button; the
-    // Toggle itself is the visual state.
-    visibilityRow: {
+    // Quiet visibility line beneath the status pills: muted glyph +
+    // label, switch at the right. Same horizontal inset as the chip
+    // row so the zone reads as one block.
+    visibilityLine: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: spacing.xs,
+        gap: spacing.sm,
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.md,
+    },
+    visibilityLabel: {
+        flex: 1,
     },
     recommendButton: {
         // Filled accent — the border that lived here when the button

@@ -1,4 +1,6 @@
-import { Check } from 'lucide-react-native';
+import {
+    Check,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     Animated,
@@ -15,7 +17,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -172,7 +173,6 @@ export function SortSheet<T extends string>({
                                     <Check
                                         color={palette.accent}
                                         size={18}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 )}
                             </Pressable>

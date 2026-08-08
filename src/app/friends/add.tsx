@@ -1,5 +1,7 @@
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -19,9 +21,9 @@ import { shareInvite } from '@/lib/invite';
 import { goToProfile } from '@/lib/profile-nav';
 import supabase from '@/lib/supabase';
 import {
+    fontFamily,
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -180,10 +182,9 @@ export default function AddFriendScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>
@@ -508,7 +509,7 @@ const styles = StyleSheet.create({
         // No gap — the "@" prefix sits flush against the typed text so it
         // reads "@paul", not "@ paul".
     },
-    atPrefix: { fontWeight: '600' },
+    atPrefix: { fontFamily: fontFamily.semibold },
     input: { flex: 1, height: '100%' },
     submitButton: {
         paddingVertical: button.paddingVertical,

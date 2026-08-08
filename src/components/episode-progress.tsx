@@ -1,4 +1,7 @@
-import { Minus, Plus } from 'lucide-react-native';
+import {
+    Minus,
+    Plus,
+} from 'phosphor-react-native';
 import {
     type ReactNode,
     useCallback,
@@ -19,7 +22,6 @@ import supabase from '@/lib/supabase';
 import type { TMDBSeason } from '@/lib/tmdb';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -275,7 +277,6 @@ function Stepper({
                             minusDisabled ? palette.textMuted : palette.accent
                         }
                         size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </StepButton>
                 <Text
@@ -298,7 +299,6 @@ function Stepper({
                             plusDisabled ? palette.textMuted : palette.accent
                         }
                         size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </StepButton>
             </View>

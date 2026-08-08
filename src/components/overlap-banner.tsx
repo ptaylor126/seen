@@ -1,4 +1,6 @@
-import { X } from 'lucide-react-native';
+import {
+    X,
+} from 'phosphor-react-native';
 import { MotiView } from 'moti';
 import { useEffect, useRef } from 'react';
 import {
@@ -16,7 +18,6 @@ import { Avatar } from '@/components/avatar';
 import type { WatcherSheetItem } from '@/components/watchers-sheet';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -155,7 +156,6 @@ export function OverlapBanner({
                     <X
                         color={palette.textMuted}
                         size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
             </Pressable>

@@ -1,6 +1,8 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import { useCallback, useState } from 'react';
 import {
     Alert,
@@ -18,8 +20,8 @@ import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import {
+    fontFamily,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -262,7 +264,7 @@ export default function FriendRequestsScreen() {
                                 <Text
                                     style={[
                                         typography.caption,
-                                        { color: palette.textInverse, fontWeight: '600' },
+                                        { color: palette.textInverse, fontFamily: fontFamily.semibold },
                                     ]}
                                 >
                                     Accept
@@ -282,7 +284,7 @@ export default function FriendRequestsScreen() {
                                 <Text
                                     style={[
                                         typography.caption,
-                                        { color: palette.textMuted, fontWeight: '600' },
+                                        { color: palette.textMuted, fontFamily: fontFamily.semibold },
                                     ]}
                                 >
                                     Decline
@@ -304,7 +306,7 @@ export default function FriendRequestsScreen() {
                             <Text
                                 style={[
                                     typography.caption,
-                                    { color: palette.textMuted, fontWeight: '600' },
+                                    { color: palette.textMuted, fontFamily: fontFamily.semibold },
                                 ]}
                             >
                                 Cancel
@@ -329,10 +331,9 @@ export default function FriendRequestsScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>

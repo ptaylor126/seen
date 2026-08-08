@@ -1,7 +1,12 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronRight, MoreHorizontal, X, XCircle } from 'lucide-react-native';
+import {
+    CaretRight,
+    DotsThree,
+    X,
+    XCircle,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
@@ -59,15 +64,16 @@ import { postRecComment } from '@/lib/comments';
 import { goToProfile } from '@/lib/profile-nav';
 import { type MediaType } from '@/lib/rating';
 import { promptReport } from '@/lib/report';
+import { reassertBadgeFromServer } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { ensureTitle } from '@/lib/titles';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    posterFrame,
     onImage,
     button,
     fontFamily,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -791,6 +797,9 @@ export default function RecScreen() {
                 .eq('id', recId);
             if (declineErr) throw declineErr;
 
+            // Rec left pending — assert the badge at action time.
+            void reassertBadgeFromServer();
+
             if (hasNote) {
                 // Post the note as a comment in the thread. is_decline_note
                 // suppresses the duplicate rec_commented notification (the
@@ -858,6 +867,8 @@ export default function RecScreen() {
                 .update({ status: 'pending', dismiss_reason: null })
                 .eq('id', rec.id);
             if (undoErr) throw undoErr;
+            // Back to pending — unread_count may have risen; assert now.
+            void reassertBadgeFromServer();
         } catch (err) {
             // Re-flip to dismissed if the undo write failed.
             setRec((prev) =>
@@ -923,6 +934,10 @@ export default function RecScreen() {
                 { onConflict: 'user_id,tmdb_id,media_type' },
             );
             if (upsertError) throw upsertError;
+            // In-library subtraction just changed unread_count — assert
+            // the badge at action time (the provider path needs realtime
+            // + a bell screen, neither guaranteed in the push-tap flow).
+            void reassertBadgeFromServer();
 
             // Stamp the catalogue so the title renders in their library
             // (send_recommendation doesn't create the titles row).
@@ -1247,7 +1262,7 @@ export default function RecScreen() {
                 },
             ]}
         >
-            <X color={palette.text} size={20} strokeWidth={ICON_STROKE_WIDTH} />
+            <X color={palette.text} size={20} />
         </Pressable>
     );
 
@@ -1472,10 +1487,9 @@ export default function RecScreen() {
                                         pressed && { opacity: 0.5 },
                                     ]}
                                 >
-                                    <MoreHorizontal
+                                    <DotsThree
                                         color={onImage.textMuted}
                                         size={16}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </Pressable>
                             ) : null}
@@ -1579,10 +1593,9 @@ export default function RecScreen() {
                                     >
                                         View details
                                     </Text>
-                                    <ChevronRight
+                                    <CaretRight
                                         color={palette.text}
                                         size={16}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                 </View>
                             </View>
@@ -1659,7 +1672,6 @@ export default function RecScreen() {
                                 <XCircle
                                     color={palette.textMuted}
                                     size={16}
-                                    strokeWidth={ICON_STROKE_WIDTH}
                                 />
                                 <Text
                                     style={[
@@ -2018,7 +2030,6 @@ const styles = StyleSheet.create({
         // Bold Geist on the name chunk in the attribution line (mirrors
         // the home hero's light-plum name treatment).
         fontFamily: fontFamily.bold,
-        fontWeight: '700',
     },
     identityOverlay: {
         // Tappable title block, bottom-left: poster + title/meta/CTA.
@@ -2033,6 +2044,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     identityPoster: {
+        ...posterFrame,
         // Larger poster thumbnail on the overlay. Height doubles as the
         // block height the rec pill anchors above — keep the constant in
         // sync.
@@ -2069,13 +2081,11 @@ const styles = StyleSheet.create({
     },
     overlayCtaText: {
         fontFamily: fontFamily.medium,
-        fontWeight: '500',
     },
     overlayTitle: {
         // Larger than typography.heading — the title is the headline of
         // the overlay.
         fontFamily: fontFamily.bold,
-        fontWeight: '700',
         fontSize: 26,
         lineHeight: 30,
     },
@@ -2144,7 +2154,6 @@ const styles = StyleSheet.create({
         // the hero pill), so it takes a full base gap rather than the old
         // tight tie to a recommender line.
         fontFamily: fontFamily.default,
-        fontWeight: '400',
         fontSize: 25,
         lineHeight: 34,
         fontStyle: 'italic',

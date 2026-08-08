@@ -70,7 +70,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getPalette, onImage, radius, spacing } from '@/theme/theme';
+import {
+    getPalette,
+    onImage,
+    radius,
+    spacing,
+    THEME_V2_ENABLED,
+} from '@/theme/theme';
 
 // Bar's intrinsic height — sized for clear breathing room around the
 // active pill. Consumers of useFloatingTabBarInset() pick up changes
@@ -108,6 +114,10 @@ const ICON_SIZE = 28;
 // screen; drop it lower only if a bright backdrop stays readable.
 const BAR_TINT_LIGHT = 'rgba(228, 218, 225, 0.82)';
 const BAR_TINT_DARK = 'rgba(42, 32, 48, 0.82)';
+// V2 INTERIM surface until the bar's full redesign: surfaceAlt (#162954,
+// the emphasis navy) at ~90% — translucent enough for the blur to read,
+// opaque enough for icon legibility over busy posters.
+const BAR_TINT_V2 = 'rgba(22, 41, 84, 0.9)';
 // Blur — bumped a little now that the tint is slightly more transparent, so the
 // material reads as frosted rather than plain. The tint still carries most of
 // the legibility work.
@@ -177,7 +187,9 @@ function TabItem({
                     translucent regardless of the white layer's opacity. */}
                 <View style={styles.iconLayer}>
                     {icon?.({
-                        focused: isFocused,
+                        // Always the RESTING render (regular weight) —
+                        // the focused/fill copy is the overlay below.
+                        focused: false,
                         color: inactiveIconColor,
                         size: ICON_SIZE,
                     })}
@@ -185,7 +197,10 @@ function TabItem({
                 {/* White copy on top — opacity tracks the pill's coverage. */}
                 <Animated.View style={[styles.iconLayer, activeIconStyle]}>
                     {icon?.({
-                        focused: isFocused,
+                        // Always the ACTIVE render (weight="fill") — its
+                        // opacity tracking the pill turns the slide into
+                        // a regular→fill cross-fade.
+                        focused: true,
                         color: ON_PILL_ICON_COLOR,
                         size: ICON_SIZE,
                     })}
@@ -204,7 +219,11 @@ export function FloatingTabBar({
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
 
-    const barTint = scheme === 'light' ? BAR_TINT_LIGHT : BAR_TINT_DARK;
+    const barTint = THEME_V2_ENABLED
+        ? BAR_TINT_V2
+        : scheme === 'light'
+          ? BAR_TINT_LIGHT
+          : BAR_TINT_DARK;
     const inactiveIconColor = palette.textMuted;
 
     // Measured center x of each tab (relative to the bar). Drives where the
@@ -259,6 +278,14 @@ export function FloatingTabBar({
             style={[
                 styles.bar,
                 { bottom: insets.bottom + FLOATING_NAV_BOTTOM_GAP },
+                // V2 interim: hairline delineation in the border token.
+                // A full ring, not borderTop only — RN renders per-side
+                // borders + borderRadius with broken corners; on the
+                // floating pill the ring reads as a top edge anyway.
+                THEME_V2_ENABLED && {
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: palette.border,
+                },
             ]}
         >
             {/* Material: a modest blur clipped to the bar's rounded shape
@@ -266,7 +293,13 @@ export function FloatingTabBar({
                 The tint, not the blur, carries legibility over busy content. */}
             <BlurView
                 intensity={BLUR_INTENSITY}
-                tint={scheme === 'light' ? 'light' : 'dark'}
+                tint={
+                    THEME_V2_ENABLED
+                        ? 'dark'
+                        : scheme === 'light'
+                          ? 'light'
+                          : 'dark'
+                }
                 pointerEvents="none"
                 style={StyleSheet.absoluteFill}
             />

@@ -1,5 +1,8 @@
 import { useRouter } from 'expo-router';
-import { ChevronLeft, ChevronRight } from 'lucide-react-native';
+import {
+    CaretLeft,
+    CaretRight,
+} from 'phosphor-react-native';
 import { useState } from 'react';
 import {
     ActivityIndicator,
@@ -19,7 +22,6 @@ import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -117,10 +119,9 @@ export default function AccountScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>
@@ -165,10 +166,9 @@ export default function AccountScreen() {
                     >
                         Blocked users
                     </Text>
-                    <ChevronRight
+                    <CaretRight
                         color={palette.textMuted}
                         size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
 

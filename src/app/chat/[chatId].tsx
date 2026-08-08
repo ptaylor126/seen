@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronRight, X } from 'lucide-react-native';
+import {
+    CaretRight,
+    X,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
@@ -56,8 +59,8 @@ import { promptReport } from '@/lib/report';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -648,7 +651,7 @@ export default function ChatScreen() {
                 },
             ]}
         >
-            <X color={palette.text} size={20} strokeWidth={ICON_STROKE_WIDTH} />
+            <X color={palette.text} size={20} />
         </Pressable>
     );
 
@@ -814,10 +817,9 @@ export default function ChatScreen() {
                                     </Text>
                                 )}
                             </View>
-                            <ChevronRight
+                            <CaretRight
                                 color={palette.textMuted}
                                 size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     </Animated.View>
@@ -987,6 +989,7 @@ const styles = StyleSheet.create({
         borderRadius: radius.lg,
     },
     titleChipPoster: {
+        ...posterFrame,
         width: 40,
         height: 60,
         // Nested-radius rule: inner = outer − padding. The bar's corner is

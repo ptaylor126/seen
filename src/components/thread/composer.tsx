@@ -1,4 +1,6 @@
-import { ArrowUp } from 'lucide-react-native';
+import {
+    ArrowUp,
+} from 'phosphor-react-native';
 import {
     Pressable,
     StyleSheet,
@@ -142,7 +144,6 @@ export function ThreadComposer({
                     <ArrowUp
                         color={palette.textInverse}
                         size={20}
-                        strokeWidth={2.5}
                     />
                 </Pressable>
             </View>

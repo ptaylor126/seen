@@ -22,6 +22,9 @@ interface AvatarStackProps {
      *  pass the surface colour behind the stack so the chips read as
      *  cleanly cut-out, not bordered. */
     borderColor: string;
+    /** Ring thickness. Defaults to the original 2px cut; pass
+     *  StyleSheet.hairlineWidth for the V2 hairline treatment. */
+    borderWidth?: number;
     /** When true, the FIRST item leads the stack on the LEFT and on top
      *  (subsequent items tuck behind to the right, +N chip trails right).
      *  Use when a caption names items[0] ("Jane and N others…") so the
@@ -48,6 +51,7 @@ export function AvatarStack({
     size,
     overlap,
     borderColor,
+    borderWidth,
     leadFirst = false,
 }: AvatarStackProps) {
     const scheme = useColorScheme() ?? 'light';
@@ -60,7 +64,7 @@ export function AvatarStack({
     // Chips are size + 2*chipBorderWidth wide so the border doesn't eat
     // into the avatar circle. 2px is enough to read as a clean cut at
     // the small sizes we use this at; bigger borders look chunky.
-    const chipBorderWidth = 2;
+    const chipBorderWidth = borderWidth ?? 2;
     const chipSize = size + chipBorderWidth * 2;
     const chipBorderRadius = chipSize / 2;
 

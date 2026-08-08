@@ -1,12 +1,12 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
-    Lock,
+    LockSimple,
+    MagnifyingGlass as SearchIcon,
     Plus,
-    Search as SearchIcon,
     Users,
     X,
-} from 'lucide-react-native';
+} from 'phosphor-react-native';
 import { useCallback, useRef, useState } from 'react';
 import {
     Dimensions,
@@ -47,8 +47,9 @@ import { useLibraryFilters } from '@/lib/use-library-filters';
 import { LibraryFilterControls } from '@/components/library-filter-controls';
 import { SegmentedControl } from '@/components/segmented-control';
 import {
+    fontFamily,
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -682,7 +683,7 @@ export default function LibraryScreen() {
                 </View>
                 {/* Per-row privacy toggle — its own Pressable so tapping
                     it flips Friends/Private without triggering the row's
-                    navigation. Lock (accent) = private; Users (muted) =
+                    navigation. LockSimple (accent) = private; Users (muted) =
                     friends. Unobtrusive: icon-only at the row's right
                     edge. 'private' hides this item's activity from
                     friends; it does not remove the title. */}
@@ -703,16 +704,14 @@ export default function LibraryScreen() {
                     ]}
                 >
                     {item.visibility === 'private' ? (
-                        <Lock
+                        <LockSimple
                             color={palette.accent}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     ) : (
                         <Users
                             color={palette.textMuted}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     )}
                 </Pressable>
@@ -756,7 +755,6 @@ export default function LibraryScreen() {
                     <SearchIcon
                         color={palette.textMuted}
                         size={20}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <TextInput
                         ref={search.inputRef}
@@ -818,7 +816,6 @@ export default function LibraryScreen() {
                             <X
                                 color={palette.textMuted}
                                 size={18}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     ) : null}
@@ -851,7 +848,6 @@ export default function LibraryScreen() {
                         <X
                             color={palette.accent}
                             size={22}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 ) : localFocused ? (
@@ -902,7 +898,6 @@ export default function LibraryScreen() {
                         <Plus
                             color={palette.accent}
                             size={22}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 )}
@@ -1220,6 +1215,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     poster: {
+        ...posterFrame,
         width: POSTER_WIDTH,
         height: POSTER_HEIGHT,
         borderRadius: radius.sm,
@@ -1252,6 +1248,7 @@ const styles = StyleSheet.create({
         position: 'relative',
     },
     gridPoster: {
+        ...posterFrame,
         borderRadius: radius.sm,
     },
     // Star glyphs under the poster (replaced the on-poster overlay
@@ -1289,6 +1286,6 @@ const styles = StyleSheet.create({
     },
     gridPlusBadgeText: {
         fontSize: 9,
-        fontWeight: '700',
+        fontFamily: fontFamily.bold,
     },
 });

@@ -225,7 +225,13 @@ export async function promptPushAtHighIntent(userId: string): Promise<void> {
 // user, or the RPC errors / returns a non-number, it writes NOTHING — never a
 // spurious 0. Uses the exact same invocation the bell provider uses
 // (unread_count, param p_uid), so the value can't diverge from the bell.
-async function reassertBadgeFromServer(): Promise<void> {
+// Exported for action-time badge writes (2026-08-08 badge-staleness fix):
+// the inbox read-sweep and rec/friend-request resolution mutations call this
+// directly after their writes land, because the provider round-trip
+// (refetch → count change → IconBadgeSync) depends on realtime surviving
+// backgrounding and on a bell screen being focused — neither holds in the
+// push-tap → act → leave flow that produced stale icons in production.
+export async function reassertBadgeFromServer(): Promise<void> {
     try {
         const {
             data: { session },

@@ -1,6 +1,8 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import { useRef, useState } from 'react';
 import {
     Alert,
@@ -31,9 +33,9 @@ import {
 import { setOnboardingItemStatus } from '@/lib/onboarding-utils';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    posterFrame,
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -164,10 +166,9 @@ export default function CurrentlyWatchingScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
             </View>
@@ -306,6 +307,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     poster: {
+        ...posterFrame,
         width: 100,
         height: 150,
         borderRadius: radius.sm,

@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ChevronRight, Pencil } from 'lucide-react-native';
+import {
+    CaretRight,
+    PencilSimple,
+} from 'phosphor-react-native';
 import { Fragment, useCallback, useState } from 'react';
 import {
     Alert,
@@ -26,9 +29,9 @@ import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
 import {
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
+    STATUS_BAR_STYLE,
     typography,
 } from '@/theme/theme';
 
@@ -70,7 +73,7 @@ export default function ProfileScreen() {
         useCallback(() => {
             if (!profile) return;
             StatusBar.setBarStyle('light-content');
-            return () => StatusBar.setBarStyle('dark-content');
+            return () => StatusBar.setBarStyle(STATUS_BAR_STYLE);
         }, [profile]),
     );
 
@@ -272,10 +275,9 @@ export default function ProfileScreen() {
                                 pressed && { opacity: 0.6 },
                             ]}
                         >
-                            <Pencil
+                            <PencilSimple
                                 color={palette.textInverse}
                                 size={16}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                         </Pressable>
                     </View>
@@ -331,10 +333,9 @@ export default function ProfileScreen() {
                                 >
                                     {row.label}
                                 </Text>
-                                <ChevronRight
+                                <CaretRight
                                     color={palette.textMuted}
                                     size={20}
-                                    strokeWidth={ICON_STROKE_WIDTH}
                                 />
                             </Pressable>
                         </Fragment>

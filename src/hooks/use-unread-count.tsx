@@ -83,14 +83,16 @@ export function UnreadCountProvider({ children }: { children: ReactNode }) {
             } = await supabase.auth.getSession();
             const userId = session?.user.id;
             if (!userId) {
-                // NO setCount(0) here: getSession() can transiently return null
-                // during a token refresh, and writing 0 would flash the badge
-                // to 0 (IconBadgeSync mirrors count) and strand it there. Keep
-                // the last-known count; a real sign-out clears the badge
-                // explicitly via cleanupPushOnSignOut, and the provider
-                // unmounts as routing leaves (tabs). setLoaded(true) so a
-                // genuinely signed-out cold start doesn't hang.
-                setLoaded(true);
+                // NO setCount(0) and NO setLoaded(true) here: getSession()
+                // transiently returns null on cold start (session restore)
+                // and during token refreshes. `loaded` must mean "a real
+                // count was fetched" — declaring it on this path with the
+                // initial count=0 made IconBadgeSync write a spurious 0
+                // (and, worse, ended the session with zero further
+                // correction attempts). The auth listener below re-runs
+                // refresh the moment the session lands; a genuinely
+                // signed-out user's badge hygiene is cleanupPushOnSignOut's
+                // job, and the provider unmounts as routing leaves (tabs).
                 return;
             }
 
@@ -149,12 +151,16 @@ export function UnreadCountProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         let active = true;
         let channel: ReturnType<typeof supabase.channel> | null = null;
-        (async () => {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const userId = session?.user.id;
-            if (!userId || !active) return;
+
+        // Channel creation, callable from BOTH the immediate attempt and the
+        // auth listener. The old shape was a one-shot getSession(): on a
+        // push-tap cold start that call transiently returns null (session
+        // still restoring), the early-return left the WHOLE session with no
+        // realtime channel and no retry — the badge-staleness hole. The auth
+        // listener's INITIAL_SESSION/SIGNED_IN/TOKEN_REFRESHED events now
+        // (re)try setup + refresh as soon as a session actually exists.
+        const setupChannel = (userId: string) => {
+            if (!active || channel) return;
 
             const topic = `unread:${userId}:${Math.random().toString(36).slice(2, 10)}`;
             const newChannel = supabase
@@ -229,17 +235,31 @@ export function UnreadCountProvider({ children }: { children: ReactNode }) {
                 )
                 .subscribe();
 
-            if (!active) {
-                // Cleanup raced subscribe() — `channel` was never assigned,
-                // so the cleanup return won't tear this one down. Do it
-                // here directly rather than orphan it on the realtime client.
-                void supabase.removeChannel(newChannel);
-                return;
-            }
             channel = newChannel;
+        };
+
+        (async () => {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (userId && active) setupChannel(userId);
         })();
+
+        const { data: authSub } = supabase.auth.onAuthStateChange(
+            (_event, session) => {
+                const userId = session?.user.id;
+                if (!userId || !active) return;
+                setupChannel(userId);
+                // Also (re)fetch the count: the mount-time refresh may have
+                // hit the transient-null window and fetched nothing.
+                void refresh();
+            },
+        );
+
         return () => {
             active = false;
+            authSub.subscription.unsubscribe();
             if (channel) void supabase.removeChannel(channel);
         };
     }, [refresh]);

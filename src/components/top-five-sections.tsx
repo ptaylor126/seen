@@ -22,7 +22,7 @@ import {
 
 import type { FavoriteItem } from '@/lib/favorites';
 import { imageUrl } from '@/lib/tmdb';
-import { getPalette, radius, spacing, typography } from '@/theme/theme';
+import { fontFamily, posterFrame, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 type Palette = ReturnType<typeof getPalette>;
 
@@ -180,6 +180,7 @@ const styles = StyleSheet.create({
         position: 'relative',
     },
     poster: {
+        ...posterFrame,
         width: POSTER_W,
         height: POSTER_H,
         borderRadius: radius.sm,
@@ -196,6 +197,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     rankText: {
-        fontWeight: '700',
+        fontFamily: fontFamily.bold,
     },
 });

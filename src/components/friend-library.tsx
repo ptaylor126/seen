@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Search as SearchIcon, X } from 'lucide-react-native';
+import {
+    MagnifyingGlass as SearchIcon,
+    X,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -28,8 +31,8 @@ import { imageUrl } from '@/lib/tmdb';
 import { useLibraryFilters } from '@/lib/use-library-filters';
 import { POSTER_ASPECT } from '@/theme/poster-layout';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -369,7 +372,6 @@ export function FriendLibrary({
                 <SearchIcon
                     color={palette.textMuted}
                     size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
                 <TextInput
                     ref={localSearchInputRef}
@@ -399,7 +401,6 @@ export function FriendLibrary({
                         <X
                             color={palette.textMuted}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 ) : null}
@@ -627,6 +628,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     poster: {
+        ...posterFrame,
         width: POSTER_W,
         height: POSTER_H,
         borderRadius: radius.sm,
@@ -640,6 +642,7 @@ const styles = StyleSheet.create({
         marginLeft: POSTER_W + spacing.md,
     },
     gridPoster: {
+        ...posterFrame,
         borderRadius: radius.sm,
     },
     // Star glyphs under the poster (replaced the on-poster overlay

@@ -8,7 +8,9 @@
  */
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import { useState } from 'react';
 import {
     Alert,
@@ -27,7 +29,6 @@ import {
 } from '@/lib/import/registry';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -82,10 +83,9 @@ export default function ImportSourceScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>

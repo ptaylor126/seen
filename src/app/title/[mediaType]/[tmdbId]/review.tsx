@@ -27,6 +27,7 @@ import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-l
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
     radius,
     spacing,
@@ -553,6 +554,7 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.lg,
     },
     contextPoster: {
+        ...posterFrame,
         width: POSTER_W,
         height: POSTER_H,
         borderRadius: radius.sm,

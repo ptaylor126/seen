@@ -1,7 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { CheckCircle, XCircle } from 'lucide-react-native';
+import {
+    CheckCircle,
+    XCircle,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
@@ -35,7 +38,7 @@ import {
     type NotificationChange,
 } from '@/lib/notification-signal';
 import { goToProfile } from '@/lib/profile-nav';
-import { promptPushAtHighIntent } from '@/lib/push';
+import { promptPushAtHighIntent, reassertBadgeFromServer } from '@/lib/push';
 import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { withEpisodeSuffix, withSeasonSuffix } from '@/lib/title-scope';
@@ -43,8 +46,9 @@ import { fetchTitlesByItems } from '@/lib/titles';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    fontFamily,
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -594,6 +598,13 @@ export default function InboxScreen() {
                 .then(({ error: markReadError }) => {
                     if (markReadError) {
                         console.warn('inbox mark-read sweep failed:', markReadError);
+                    } else {
+                        // The sweep just lowered unread_count — write the
+                        // icon badge NOW, directly. The provider path only
+                        // corrects it if realtime survives and a bell
+                        // screen refetches; in the push-tap → inbox →
+                        // leave flow neither is guaranteed.
+                        void reassertBadgeFromServer();
                     }
                 });
 
@@ -1492,6 +1503,8 @@ export default function InboxScreen() {
                     (it) => !(it.kind === 'friend_request' && it.requestId === requestId),
                 ),
             );
+            // Branch-2 of unread_count just dropped — assert the badge now.
+            void reassertBadgeFromServer();
         } catch (err) {
             console.error('decline failed:', err);
             Alert.alert(
@@ -1536,7 +1549,7 @@ export default function InboxScreen() {
                 </UserLink>
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text
@@ -1564,7 +1577,6 @@ export default function InboxScreen() {
                             <CheckCircle
                                 color={palette.accent}
                                 size={12}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                             <Text
                                 style={[
@@ -1593,7 +1605,6 @@ export default function InboxScreen() {
                             <XCircle
                                 color={palette.textMuted}
                                 size={12}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                             <Text
                                 style={[
@@ -1668,7 +1679,7 @@ export default function InboxScreen() {
                 </UserLink>
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text
@@ -1701,7 +1712,7 @@ export default function InboxScreen() {
                                     typography.caption,
                                     {
                                         color: palette.textInverse,
-                                        fontWeight: '600',
+                                        fontFamily: fontFamily.semibold,
                                     },
                                 ]}
                             >
@@ -1724,7 +1735,7 @@ export default function InboxScreen() {
                                     typography.caption,
                                     {
                                         color: palette.textMuted,
-                                        fontWeight: '600',
+                                        fontFamily: fontFamily.semibold,
                                     },
                                 ]}
                             >
@@ -1769,7 +1780,7 @@ export default function InboxScreen() {
                 </UserLink>
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text
@@ -1804,7 +1815,7 @@ export default function InboxScreen() {
                 />
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text style={typography.bodyEmphasis}>
@@ -1838,7 +1849,7 @@ export default function InboxScreen() {
                 />
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text style={typography.bodyEmphasis}>
@@ -1875,7 +1886,7 @@ export default function InboxScreen() {
                 </UserLink>
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text
@@ -1919,7 +1930,7 @@ export default function InboxScreen() {
                 </UserLink>
                 <View style={styles.rowText}>
                     <Text
-                        style={[typography.body, { color: palette.text }]}
+                        style={[typography.bodyQuiet, { color: palette.text }]}
                         numberOfLines={2}
                     >
                         <Text
@@ -2751,6 +2762,7 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.md,
     },
     sentPoster: {
+        ...posterFrame,
         width: SENT_POSTER_WIDTH,
         height: SENT_POSTER_HEIGHT,
         borderRadius: radius.sm,

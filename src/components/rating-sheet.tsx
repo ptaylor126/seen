@@ -1,5 +1,8 @@
 import * as Haptics from 'expo-haptics';
-import { Star, StarHalf } from 'lucide-react-native';
+import {
+    Star,
+    StarHalf,
+} from 'phosphor-react-native';
 import { MotiView } from 'moti';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -36,7 +39,6 @@ import supabase from '@/lib/supabase';
 import {
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -811,9 +813,8 @@ export function RatingSheet({
                                         {variant === 'full' ? (
                                             <Star
                                                 color={iconColor}
-                                                fill={palette.accent}
+                                                weight="fill"
                                                 size={36}
-                                                strokeWidth={ICON_STROKE_WIDTH}
                                             />
                                         ) : variant === 'half' ? (
                                             // StarHalf fills the left side
@@ -825,27 +826,20 @@ export function RatingSheet({
                                             <View style={styles.starStack}>
                                                 <Star
                                                     color={palette.textMuted}
-                                                    fill="transparent"
                                                     size={36}
-                                                    strokeWidth={ICON_STROKE_WIDTH}
                                                 />
                                                 <View style={styles.halfOverlay}>
                                                     <StarHalf
                                                         color={palette.accent}
-                                                        fill={palette.accent}
+                                                        weight="fill"
                                                         size={36}
-                                                        strokeWidth={
-                                                            ICON_STROKE_WIDTH
-                                                        }
                                                     />
                                                 </View>
                                             </View>
                                         ) : (
                                             <Star
                                                 color={palette.textMuted}
-                                                fill="transparent"
                                                 size={36}
-                                                strokeWidth={ICON_STROKE_WIDTH}
                                             />
                                         )}
                                     </View>
@@ -904,9 +898,8 @@ export function RatingSheet({
                         >
                             <Star
                                 color={palette.accent}
-                                fill={palette.accent}
+                                weight="fill"
                                 size={40}
-                                strokeWidth={ICON_STROKE_WIDTH}
                             />
                             <Text
                                 style={[

@@ -1,6 +1,10 @@
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Check, Search as SearchIcon, X } from 'lucide-react-native';
+import {
+    Check,
+    MagnifyingGlass as SearchIcon,
+    X,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -33,9 +37,9 @@ import supabase from '@/lib/supabase';
 import { ensureTitle, type EnsureTitleArgs } from '@/lib/titles';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {
+    posterFrame,
     button,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -424,7 +428,6 @@ export default function TitleChatComposeScreen() {
                         <Check
                             color={palette.textInverse}
                             size={16}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     )}
                 </View>
@@ -576,7 +579,6 @@ export default function TitleChatComposeScreen() {
                                     <SearchIcon
                                         color={palette.textMuted}
                                         size={20}
-                                        strokeWidth={ICON_STROKE_WIDTH}
                                     />
                                     <TextInput
                                         ref={localSearchInputRef}
@@ -608,7 +610,6 @@ export default function TitleChatComposeScreen() {
                                             <X
                                                 color={palette.textMuted}
                                                 size={18}
-                                                strokeWidth={ICON_STROKE_WIDTH}
                                             />
                                         </Pressable>
                                     ) : null}
@@ -797,6 +798,7 @@ const styles = StyleSheet.create({
         paddingBottom: spacing.lg,
     },
     contextPoster: {
+        ...posterFrame,
         width: POSTER_W,
         height: POSTER_H,
         borderRadius: radius.sm,

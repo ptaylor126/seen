@@ -1,7 +1,12 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Check, Search as SearchIcon, UserPlus, X } from 'lucide-react-native';
+import {
+    Check,
+    MagnifyingGlass as SearchIcon,
+    UserPlus,
+    X,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -44,10 +49,10 @@ import {
     type TMDBTV,
 } from '@/lib/tmdb';
 import {
+    posterFrame,
     button,
     fontFamily,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -718,7 +723,6 @@ export default function RecommendScreen() {
                         <Check
                             color={palette.textInverse}
                             size={16}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     )}
                 </View>
@@ -825,7 +829,6 @@ export default function RecommendScreen() {
                 <SearchIcon
                     color={palette.textMuted}
                     size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
                 <TextInput
                     ref={localSearchInputRef}
@@ -855,7 +858,6 @@ export default function RecommendScreen() {
                         <X
                             color={palette.textMuted}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 ) : null}
@@ -905,7 +907,6 @@ export default function RecommendScreen() {
                     <UserPlus
                         color={palette.accent}
                         size={16}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                     <Text
                         // body (16) not caption (14) + medium 500 — a little
@@ -1344,6 +1345,7 @@ const styles = StyleSheet.create({
         width: SEASON_FADE_W,
     },
     contextPoster: {
+        ...posterFrame,
         width: POSTER_W,
         height: POSTER_H,
         borderRadius: radius.sm,
@@ -1371,7 +1373,6 @@ const styles = StyleSheet.create({
     },
     inviteRowAction: {
         fontFamily: fontFamily.medium,
-        fontWeight: '500',
     },
     // Zero-friends empty-state variant — caption + outlined secondary
     // (mirrors friends/add.tsx's inviteGroup, on the shared button

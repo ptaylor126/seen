@@ -1,6 +1,9 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Search, X } from 'lucide-react-native';
+import {
+    MagnifyingGlass,
+    X,
+} from 'phosphor-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     FlatList,
@@ -13,9 +16,11 @@ import {
     View,
 } from 'react-native';
 
+import { Avatar } from '@/components/avatar';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { LoadError } from '@/components/load-error';
+import supabase from '@/lib/supabase';
 import {
     getPopular,
     getTrending,
@@ -25,8 +30,8 @@ import {
     type TMDBPersonSummary,
 } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -47,6 +52,43 @@ export type SearchablePerson = TMDBPersonSummary & {
 };
 
 export type SearchableItem = SearchableTitle | SearchablePerson;
+
+// A friend of the signed-in user, for the FRIENDS section of the home
+// overlay. Loaded lazily once per session (see ensureFriendsLoaded) and
+// filtered locally per keystroke — a dozen-item list, no server
+// round-trip per query.
+export interface FriendHit {
+    userId: string;
+    handle: string;
+    displayName: string;
+    avatarUrl: string | null;
+}
+
+// Overlay rows are TMDB results or friend rows; `kind` discriminates
+// the friend branch (TMDB rows carry media_type instead).
+type OverlayItem = SearchableItem | (FriendHit & { kind: 'friend' });
+
+const FRIEND_RESULTS_CAP = 5;
+
+// Prefix-first fuzzy-ish friend filter: handle-prefix or name-word-prefix
+// matches rank first, plain substring matches after. A dozen-item local
+// filter, deliberately not a search engine.
+function matchFriends(list: FriendHit[], rawQuery: string): FriendHit[] {
+    const q = rawQuery.trim().toLowerCase();
+    if (!q) return [];
+    const prefix: FriendHit[] = [];
+    const substring: FriendHit[] = [];
+    for (const f of list) {
+        const handle = f.handle.toLowerCase();
+        const name = f.displayName.toLowerCase();
+        if (handle.startsWith(q) || name.split(/\s+/).some((w) => w.startsWith(q))) {
+            prefix.push(f);
+        } else if (handle.includes(q) || name.includes(q)) {
+            substring.push(f);
+        }
+    }
+    return [...prefix, ...substring].slice(0, FRIEND_RESULTS_CAP);
+}
 
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_RESULT_POSTER_W = 56;
@@ -104,6 +146,13 @@ export interface SearchBarState {
     ensureDiscoverLoaded: () => void;
     // Re-runs the current query's search (used by the friendly error retry).
     retry: () => void;
+    // Friends of the signed-in user for the home overlay's FRIENDS
+    // section. Lazily loaded once per session via ensureFriendsLoaded.
+    friends: FriendHit[] | null;
+    ensureFriendsLoaded: () => void;
+    // Opens a friend's profile (dismisses the overlay first) — the
+    // friend-row sibling of openTitle.
+    openFriend: (handle: string) => void;
 }
 
 // Owns every piece of search state + the debounced TMDB query + the
@@ -129,6 +178,14 @@ export function useSearchBar(): SearchBarState {
     );
     const [discoverLoading, setDiscoverLoading] = useState(false);
     const discoverStartedRef = useRef(false);
+
+    // Friends cache — same lazy run-once shape as discover. There is no
+    // app-wide friends provider (home fetches friendship IDS inside its
+    // own HomeData load; the Friends tab fetches its own list), so the
+    // overlay owns one small fetch: friendships → profiles, then every
+    // keystroke filters in memory.
+    const [friends, setFriends] = useState<FriendHit[] | null>(null);
+    const friendsStartedRef = useRef(false);
 
     // 300ms debounce + stale-result guard. Cancellation runs on every
     // query change AND on unmount.
@@ -183,6 +240,49 @@ export function useSearchBar(): SearchBarState {
         };
     }, [query, reloadKey]);
 
+    const ensureFriendsLoaded = useCallback(() => {
+        if (friendsStartedRef.current) return;
+        friendsStartedRef.current = true;
+        (async () => {
+            try {
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+                const userId = session?.user.id;
+                if (!userId) return;
+                const friendshipsRes = await supabase
+                    .from('friendships')
+                    .select('user_a_id, user_b_id')
+                    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`);
+                if (friendshipsRes.error) throw friendshipsRes.error;
+                const friendIds = (friendshipsRes.data ?? []).map((f) =>
+                    f.user_a_id === userId ? f.user_b_id : f.user_a_id,
+                );
+                if (friendIds.length === 0) {
+                    setFriends([]);
+                    return;
+                }
+                const profilesRes = await supabase
+                    .from('profiles')
+                    .select('id, handle, display_name, avatar_url')
+                    .in('id', friendIds);
+                if (profilesRes.error) throw profilesRes.error;
+                setFriends(
+                    (profilesRes.data ?? []).map((row) => ({
+                        userId: row.id,
+                        handle: row.handle,
+                        displayName: row.display_name,
+                        avatarUrl: row.avatar_url,
+                    })),
+                );
+            } catch (err) {
+                // Best-effort section: a failed load just means no
+                // FRIENDS section this session, never a broken search.
+                console.warn('friend search load failed:', err);
+            }
+        })();
+    }, []);
+
     const handleFocus = useCallback(() => {
         setOpen(true);
     }, []);
@@ -204,6 +304,17 @@ export function useSearchBar(): SearchBarState {
             router.push({
                 pathname: '/title/[mediaType]/[tmdbId]',
                 params: { mediaType: media, tmdbId: String(id) },
+            });
+        },
+        [router, dismiss],
+    );
+
+    const openFriend = useCallback(
+        (handle: string) => {
+            dismiss();
+            router.push({
+                pathname: '/friends/[handle]',
+                params: { handle },
             });
         },
         [router, dismiss],
@@ -292,6 +403,9 @@ export function useSearchBar(): SearchBarState {
         query,
         setQuery,
         results,
+        friends,
+        ensureFriendsLoaded,
+        openFriend,
         loading,
         error,
         overlayVisible: open || query.length > 0,
@@ -321,17 +435,19 @@ export function SearchBarInput({ state }: { state: SearchBarState }) {
                     },
                 ]}
             >
-                <Search
+                <MagnifyingGlass
                     color={palette.textMuted}
                     size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
                 <TextInput
                     ref={state.inputRef}
                     value={state.query}
                     onChangeText={state.setQuery}
                     onFocus={state.handleFocus}
-                    placeholder="Search to add or find anything"
+                    // DELIBERATE copy change (friends-in-search v1) — this exact
+                    // string was previously mangled by the icon-rename slip;
+                    // this time the new wording is intentional.
+                    placeholder="Find films, shows and friends"
                     placeholderTextColor={palette.textMuted}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -355,7 +471,6 @@ export function SearchBarInput({ state }: { state: SearchBarState }) {
                         <X
                             color={palette.textMuted}
                             size={18}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 ) : null}
@@ -406,6 +521,7 @@ export function SearchBarOverlay({
     state,
     top,
     showDiscover = false,
+    showFriends = false,
 }: {
     state: SearchBarState;
     top: number;
@@ -414,6 +530,10 @@ export function SearchBarOverlay({
     // filters the user's own library — trending titles they may not own would
     // be confusing there.
     showDiscover?: boolean;
+    // Home-only: blend the user's FRIENDS into results (and kick off the
+    // lazy friends fetch). Off on Library, whose overlay is the add-a-
+    // title flow — a friend row would be a non-sequitur there.
+    showFriends?: boolean;
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -429,10 +549,13 @@ export function SearchBarOverlay({
     // Kick off the Home discover fetch once when discovery is enabled.
     // ensureDiscoverLoaded is a stable, run-once callback, so the overlay
     // re-mounting on each search-open doesn't refetch.
-    const { ensureDiscoverLoaded } = state;
+    const { ensureDiscoverLoaded, ensureFriendsLoaded } = state;
     useEffect(() => {
         if (showDiscover) ensureDiscoverLoaded();
     }, [showDiscover, ensureDiscoverLoaded]);
+    useEffect(() => {
+        if (showFriends) ensureFriendsLoaded();
+    }, [showFriends, ensureFriendsLoaded]);
 
     function renderDiscover() {
         const tiles = state.discoverItems;
@@ -558,6 +681,42 @@ export function SearchBarOverlay({
         );
     }
 
+    function renderFriendRow(item: FriendHit) {
+        return (
+            <Pressable
+                onPress={() => state.openFriend(item.handle)}
+                style={({ pressed }) => [
+                    styles.resultRow,
+                    pressed && { opacity: 0.6 },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.displayName}, @${item.handle}`}
+            >
+                {/* Avatar + name + @handle — the friends-list row grammar. */}
+                <Avatar
+                    avatarUrl={item.avatarUrl}
+                    displayName={item.displayName}
+                    seedId={item.userId}
+                    size={SEARCH_RESULT_PROFILE_SIZE}
+                />
+                <View style={styles.resultText}>
+                    <Text
+                        style={[typography.body, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        {item.displayName}
+                    </Text>
+                    <Text
+                        style={[typography.caption, { color: palette.textMuted }]}
+                        numberOfLines={1}
+                    >
+                        @{item.handle}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    }
+
     // Partition the blended results into a People section (capped) and
     // a Titles section. People appear first because a query that names
     // a person is much more likely to be searching for them than for a
@@ -570,7 +729,20 @@ export function SearchBarOverlay({
     const titleResults = (state.results ?? []).filter(
         (r): r is SearchableTitle => r.media_type !== 'person',
     );
-    const sections: { title: string; data: SearchableItem[] }[] = [];
+    // FRIENDS leads: a query matching someone you know is even more
+    // likely aimed at them than at a TMDB person (the same logic that
+    // put PEOPLE above TITLES, one rung more personal).
+    const friendMatches: OverlayItem[] =
+        showFriends && state.friends
+            ? matchFriends(state.friends, state.query).map((f) => ({
+                  ...f,
+                  kind: 'friend' as const,
+              }))
+            : [];
+    const sections: { title: string; data: OverlayItem[] }[] = [];
+    if (friendMatches.length > 0) {
+        sections.push({ title: 'FRIENDS', data: friendMatches });
+    }
     if (peopleResults.length > 0) {
         sections.push({ title: 'PEOPLE', data: peopleResults });
     }
@@ -609,7 +781,7 @@ export function SearchBarOverlay({
                     message="Check your connection and try again."
                     onRetry={state.retry}
                 />
-            ) : state.results.length === 0 ? (
+            ) : state.results.length === 0 && friendMatches.length === 0 ? (
                 <View style={styles.statusBlock}>
                     <Text
                         style={[typography.body, { color: palette.textMuted }]}
@@ -621,11 +793,17 @@ export function SearchBarOverlay({
             ) : (
                 <SectionList
                     sections={sections}
-                    keyExtractor={(item) => `${item.media_type}-${item.id}`}
+                    keyExtractor={(item) =>
+                        'kind' in item
+                            ? `friend-${item.userId}`
+                            : `${item.media_type}-${item.id}`
+                    }
                     renderItem={({ item }) =>
-                        item.media_type === 'person'
-                            ? renderPersonRow(item)
-                            : renderTitleRow(item)
+                        'kind' in item
+                            ? renderFriendRow(item)
+                            : item.media_type === 'person'
+                              ? renderPersonRow(item)
+                              : renderTitleRow(item)
                     }
                     renderSectionHeader={({ section }) => (
                         <View
@@ -751,6 +929,7 @@ const styles = StyleSheet.create({
         marginBottom: spacing.sm,
     },
     discoverPoster: {
+        ...posterFrame,
         width: '100%',
         aspectRatio: 2 / 3,
         borderRadius: radius.sm,
@@ -767,6 +946,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     resultPoster: {
+        ...posterFrame,
         width: SEARCH_RESULT_POSTER_W,
         height: SEARCH_RESULT_POSTER_H,
         borderRadius: radius.sm,

@@ -1,3 +1,4 @@
+import { reassertBadgeFromServer } from '@/lib/push';
 import supabase from '@/lib/supabase';
 
 export type MediaType = 'movie' | 'tv';
@@ -105,6 +106,13 @@ export async function applyWatchedRating(args: {
             p_thumb: thumb,
         });
         if (rpcError) throw rpcError;
+    }
+
+    // Any advanced rec just left 'pending' → unread_count dropped. Assert
+    // the icon badge at action time (shared by the title-page and rec-page
+    // rating sheets); fire-and-forget, the helper swallows its own errors.
+    if ((openRecs ?? []).length > 0) {
+        void reassertBadgeFromServer();
     }
 
     return { advancedRecCount: (openRecs ?? []).length };

@@ -15,7 +15,9 @@ import { Image } from 'expo-image';
 import { File } from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation, usePreventRemove } from '@react-navigation/native';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -45,8 +47,8 @@ import { formatRatingStars } from '@/lib/rating';
 import supabase from '@/lib/supabase';
 import { imageUrl } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -314,10 +316,9 @@ export default function ImportRunScreen() {
                         hitSlop={spacing.sm}
                         style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                     >
-                        <ChevronLeft
+                        <CaretLeft
                             color={palette.accent}
                             size={28}
-                            strokeWidth={ICON_STROKE_WIDTH}
                         />
                     </Pressable>
                 )}
@@ -943,6 +944,7 @@ const styles = StyleSheet.create({
     },
     previewRowText: { flex: 1, gap: spacing.xxs },
     poster: {
+        ...posterFrame,
         width: POSTER_W,
         height: POSTER_H,
         borderRadius: radius.sm / 2,

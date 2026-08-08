@@ -1,5 +1,7 @@
 import { Image } from 'expo-image';
-import { Search } from 'lucide-react-native';
+import {
+    MagnifyingGlass,
+} from 'phosphor-react-native';
 import { Fragment, useEffect, useState } from 'react';
 import {
     Keyboard,
@@ -14,8 +16,8 @@ import {
 import { AnimatedLogo } from '@/components/animated-logo';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
+    posterFrame,
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -250,10 +252,9 @@ export function OnboardingSearch({
             onLayout={(e) => onContainerLayout?.(e.nativeEvent.layout.y)}
         >
             <View style={[styles.bar, { backgroundColor: palette.surface }]}>
-                <Search
+                <MagnifyingGlass
                     color={palette.textMuted}
                     size={20}
-                    strokeWidth={ICON_STROKE_WIDTH}
                 />
                 <TextInput
                     value={query}
@@ -378,6 +379,7 @@ const styles = StyleSheet.create({
         gap: spacing.md,
     },
     poster: {
+        ...posterFrame,
         width: POSTER_WIDTH,
         height: POSTER_HEIGHT,
         borderRadius: radius.sm,

@@ -1,5 +1,7 @@
 import { useRouter } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
+import {
+    CaretLeft,
+} from 'phosphor-react-native';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -19,7 +21,6 @@ import { useBottomInset } from '@/hooks/use-bottom-inset';
 import supabase from '@/lib/supabase';
 import {
     getPalette,
-    ICON_STROKE_WIDTH,
     radius,
     spacing,
     typography,
@@ -175,10 +176,9 @@ export default function BlockedUsersScreen() {
                     hitSlop={spacing.sm}
                     style={({ pressed }) => [pressed && { opacity: 0.6 }]}
                 >
-                    <ChevronLeft
+                    <CaretLeft
                         color={palette.accent}
                         size={28}
-                        strokeWidth={ICON_STROKE_WIDTH}
                     />
                 </Pressable>
                 <Text style={[typography.heading, { color: palette.text }]}>

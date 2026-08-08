@@ -1,13 +1,25 @@
 import {
+    BricolageGrotesque_600SemiBold,
+    BricolageGrotesque_700Bold,
+} from '@expo-google-fonts/bricolage-grotesque';
+import {
     Geist_400Regular,
     Geist_500Medium,
     Geist_600SemiBold,
     Geist_700Bold,
     useFonts,
 } from '@expo-google-fonts/geist';
+import {
+    Manrope_300Light,
+    Manrope_400Regular,
+    Manrope_500Medium,
+    Manrope_600SemiBold,
+    Manrope_700Bold,
+} from '@expo-google-fonts/manrope';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useState } from 'react';
+import { StatusBar } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -17,6 +29,7 @@ import { LaunchReadyContext } from '@/hooks/use-launch-ready';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
 import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
+import { STATUS_BAR_STYLE } from '@/theme/theme';
 
 // Pin the root navigator's initial/anchor route to (tabs). With three root
 // groups — (auth), (onboarding), (tabs) — and no app/index.tsx, expo-router
@@ -42,11 +55,23 @@ export default function RootLayout() {
     // font, then flash to Geist mid-launch — holding the tree
     // suppresses the flash. expo-font is a JS-side module, so this
     // works without an EAS rebuild.
+    // Both type systems load at boot: Geist (V1) plus Bricolage Grotesque +
+    // Manrope (the V2 redesign faces behind THEME_V2_ENABLED in theme.ts).
+    // Loading them unconditionally costs a few hundred ms of asset read on
+    // first launch but means flipping the theme switch needs only a reload,
+    // never a font-availability chase. Trim to one set when V2 ships.
     const [fontsLoaded] = useFonts({
         Geist_400Regular,
         Geist_500Medium,
         Geist_600SemiBold,
         Geist_700Bold,
+        Manrope_300Light,
+        Manrope_400Regular,
+        Manrope_500Medium,
+        Manrope_600SemiBold,
+        Manrope_700Bold,
+        BricolageGrotesque_600SemiBold,
+        BricolageGrotesque_700Bold,
     });
 
     useEffect(() => {
@@ -190,6 +215,9 @@ function RootLayoutInner() {
 
     return (
         <LaunchReadyContext.Provider value={{ markDestinationReady }}>
+            {/* App-wide default; banner screens override on focus and
+                restore to the same theme-driven value on blur. */}
+            <StatusBar barStyle={STATUS_BAR_STYLE} />
             <Stack screenOptions={{ headerShown: false }}>
                 {/* fullScreenModal (not 'modal'): the title page is reached
                     both standalone AND stacked over the rec view (itself a

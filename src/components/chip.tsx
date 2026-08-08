@@ -100,6 +100,5 @@ const styles = StyleSheet.create({
         // whole filter zone reads with one typographic voice.
         ...typography.caption,
         fontFamily: fontFamily.medium,
-        fontWeight: '500',
     },
 });

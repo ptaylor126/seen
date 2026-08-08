@@ -128,6 +128,5 @@ const styles = StyleSheet.create({
         // bodyEmphasis at 16/600 — too shouty for a segmented control).
         ...typography.caption,
         fontFamily: fontFamily.medium,
-        fontWeight: '500',
     },
 });
