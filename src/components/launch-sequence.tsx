@@ -3,11 +3,17 @@
  * splash with no visible seam.
  *
  * Frame 1 renders the FULL logo at the same size/position as the static splash
- * (expo-splash-screen: logo.png, imageWidth 240, contain, #EFE7EC, centred in
- * the full window) so the native splash → React handoff is seamless. The logo
- * looks around briefly, then morphs (wordmark fades/drops, eyes converge) into
- * the eyes loader, which loops until the app is ready — then the whole overlay
- * fades out to reveal the destination.
+ * (expo-splash-screen: logo.png, imageWidth 240, contain, #0B0D26, centred in
+ * the full window). PLATFORM ASYMMETRY as of the vc7 branch: that continuity
+ * holds on iOS, where the native splash draws the same wordmark. ANDROID has
+ * NO splash image — Android 12+ masks the splash icon to a circle, which
+ * cropped the wordmark, so the native splash is flat navy and the wordmark
+ * ARRIVES with frame 1 instead of being already on screen. The background
+ * colour matches on both, so there is no colour jump either way; only iOS
+ * gets mark-to-mark continuity. The logo looks around briefly, then morphs
+ * (wordmark fades/drops, eyes converge) into the eyes loader, which loops
+ * until the app is ready — then the whole overlay fades out to reveal the
+ * destination.
  *
  * Dismissal is ready-gated, not timed: it waits for BOTH the intro morph to
  * finish AND `ready` (from the launch-ready signal in _layout). A safety
@@ -25,10 +31,15 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { AnimatedLogo } from '@/components/animated-logo';
-import { palette } from '@/theme/theme';
+import { paletteV2 } from '@/theme/theme';
 
 // MUST match app.json expo-splash-screen config for a seamless handoff.
-const SPLASH_BG = palette.light.bg; // = backgroundColor
+// MUST equal app.json's expo-splash-screen backgroundColor EXACTLY (both
+// platform blocks are #0B0D26 = paletteV2.bg as of the vc7 branch) — any
+// drift shows as a seam at the native→JS splash handoff. The old cream
+// era carried a silent #F2E7EC-vs-#EFE7EC mismatch; the navy values are
+// verified equal.
+const SPLASH_BG = paletteV2.bg;
 const SPLASH_LOGO_WIDTH = 240; // = imageWidth
 const FADE_MS = 250;
 // Minimum time the launch screen stays up so the eyes-loader phase is always

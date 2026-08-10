@@ -2,7 +2,7 @@
   "expo": {
     "name": "Seen",
     "slug": "seen",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "seen",
@@ -27,11 +27,12 @@
       "package": "com.paultaylor.seen",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#F2E7EC",
+        "backgroundColor": "#0B0D26",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "edgeToEdgeEnabled": true
     },
     "web": {
       "output": "single",
@@ -45,12 +46,12 @@
           "image": "./assets/logo.png",
           "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#F2E7EC",
+          "backgroundColor": "#0B0D26",
           "android": {
-            "image": "./assets/images/android-splash-eyes.png",
+            "image": "./assets/images/android-splash-blank.png",
             "imageWidth": 240,
             "resizeMode": "contain",
-            "backgroundColor": "#F2E7EC"
+            "backgroundColor": "#0B0D26"
           }
         }
       ],
