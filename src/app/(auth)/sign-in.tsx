@@ -98,15 +98,24 @@ export default function SignInScreen() {
                         style={({ pressed }) => [
                             styles.googleButton,
                             {
-                                // Match the Apple button's black pill (no plum);
-                                // pressed lifts to a slightly lighter dark grey.
-                                backgroundColor: pressed ? '#1a1a1a' : '#000000',
+                                // Google's dark-variant button colour from the
+                                // branding guidelines (#131314); pressed lifts
+                                // to a slightly lighter dark grey. Hardcoded,
+                                // not tokenised — this is Google's asset spec,
+                                // it must not follow the app palette.
+                                backgroundColor: pressed ? '#1a1a1a' : '#131314',
                                 opacity: busy ? 0.6 : 1,
                             },
                         ]}
                     >
                         {busy ? (
-                            <ActivityIndicator color={palette.textInverse} />
+                            // Same hardcoded Google dark-variant colour as
+                            // the label below, and NOT palette.textInverse
+                            // for the same reason: that token flipped from
+                            // #FFFFFF (V1) to the navy #0B0D26 (V2), which
+                            // rendered this spinner invisible on the dark
+                            // button.
+                            <ActivityIndicator color="#E3E3E3" />
                         ) : (
                             <View style={styles.googleContent}>
                                 <Image
@@ -118,7 +127,14 @@ export default function SignInScreen() {
                                 <Text
                                     style={[
                                         typography.bodyEmphasis,
-                                        { color: palette.textInverse },
+                                        // Google's dark-variant label colour.
+                                        // NOT palette.textInverse: that token
+                                        // means "text on accent fills" and
+                                        // flipped from #FFFFFF (V1) to the
+                                        // navy #0B0D26 (V2), which rendered
+                                        // this label at 1.10:1 on the dark
+                                        // button. #E3E3E3 reads 14.47:1.
+                                        { color: '#E3E3E3' },
                                     ]}
                                 >
                                     Sign in with Google
@@ -230,6 +246,10 @@ const styles = StyleSheet.create({
         // as a guard so huge font scaling can't push a third wrap point.
         alignSelf: 'center',
         maxWidth: BUTTON_WIDTH,
-        paddingBottom: spacing.lg,
+        // xl (was lg): more breathing room above the Android system nav
+        // bar. The SafeAreaView above already supplies insets.bottom, so
+        // this is additive to it, not a replacement — see the 2026-08-11
+        // clearance audit.
+        paddingBottom: spacing.xl,
     },
 });

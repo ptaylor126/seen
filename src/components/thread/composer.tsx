@@ -65,14 +65,19 @@ export function ThreadComposer({
     const insets = useSafeAreaInsets();
     // Keyboard progress (0 closed → 1 open) drives the bottom clearance so it
     // moves WITH the keyboard rather than swapping discretely: home-indicator
-    // inset when closed → a small gap above the keyboard's top edge when open
-    // (spacing.md, not flush).
+    // inset PLUS a small gap when closed → a small gap above the keyboard's
+    // top edge when open (spacing.md, not flush).
+    //
+    // The closed-state + spacing.sm matters on Android: the raw inset clears
+    // the system nav bar exactly, leaving the bar visually flush against it.
+    // The extra step gives it breathing room on both platforms (on iOS it
+    // lifts the bar slightly off the home indicator).
     const { progress } = useReanimatedKeyboardAnimation();
     const clearanceStyle = useAnimatedStyle(() => ({
         paddingBottom: interpolate(
             progress.value,
             [0, 1],
-            [insets.bottom, spacing.md],
+            [insets.bottom + spacing.sm, spacing.md],
         ),
     }));
 
