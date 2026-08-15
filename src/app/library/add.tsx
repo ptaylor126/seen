@@ -76,11 +76,24 @@ export default function LibraryAddScreen() {
     // the handle from profiles to tailor the heading. Fetching (rather
     // than passing the handle in the URL) keeps the DB as the single
     // source of truth for what handle to display.
-    const { recommendTo } = useLocalSearchParams<{ recommendTo?: string }>();
+    const { recommendTo, recommendMode } = useLocalSearchParams<{
+        recommendTo?: string;
+        recommendMode?: string;
+    }>();
     const recommendToId =
         typeof recommendTo === 'string' && recommendTo.length > 0
             ? recommendTo
             : null;
+    // TITLE-FIRST recommend: the mirror of recipient-first. The user picks
+    // a title here, then chooses recipients on the recommend screen (which
+    // starts with an empty selection when no `preselect` is forwarded).
+    // Entered from surfaces that prompt "recommend something" without a
+    // recipient in mind. recommendTo takes precedence if both are somehow
+    // passed — recipient-first is the more specific intent.
+    const titleFirstMode = recommendMode === 'title-first' && !recommendToId;
+    // Either recommend flavour. Everything that distinguishes "picking a
+    // title to RECOMMEND" from "picking a title to ADD" keys off this.
+    const anyRecommendMode = recommendToId !== null || titleFirstMode;
 
     const [recipientHandle, setRecipientHandle] = useState<string | null>(null);
 
@@ -120,7 +133,12 @@ export default function LibraryAddScreen() {
         ? recipientHandle
             ? `Recommend to @${recipientHandle}`
             : 'Recommend something'
-        : 'Add to your library';
+        : titleFirstMode
+          ? // Distinct from recipient-first's pending-handle string
+            // ('Recommend something'), which would otherwise make the two
+            // modes look identical while a handle is in flight.
+            'Recommend a title'
+          : 'Add to your library';
 
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchableItem[] | null>(null);
@@ -135,7 +153,7 @@ export default function LibraryAddScreen() {
     // come from the shared titles catalogue. Best-effort: any failure leaves the
     // area blank (no message), same as having nothing rated 8+.
     useEffect(() => {
-        if (!recommendToId) return;
+        if (!anyRecommendMode) return;
         let active = true;
         (async () => {
             try {
@@ -185,7 +203,7 @@ export default function LibraryAddScreen() {
         return () => {
             active = false;
         };
-    }, [recommendToId]);
+    }, [anyRecommendMode]);
 
     // 300 ms debounce + stale-result guard. Same pattern as the original
     // standalone Search screen — see git history for the trade-offs around
@@ -232,13 +250,19 @@ export default function LibraryAddScreen() {
     // preselected — identical to picking a searched title in recommend mode
     // (no title-detail screen in between).
     function handleSuggestionPress(item: Suggestion) {
-        if (!recommendToId) return;
+        if (!anyRecommendMode) return;
         router.push({
             pathname: '/title/[mediaType]/[tmdbId]/recommend',
             params: {
                 mediaType: item.mediaType,
                 tmdbId: String(item.tmdbId),
-                preselect: recommendToId,
+                // Recipient-first forwards the preselect; title-first omits
+                // it entirely so the recommend screen opens with an empty
+                // selection and the user picks recipients there, and asks
+                // for a full-stack dismiss on send (see handlePress).
+                ...(recommendToId
+                    ? { preselect: recommendToId }
+                    : { dismissOnSend: '1' }),
             },
         });
     }
@@ -269,7 +293,7 @@ export default function LibraryAddScreen() {
     // Fills the pre-search empty area with the user's highly-rated library
     // titles. Recommend mode only; blank (as today) when there are none.
     function renderSuggestions() {
-        if (!recommendToId || !suggestions || suggestions.length === 0) {
+        if (!anyRecommendMode || !suggestions || suggestions.length === 0) {
             return null;
         }
         return (
@@ -320,6 +344,8 @@ export default function LibraryAddScreen() {
         // friend pre-selected. Otherwise behaves like the standard
         // library-add picker (lands on the detail screen).
         const handlePress = () => {
+            // Recipient-first: straight to the send flow, recipient
+            // pre-checked. Unchanged.
             if (recommendToId) {
                 router.push({
                     pathname: '/title/[mediaType]/[tmdbId]/recommend',
@@ -331,6 +357,26 @@ export default function LibraryAddScreen() {
                 });
                 return;
             }
+            // Title-first: same destination, NO preselect — the recommend
+            // screen opens with an empty selection so the user picks who.
+            if (titleFirstMode) {
+                router.push({
+                    pathname: '/title/[mediaType]/[tmdbId]/recommend',
+                    params: {
+                        mediaType: item.media_type,
+                        tmdbId: String(item.id),
+                        // Title-first is launched from a surface the user
+                        // should return to on send (home), not from this
+                        // picker. Tells the recommend screen to unwind the
+                        // whole modal stack instead of popping one level.
+                        // Cancel still pops back HERE so a wrong pick can
+                        // be re-chosen.
+                        dismissOnSend: '1',
+                    },
+                });
+                return;
+            }
+            // Plain add: the title detail screen. Unchanged.
             router.push({
                 pathname: '/title/[mediaType]/[tmdbId]',
                 params: {

@@ -118,6 +118,12 @@ export default function RecommendScreen() {
         // Pre-selected recipient id, forwarded by /library/add when the
         // user entered the recommend flow from a friend profile.
         preselect?: string;
+        // '1' when /library/add opened this in TITLE-FIRST mode. That flow
+        // is launched from a surface the user should return to on send
+        // (home), with the picker as an intermediate modal — so a send
+        // unwinds the whole stack instead of popping back into the picker.
+        // Absent everywhere else, where popping one level is correct.
+        dismissOnSend?: string;
     }>();
     const router = useRouter();
     const scheme = useColorScheme() ?? 'light';
@@ -157,6 +163,7 @@ export default function RecommendScreen() {
         typeof params.preselect === 'string' && params.preselect.length > 0
             ? params.preselect
             : null;
+    const dismissOnSend = params.dismissOnSend === '1';
 
     const [titleCtx, setTitleCtx] = useState<TitleContext | null>(null);
     // Full catalogue metadata for the title, captured at load so the send
@@ -626,7 +633,13 @@ export default function RecommendScreen() {
                         // Only pop back if at least one rec actually
                         // landed; if every recipient failed, leave the
                         // modal up so the user can retry.
-                        if (anySuccess) router.back();
+                        if (anySuccess) {
+                            // Title-first (dismissOnSend) unwinds the whole
+                            // modal stack to the tab root; every other entry
+                            // pops one level, as before.
+                            if (dismissOnSend) router.dismissAll();
+                            else router.back();
+                        }
 
                         // Sending a genuinely NEW rec is a high-intent
                         // moment to ask for push — gate strictly on the
