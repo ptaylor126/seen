@@ -2,10 +2,12 @@ import { Image } from 'expo-image';
 
 import { WORDMARK } from '@/lib/brand';
 import { useRouter } from 'expo-router';
+import { Play, Users } from 'phosphor-react-native';
 import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import Animated, {
     Easing,
+    type SharedValue,
     useAnimatedStyle,
     useSharedValue,
     withDelay,
@@ -15,46 +17,102 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { fontFamily, button, getPalette, radius, spacing, typography } from '@/theme/theme';
+import { button, getPalette, spacing, typography } from '@/theme/theme';
 
 const logoSource = WORDMARK;
 
 // ---------------------------------------------------------------------------
 // Animation choreography. One marquee moment — the Seen logo tunes in
 // like an old CRT, then the screen resolves in a staggered cascade:
-// per-word headline → subtext → button. Times below are start offsets
-// from mount; total sequence ~2.6s.
+// per-word headline → support lines → button. Times below are start
+// offsets from mount; total sequence ~2.7s.
 //
 //   t=0     logo enters (scale 0.3 → 1 spring; rotate 5° → 0;
 //           opacity 0.3 → 1) — settles around t=800 ms
-//   t=800   word 1 of headline fades + slides in (translateY 8 → 0)
-//   t=920   word 2 (stagger = 120 ms between word starts)
-//   t=1040  word 3
-//   t=1160  word 4
-//   t=1280  word 5; last word settles around t=1680 ms
-//   t=1800  subtext fades + slides in
-//   t=2300  Get started button fades + scales 0.95 → 1
+//   t=800   headline cascade starts; word N begins at 800 + N×60 ms,
+//           each word taking 400 ms. Last of 12 words settles ~t=1860
+//   t=1900  support lines fade + slide in as one block
+//   t=2400  Get started button fades + scales 0.95 → 1
+//
+// The headline cascade is driven by ONE shared value (headlineProgress,
+// 0 → 1 across the whole cascade) rather than a pair of shared values
+// per word. The previous shape hand-declared five opacity/translateY
+// pairs — "five words → five pairs" — because hooks can't be called
+// from a map(). That capped the headline at exactly five words: a sixth
+// read `wordStyles[5] === undefined` and rendered instantly at full
+// opacity while its siblings cascaded. Deriving each word's window from
+// a single driver inside <AnimatedWord> (its own component, so its
+// hooks run unconditionally) makes the word count arbitrary.
 // ---------------------------------------------------------------------------
 const LOGO_TIMING_MS = 700;        // rotation/opacity duration (spring drives scale)
 const HEADLINE_START_MS = 800;
-const HEADLINE_STAGGER_MS = 120;
+const HEADLINE_STAGGER_MS = 60;
 const WORD_MS = 400;
-const SUBTEXT_START_MS = 1800;
-const SUBTEXT_MS = 400;
-const BUTTON_START_MS = 2300;
+const SUPPORT_START_MS = 1900;
+const SUPPORT_MS = 400;
+const BUTTON_START_MS = 2400;
 const BUTTON_MS = 300;
 
-// Five words, each animated independently. Trailing space on every
-// word except the last gives natural inter-word spacing in the
-// flex-wrap row without relying on `gap` (which would visually
-// double-up when a word breaks to a new line).
-const HEADLINE_WORDS: readonly string[] = [
-    'Recs ',
-    'from ',
-    'people ',
-    'you ',
-    'trust.',
-];
+// Support-line icon size — 20 sits just under the 16pt body text's
+// cap height, so the glyph reads as a peer of the text, not a bullet.
+const SUPPORT_ICON_SIZE = 20;
+
+// Trailing space on every word except the last gives natural inter-word
+// spacing in the flex-wrap row without relying on `gap` (which would
+// visually double-up when a word breaks to a new line).
+//
+// Rendered at typography.display (32pt Bricolage Bold) this wraps to 3
+// lines on every current device class (measured against the real font
+// metrics: SE 375pt → 3, iPhone 15 393pt → 3, Pro Max 430pt → 3).
+const HEADLINE = 'The people who know what you like, telling you what to watch';
+const HEADLINE_WORDS: readonly string[] = HEADLINE.split(' ').map(
+    (word, i, all) => (i === all.length - 1 ? word : `${word} `),
+);
+
+// Total cascade duration — the last word STARTS at (n-1)×stagger and
+// runs for WORD_MS. headlineProgress spans this whole window, so each
+// word's slice below is expressed as a fraction of it.
+const HEADLINE_TOTAL_MS =
+    (HEADLINE_WORDS.length - 1) * HEADLINE_STAGGER_MS + WORD_MS;
+
+// One word of the headline. Its own component so useAnimatedStyle is
+// called unconditionally per instance — which is what legitimises the
+// map() in the parent. Reads the SHARED cascade driver and derives its
+// own 400 ms window from `index`.
+function AnimatedWord({
+    word,
+    index,
+    progress,
+    color,
+}: {
+    word: string;
+    index: number;
+    progress: SharedValue<number>;
+    color: string;
+}) {
+    const style = useAnimatedStyle(() => {
+        const start = (index * HEADLINE_STAGGER_MS) / HEADLINE_TOTAL_MS;
+        const end =
+            (index * HEADLINE_STAGGER_MS + WORD_MS) / HEADLINE_TOTAL_MS;
+        // Local 0→1 within this word's slice of the cascade.
+        const raw = (progress.value - start) / (end - start);
+        const t = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+        // Ease-out cubic, inlined rather than imported: the driver runs
+        // linearly so the per-word easing has to happen here, and this
+        // is the worklet-safe form of Easing.out(Easing.cubic).
+        const eased = 1 - Math.pow(1 - t, 3);
+        return {
+            opacity: eased,
+            transform: [{ translateY: 8 * (1 - eased) }],
+        };
+    });
+
+    return (
+        <Animated.Text style={[typography.display, { color }, style]}>
+            {word}
+        </Animated.Text>
+    );
+}
 
 export default function WelcomeScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -68,22 +126,11 @@ export default function WelcomeScreen() {
     const logoRotate = useSharedValue(5);
     const logoOpacity = useSharedValue(0.3);
 
-    // Per-word shared values. Five words → five pairs. useSharedValue
-    // must be called the same way every render, so they're declared
-    // explicitly rather than via map().
-    const w0Opacity = useSharedValue(0);
-    const w1Opacity = useSharedValue(0);
-    const w2Opacity = useSharedValue(0);
-    const w3Opacity = useSharedValue(0);
-    const w4Opacity = useSharedValue(0);
-    const w0Y = useSharedValue(8);
-    const w1Y = useSharedValue(8);
-    const w2Y = useSharedValue(8);
-    const w3Y = useSharedValue(8);
-    const w4Y = useSharedValue(8);
+    // The single headline cascade driver (see the header comment).
+    const headlineProgress = useSharedValue(0);
 
-    const subtextOpacity = useSharedValue(0);
-    const subtextTranslateY = useSharedValue(8);
+    const supportOpacity = useSharedValue(0);
+    const supportTranslateY = useSharedValue(8);
 
     const buttonOpacity = useSharedValue(0);
     const buttonScale = useSharedValue(0.95);
@@ -111,29 +158,26 @@ export default function WelcomeScreen() {
             easing: eo,
         });
 
-        // Headline words — staggered start, identical 400 ms duration.
-        const wOpacities = [w0Opacity, w1Opacity, w2Opacity, w3Opacity, w4Opacity];
-        const wYs = [w0Y, w1Y, w2Y, w3Y, w4Y];
-        for (let i = 0; i < HEADLINE_WORDS.length; i++) {
-            const delay = HEADLINE_START_MS + i * HEADLINE_STAGGER_MS;
-            wOpacities[i].value = withDelay(
-                delay,
-                withTiming(1, { duration: WORD_MS, easing: eo }),
-            );
-            wYs[i].value = withDelay(
-                delay,
-                withTiming(0, { duration: WORD_MS, easing: eo }),
-            );
-        }
-
-        // Subtext lands as a single block after the headline settles.
-        subtextOpacity.value = withDelay(
-            SUBTEXT_START_MS,
-            withTiming(1, { duration: SUBTEXT_MS, easing: eo }),
+        // Headline cascade — LINEAR across the whole window so the words
+        // start evenly spaced; each word applies its own ease-out inside
+        // AnimatedWord. (Easing the driver instead would bunch the
+        // stagger.)
+        headlineProgress.value = withDelay(
+            HEADLINE_START_MS,
+            withTiming(1, {
+                duration: HEADLINE_TOTAL_MS,
+                easing: Easing.linear,
+            }),
         );
-        subtextTranslateY.value = withDelay(
-            SUBTEXT_START_MS,
-            withTiming(0, { duration: SUBTEXT_MS, easing: eo }),
+
+        // Support lines land as a single block after the headline settles.
+        supportOpacity.value = withDelay(
+            SUPPORT_START_MS,
+            withTiming(1, { duration: SUPPORT_MS, easing: eo }),
+        );
+        supportTranslateY.value = withDelay(
+            SUPPORT_START_MS,
+            withTiming(0, { duration: SUPPORT_MS, easing: eo }),
         );
 
         // Button last. Scale 0.95 → 1 reads as "lifting in" rather
@@ -150,21 +194,12 @@ export default function WelcomeScreen() {
     }, [
         buttonOpacity,
         buttonScale,
+        headlineProgress,
         logoOpacity,
         logoRotate,
         logoScale,
-        subtextOpacity,
-        subtextTranslateY,
-        w0Opacity,
-        w0Y,
-        w1Opacity,
-        w1Y,
-        w2Opacity,
-        w2Y,
-        w3Opacity,
-        w3Y,
-        w4Opacity,
-        w4Y,
+        supportOpacity,
+        supportTranslateY,
     ]);
 
     const logoStyle = useAnimatedStyle(() => ({
@@ -175,31 +210,9 @@ export default function WelcomeScreen() {
         ],
     }));
 
-    const w0Style = useAnimatedStyle(() => ({
-        opacity: w0Opacity.value,
-        transform: [{ translateY: w0Y.value }],
-    }));
-    const w1Style = useAnimatedStyle(() => ({
-        opacity: w1Opacity.value,
-        transform: [{ translateY: w1Y.value }],
-    }));
-    const w2Style = useAnimatedStyle(() => ({
-        opacity: w2Opacity.value,
-        transform: [{ translateY: w2Y.value }],
-    }));
-    const w3Style = useAnimatedStyle(() => ({
-        opacity: w3Opacity.value,
-        transform: [{ translateY: w3Y.value }],
-    }));
-    const w4Style = useAnimatedStyle(() => ({
-        opacity: w4Opacity.value,
-        transform: [{ translateY: w4Y.value }],
-    }));
-    const wordStyles = [w0Style, w1Style, w2Style, w3Style, w4Style];
-
-    const subtextStyle = useAnimatedStyle(() => ({
-        opacity: subtextOpacity.value,
-        transform: [{ translateY: subtextTranslateY.value }],
+    const supportStyle = useAnimatedStyle(() => ({
+        opacity: supportOpacity.value,
+        transform: [{ translateY: supportTranslateY.value }],
     }));
 
     const buttonStyle = useAnimatedStyle(() => ({
@@ -228,28 +241,44 @@ export default function WelcomeScreen() {
 
                 <View style={styles.headlineRow}>
                     {HEADLINE_WORDS.map((word, i) => (
-                        <Animated.Text
+                        <AnimatedWord
                             key={i}
-                            style={[
-                                typography.hero,
-                                { color: palette.text },
-                                wordStyles[i],
-                            ]}
-                        >
-                            {word}
-                        </Animated.Text>
+                            word={word}
+                            index={i}
+                            progress={headlineProgress}
+                            color={palette.text}
+                        />
                     ))}
                 </View>
 
-                <Animated.Text
-                    style={[
-                        styles.subtext,
-                        { color: palette.textMuted },
-                        subtextStyle,
-                    ]}
-                >
-                    Three things and you&apos;re ready.
-                </Animated.Text>
+                {/* Two support lines, icon left of text, arriving as one
+                    block in the slot the old subtext occupied. */}
+                <Animated.View style={[styles.support, supportStyle]}>
+                    <View style={styles.supportRow}>
+                        <Users color={palette.accent} size={SUPPORT_ICON_SIZE} />
+                        <Text
+                            style={[
+                                typography.body,
+                                styles.supportText,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            See what your friends are watching
+                        </Text>
+                    </View>
+                    <View style={styles.supportRow}>
+                        <Play color={palette.accent} size={SUPPORT_ICON_SIZE} />
+                        <Text
+                            style={[
+                                typography.body,
+                                styles.supportText,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            Never scroll for an hour again
+                        </Text>
+                    </View>
+                </Animated.View>
             </View>
 
             <Animated.View style={[styles.footer, buttonStyle]}>
@@ -277,6 +306,7 @@ export default function WelcomeScreen() {
     );
 }
 
+
 const styles = StyleSheet.create({
     root: { flex: 1, paddingHorizontal: spacing.base },
     body: {
@@ -301,11 +331,21 @@ const styles = StyleSheet.create({
         // No gap — each word carries its own trailing space (see
         // HEADLINE_WORDS) so wrapping reads natural.
     },
-    subtext: {
-        fontSize: 18,
-        fontFamily: fontFamily.medium,
-        lineHeight: 26,
-        textAlign: 'center',
+    support: {
+        // Left-aligned as a block (not centred like the headline): the
+        // two icons need a shared left edge or the rows read ragged.
+        alignSelf: 'stretch',
+        gap: spacing.sm,
+    },
+    supportRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    supportText: {
+        // flex so a long line wraps under itself rather than pushing
+        // the row wider than the screen.
+        flex: 1,
     },
     footer: {
         paddingBottom: spacing.md,
