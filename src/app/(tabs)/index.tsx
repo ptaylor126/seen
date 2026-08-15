@@ -1468,31 +1468,38 @@ export default function HomeScreen() {
         );
     }
 
-    function renderGlobalEmpty() {
+    // ONE empty state, shared by both empty cases (globalEmpty and
+    // socialEmpty). It replaces THREE separate muted blocks: the old
+    // globalEmpty card, plus the recs-for-you and "Friends are watching"
+    // inline empties — which in the has-items case stacked two nearly
+    // identical paragraphs, both ending in an "Add friends" link to the
+    // same place, separated by a section header.
+    //
+    // Leads with RECOMMEND, the core action home never prompted before:
+    // every previous CTA pointed at acquiring (add friends / add titles)
+    // or requesting, never at giving. The add-friends route is the direct
+    // /friends/add — the old globalEmpty button went to /friends (the
+    // list) while the inline links went to /friends/add, for no reason.
+    function renderSocialEmpty() {
         return (
-            <View style={styles.globalEmpty}>
-                <Text
-                    style={[
-                        typography.display,
-                        styles.globalEmptyHeading,
-                        { color: palette.text },
-                    ]}
-                >
-                    Welcome to Seen
-                </Text>
+            <View style={styles.socialEmpty}>
                 <Text
                     style={[
                         typography.body,
-                        styles.globalEmptyBody,
+                        styles.socialEmptyLine,
                         { color: palette.textMuted },
                     ]}
                 >
-                    Track what you&apos;ve watched, share recs with friends, and
-                    discover what&apos;s good through people you trust.
+                    No recommendations yet.
                 </Text>
-                <View style={styles.globalEmptyActions}>
+                <View style={styles.socialEmptyActions}>
                     <Pressable
-                        onPress={() => router.push({ pathname: '/library/add' })}
+                        onPress={() =>
+                            router.push({
+                                pathname: '/library/add',
+                                params: { recommendMode: 'title-first' },
+                            })
+                        }
                         style={({ pressed }) => [
                             styles.primaryButton,
                             {
@@ -1507,11 +1514,13 @@ export default function HomeScreen() {
                                 { color: palette.textInverse },
                             ]}
                         >
-                            Search for something to track
+                            Recommend something
                         </Text>
                     </Pressable>
                     <Pressable
-                        onPress={() => router.push({ pathname: '/friends' })}
+                        onPress={() =>
+                            router.push({ pathname: '/friends/add' })
+                        }
                         style={({ pressed }) => [
                             styles.secondaryButton,
                             {
@@ -1523,7 +1532,7 @@ export default function HomeScreen() {
                         <Text
                             style={[typography.bodyEmphasis, { color: palette.accent }]}
                         >
-                            Add a friend
+                            Add friends
                         </Text>
                     </Pressable>
                 </View>
@@ -1549,10 +1558,12 @@ export default function HomeScreen() {
             </View>
         );
     } else if (data) {
-        const globalEmpty =
-            !data.hasLibraryItems &&
-            !data.hasFriends &&
-            data.recsForYou.length === 0;
+        // No friends AND no pending recs — the social half of home has
+        // nothing to show. globalEmpty is the strict subset of this where
+        // the library is empty too, so it must be tested FIRST.
+        const socialEmpty =
+            !data.hasFriends && data.recsForYou.length === 0;
+        const globalEmpty = socialEmpty && !data.hasLibraryItems;
         body = (
             <ScrollView
                 // Inline paddingBottom = floating-nav clearance (bar
@@ -1572,8 +1583,25 @@ export default function HomeScreen() {
                 }
             >
                 {globalEmpty ? (
-                    renderGlobalEmpty()
+                    // Nothing at all — the empty block alone. No
+                    // Currently watching: they have no items to anchor it.
+                    renderSocialEmpty()
+                ) : socialEmpty ? (
+                    // Has items but no social graph: ONE empty block, then
+                    // their real content as the anchor. The old recs-for-you
+                    // and "Friends are watching" empties are deliberately
+                    // NOT rendered here — this block replaces both.
+                    <>
+                        {renderSocialEmpty()}
+                        {/* POPULAR STRIP GOES HERE (commit 2) — between the
+                            empty block and Currently watching, so a user
+                            with no social graph still has something to
+                            browse. Reads search.discoverItems; call
+                            search.ensureDiscoverLoaded() to populate. */}
+                        {renderCurrentlyWatching(data)}
+                    </>
                 ) : (
+                    // Has friends or recs — unchanged three-section layout.
                     <>
                         {renderRecsForYou(data)}
                         {renderFriendsWatching(data)}
@@ -1920,20 +1948,28 @@ const styles = StyleSheet.create({
     },
     // Inline search overlay. Absolutely positioned over the ScrollView
     // Global empty
-    globalEmpty: {
-        flex: 1,
-        paddingHorizontal: spacing.xl,
-        paddingTop: spacing.xxxl,
+    socialEmpty: {
+        // NOT flex:1 (the old globalEmpty was): this block now composes
+        // ABOVE Currently watching in the socialEmpty case, so filling the
+        // viewport would push the anchor content off-screen. Generous top
+        // padding keeps it from hugging the search bar when it's alone.
+        //
+        // spacing.base (16) — NOT xl (32) — so the buttons' edges line up
+        // with the search bar above them (SearchBarInput's row carries
+        // marginHorizontal: spacing.base). One gutter down the screen.
+        paddingHorizontal: spacing.base,
+        paddingTop: spacing.xxl,
         gap: spacing.base,
     },
-    globalEmptyHeading: {
-        textAlign: 'center',
+    socialEmptyLine: {
+        // Left-aligned, not centred: centring orphaned "here." onto a
+        // second line and fought the full-width, left-edged buttons below.
+        // Shares the block's gutter, so it reads as a header to the
+        // actions rather than a floating caption.
+        textAlign: 'left',
+        marginBottom: spacing.sm,
     },
-    globalEmptyBody: {
-        textAlign: 'center',
-        marginBottom: spacing.lg,
-    },
-    globalEmptyActions: {
+    socialEmptyActions: {
         gap: spacing.sm,
     },
     primaryButton: {
