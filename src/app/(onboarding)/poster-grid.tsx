@@ -396,6 +396,23 @@ export default function PosterGridScreen() {
                     Tap the movies and shows you&apos;ve seen to build up your
                     library.
                 </Text>
+                {/* Aside for users arriving with history elsewhere — the
+                    tap-a-grid path is slow for them, and the importer
+                    (Profile → Import your library, LIBRARY_IMPORT_ENABLED)
+                    does the same job in one pass. Deliberately NOT a step
+                    or a link: it plants the idea without adding a branch
+                    to the flow. caption/textMuted is the app's tertiary
+                    tier (same pairing as the sign-in tagline). */}
+                <Text
+                    style={[
+                        typography.caption,
+                        styles.introAside,
+                        { color: palette.textMuted },
+                    ]}
+                >
+                    Already track your films elsewhere? You can import your
+                    history from your profile any time.
+                </Text>
             </View>
 
             <View style={styles.body}>
@@ -520,6 +537,10 @@ const styles = StyleSheet.create({
     flex: { flex: 1 },
     header: { paddingVertical: spacing.sm },
     intro: { gap: spacing.xs, paddingBottom: spacing.md },
+    // Extra breath above the import aside: the intro's own gap is xs (4),
+    // too tight for the caption to read as a separate tier rather than a
+    // wrapped continuation of the body. +xs = 8pt total separation.
+    introAside: { marginTop: spacing.xs },
     body: { flex: 1 },
     gridContent: { paddingTop: spacing.xs, paddingBottom: spacing.lg },
     gridRow: { gap: spacing.sm, marginBottom: spacing.sm },
