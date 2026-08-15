@@ -28,6 +28,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LaunchSequence } from '@/components/launch-sequence';
 import { LaunchReadyContext } from '@/hooks/use-launch-ready';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
+import { useInviteLink } from '@/hooks/use-invite-link';
 import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
 import {
@@ -219,6 +220,10 @@ function RootLayoutInner() {
     // gates cold-start navigation until the launch overlay has dismissed (see
     // the hook — navigating earlier wedges the launch-`ready` condition).
     usePushNavigation({ session, profile, launchDone: !launchActive });
+    // Sibling of the push hook: same external-event → gate → fire-once
+    // shape, for invite links the app was opened with (seen:// today,
+    // https://seenrecs.com once the native link config ships).
+    useInviteLink({ session, profile, launchDone: !launchActive });
 
     return (
         <LaunchReadyContext.Provider value={{ markDestinationReady }}>
