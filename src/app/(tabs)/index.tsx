@@ -152,6 +152,17 @@ const FRIENDS_ROW_POSTER_W = Math.floor(
 const FRIENDS_ROW_POSTER_H = Math.floor(FRIENDS_ROW_POSTER_W * 1.5);
 const FRIENDS_GRID_LIMIT = 8;
 
+// Popular strip (home empty state). Same sizing idiom as the friends row
+// above, but tuned to 3.5 visible posters instead of 2.5: this strip is a
+// browse affordance for a user with nothing else on screen, so more
+// choices at a glance beats bigger art.
+const POPULAR_ROW_GAP = spacing.md;
+const POPULAR_ROW_INSET = spacing.base;
+const POPULAR_POSTER_W = Math.floor(
+    (HERO_SCREEN_W - POPULAR_ROW_INSET - 3 * POPULAR_ROW_GAP) / 3.5,
+);
+const POPULAR_POSTER_H = Math.floor(POPULAR_POSTER_W * 1.5);
+
 // Currently watching — compact list row. Smaller poster than the
 // previous layout (40 × 60 instead of 56 × 84), denser vertical
 // padding, single-line title + inline relative-time secondary.
@@ -678,6 +689,22 @@ export default function HomeScreen() {
     const [ratingBusy, setRatingBusy] = useState(false);
 
     const search = useSearchBar();
+
+    // Whether the body will render the empty state (either flavour).
+    // Hoisted to hook level so the discover fetch can be kicked from an
+    // effect — the render-time socialEmpty/globalEmpty below derive from
+    // the same two conditions.
+    const emptyStateVisible =
+        data !== null && !data.hasFriends && data.recsForYou.length === 0;
+
+    // The discover data is fetched ONCE per session by useSearchBar and
+    // shared with the search overlay — this is a second consumer, not a
+    // second fetch (ensureDiscoverLoaded is ref-guarded internally). The
+    // overlay only triggers it on open, so home has to ask for it itself.
+    const { ensureDiscoverLoaded } = search;
+    useEffect(() => {
+        if (emptyStateVisible) ensureDiscoverLoaded();
+    }, [emptyStateVisible, ensureDiscoverLoaded]);
 
     // CTA from the Currently watching empty state: refocus the home
     // input so the user lands directly in the search experience.
@@ -1468,6 +1495,59 @@ export default function HomeScreen() {
         );
     }
 
+    // Popular titles under the empty state's buttons — something to browse
+    // when the social half of home has nothing to show. Reads the SAME
+    // discover data the search overlay uses (see the effect above).
+    //
+    // Degrades to NOTHING on every unhappy path: still loading renders
+    // null (no spinner, no reserved space — the strip simply appears when
+    // it's ready), and a failed fetch resolves discoverItems to [] inside
+    // the hook, which also renders null. No header without tiles, no empty
+    // strip, no error. The buttons above and Currently watching below are
+    // siblings, so neither depends on this returning anything.
+    function renderPopularStrip() {
+        const tiles = search.discoverItems;
+        if (!tiles || tiles.length === 0) return null;
+        return (
+            <View style={styles.popularSection}>
+                <Text
+                    style={[
+                        typography.bodyEmphasis,
+                        styles.popularHeader,
+                        { color: palette.text },
+                    ]}
+                >
+                    Popular right now
+                </Text>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.popularRowContent}
+                >
+                    {tiles.map((tile) => (
+                        <Pressable
+                            key={`${tile.media_type}-${tile.id}`}
+                            onPress={() =>
+                                navigateToTitle(tile.media_type, tile.id)
+                            }
+                            accessibilityRole="button"
+                            style={({ pressed }) => pressed && { opacity: 0.6 }}
+                        >
+                            <Image
+                                source={{
+                                    uri: imageUrl(tile.poster_path, 'w342'),
+                                }}
+                                style={styles.popularPoster}
+                                contentFit="cover"
+                                transition={150}
+                            />
+                        </Pressable>
+                    ))}
+                </ScrollView>
+            </View>
+        );
+    }
+
     // ONE empty state, shared by both empty cases (globalEmpty and
     // socialEmpty). It replaces THREE separate muted blocks: the old
     // globalEmpty card, plus the recs-for-you and "Friends are watching"
@@ -1583,9 +1663,13 @@ export default function HomeScreen() {
                 }
             >
                 {globalEmpty ? (
-                    // Nothing at all — the empty block alone. No
-                    // Currently watching: they have no items to anchor it.
-                    renderSocialEmpty()
+                    // Nothing at all — the empty block, then the popular
+                    // strip as the last thing. No Currently watching: they
+                    // have no items to anchor it.
+                    <>
+                        {renderSocialEmpty()}
+                        {renderPopularStrip()}
+                    </>
                 ) : socialEmpty ? (
                     // Has items but no social graph: ONE empty block, then
                     // their real content as the anchor. The old recs-for-you
@@ -1593,11 +1677,7 @@ export default function HomeScreen() {
                     // NOT rendered here — this block replaces both.
                     <>
                         {renderSocialEmpty()}
-                        {/* POPULAR STRIP GOES HERE (commit 2) — between the
-                            empty block and Currently watching, so a user
-                            with no social graph still has something to
-                            browse. Reads search.discoverItems; call
-                            search.ensureDiscoverLoaded() to populate. */}
+                        {renderPopularStrip()}
                         {renderCurrentlyWatching(data)}
                     </>
                 ) : (
@@ -1951,14 +2031,18 @@ const styles = StyleSheet.create({
     socialEmpty: {
         // NOT flex:1 (the old globalEmpty was): this block now composes
         // ABOVE Currently watching in the socialEmpty case, so filling the
-        // viewport would push the anchor content off-screen. Generous top
-        // padding keeps it from hugging the search bar when it's alone.
+        // viewport would push the anchor content off-screen.
         //
         // spacing.base (16) — NOT xl (32) — so the buttons' edges line up
         // with the search bar above them (SearchBarInput's row carries
         // marginHorizontal: spacing.base). One gutter down the screen.
         paddingHorizontal: spacing.base,
-        paddingTop: spacing.xxl,
+        // xs (4) — the SAME first-section gap the populated home uses
+        // (styles.sectionFirst), so the search-bar-to-content distance is
+        // identical in both states: 8pt searchBarWrapper marginBottom + 4
+        // = 12pt. Was xxl (48), a leftover from when this block was
+        // vertically centred and rendered alone; that read as a void.
+        paddingTop: spacing.xs,
         gap: spacing.base,
     },
     socialEmptyLine: {
@@ -1971,6 +2055,27 @@ const styles = StyleSheet.create({
     },
     socialEmptyActions: {
         gap: spacing.sm,
+    },
+    // Popular strip. A SIBLING of the empty block (not a child) so the row
+    // can scroll edge-to-edge while its header keeps the screen's gutter —
+    // the empty block's own paddingHorizontal would otherwise clip it.
+    popularSection: {
+        paddingTop: spacing.lg,
+        gap: spacing.md,
+    },
+    popularHeader: {
+        // Same gutter as the buttons and the search bar.
+        paddingHorizontal: POPULAR_ROW_INSET,
+    },
+    popularRowContent: {
+        paddingHorizontal: POPULAR_ROW_INSET,
+        gap: POPULAR_ROW_GAP,
+    },
+    popularPoster: {
+        ...posterFrame,
+        width: POPULAR_POSTER_W,
+        height: POPULAR_POSTER_H,
+        borderRadius: radius.sm,
     },
     primaryButton: {
         paddingVertical: button.paddingVertical,
