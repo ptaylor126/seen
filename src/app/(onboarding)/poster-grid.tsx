@@ -401,17 +401,17 @@ export default function PosterGridScreen() {
                     (Profile → Import your library, LIBRARY_IMPORT_ENABLED)
                     does the same job in one pass. Deliberately NOT a step
                     or a link: it plants the idea without adding a branch
-                    to the flow. caption/textMuted is the app's tertiary
-                    tier (same pairing as the sign-in tagline). */}
+                    to the flow.
+                    micro/textFaint, one tier BELOW the body instruction —
+                    a footnote, not a third thing to read. */}
                 <Text
                     style={[
-                        typography.caption,
+                        typography.micro,
                         styles.introAside,
-                        { color: palette.textMuted },
+                        { color: palette.textFaint },
                     ]}
                 >
-                    Already track your films elsewhere? Import your history
-                    from your profile.
+                    Track films elsewhere? Import from your profile.
                 </Text>
             </View>
 
@@ -540,7 +540,13 @@ const styles = StyleSheet.create({
     // Extra breath above the import aside: the intro's own gap is xs (4),
     // too tight for the caption to read as a separate tier rather than a
     // wrapped continuation of the body. +xs = 8pt total separation.
-    introAside: { marginTop: spacing.xs },
+    // Row now, to seat the leading glyph beside the text.
+    introAside: {
+        // Separated from the body instruction above (the intro's own gap
+        // is xs/4) so it reads as a note rather than a third instruction
+        // line. Plain Text now — no icon, no row.
+        marginTop: spacing.sm,
+    },
     body: { flex: 1 },
     gridContent: { paddingTop: spacing.xs, paddingBottom: spacing.lg },
     gridRow: { gap: spacing.sm, marginBottom: spacing.sm },
