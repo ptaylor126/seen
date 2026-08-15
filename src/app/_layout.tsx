@@ -1,4 +1,5 @@
 import {
+    BricolageGrotesque_300Light,
     BricolageGrotesque_600SemiBold,
     BricolageGrotesque_700Bold,
 } from '@expo-google-fonts/bricolage-grotesque';
@@ -75,6 +76,7 @@ export default function RootLayout() {
         Manrope_500Medium,
         Manrope_600SemiBold,
         Manrope_700Bold,
+        BricolageGrotesque_300Light,
         BricolageGrotesque_600SemiBold,
         BricolageGrotesque_700Bold,
     });

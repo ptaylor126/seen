@@ -17,7 +17,14 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
-import { button, getPalette, spacing, typography } from '@/theme/theme';
+import {
+    button,
+    fontFamily,
+    getPalette,
+    spacing,
+    THEME_V2_ENABLED,
+    typography,
+} from '@/theme/theme';
 
 const logoSource = WORDMARK;
 
@@ -57,17 +64,49 @@ const BUTTON_MS = 300;
 // cap height, so the glyph reads as a peer of the text, not a bullet.
 const SUPPORT_ICON_SIZE = 20;
 
-// Trailing space on every word except the last gives natural inter-word
-// spacing in the flex-wrap row without relying on `gap` (which would
-// visually double-up when a word breaks to a new line).
+// Fixed-width slot the icon is centred in. Users and Play have different
+// ink widths, so rendering them bare started the text at a different x on
+// each row — the ragged edge. A constant-width slot makes the text start
+// at the same x regardless of glyph. 28 clears the 20pt glyph with 4pt
+// either side; invisible (no fill, no border), purely a measuring box.
+const SUPPORT_ICON_SLOT = 28;
+
+// The headline reads in two weights at one size: a light opening that
+// sets up the claim, then the bold payoff. Both at typography.display
+// (32pt); only the face differs.
 //
-// Rendered at typography.display (32pt Bricolage Bold) this wraps to 3
-// lines on every current device class (measured against the real font
-// metrics: SE 375pt → 3, iPhone 15 393pt → 3, Pro Max 430pt → 3).
-const HEADLINE = 'The people who know what you like, telling you what to watch';
-const HEADLINE_WORDS: readonly string[] = HEADLINE.split(' ').map(
-    (word, i, all) => (i === all.length - 1 ? word : `${word} `),
-);
+// The light face is named directly rather than taken from a theme token
+// because there is no light DISPLAY token — theme.ts exposes only
+// DISPLAY_FACE_BOLD/SEMIBOLD. Guarded on THEME_V2_ENABLED so V1, which
+// renders the display tier in Geist and never loads Bricolage, falls back
+// to its own regular face instead of a family it can't resolve.
+const HEADLINE_LIGHT_FACE = THEME_V2_ENABLED
+    ? 'BricolageGrotesque_300Light'
+    : fontFamily.default;
+
+const HEADLINE_PART_LIGHT = 'People who know your taste,';
+const HEADLINE_PART_BOLD = 'showing you what to watch';
+
+// ONE continuous word list across both weight parts. The cascade indexes
+// into this array, so the 60 ms stagger runs unbroken straight through the
+// weight change rather than restarting at the bold part. Trailing space on
+// every word except the very last gives natural inter-word spacing in the
+// flex-wrap row without `gap` (which would double-up on wrapped lines).
+interface HeadlineWord {
+    word: string;
+    light: boolean;
+}
+const HEADLINE_WORDS: readonly HeadlineWord[] = [
+    // Every light word keeps its trailing space — the bold part follows it.
+    ...HEADLINE_PART_LIGHT.split(' ').map((word) => ({
+        word: `${word} `,
+        light: true,
+    })),
+    ...HEADLINE_PART_BOLD.split(' ').map((word, i, all) => ({
+        word: i === all.length - 1 ? word : `${word} `,
+        light: false,
+    })),
+];
 
 // Total cascade duration — the last word STARTS at (n-1)×stagger and
 // runs for WORD_MS. headlineProgress spans this whole window, so each
@@ -84,11 +123,15 @@ function AnimatedWord({
     index,
     progress,
     color,
+    light,
 }: {
     word: string;
     index: number;
     progress: SharedValue<number>;
     color: string;
+    // Renders the light face instead of the display tier's bold one.
+    // Size/lineHeight still come from typography.display either way.
+    light: boolean;
 }) {
     const style = useAnimatedStyle(() => {
         const start = (index * HEADLINE_STAGGER_MS) / HEADLINE_TOTAL_MS;
@@ -108,7 +151,14 @@ function AnimatedWord({
     });
 
     return (
-        <Animated.Text style={[typography.display, { color }, style]}>
+        <Animated.Text
+            style={[
+                typography.display,
+                light && { fontFamily: HEADLINE_LIGHT_FACE },
+                { color },
+                style,
+            ]}
+        >
             {word}
         </Animated.Text>
     );
@@ -240,13 +290,14 @@ export default function WelcomeScreen() {
                 </Animated.View>
 
                 <View style={styles.headlineRow}>
-                    {HEADLINE_WORDS.map((word, i) => (
+                    {HEADLINE_WORDS.map((entry, i) => (
                         <AnimatedWord
                             key={i}
-                            word={word}
+                            word={entry.word}
                             index={i}
                             progress={headlineProgress}
                             color={palette.text}
+                            light={entry.light}
                         />
                     ))}
                 </View>
@@ -255,7 +306,12 @@ export default function WelcomeScreen() {
                     block in the slot the old subtext occupied. */}
                 <Animated.View style={[styles.support, supportStyle]}>
                     <View style={styles.supportRow}>
-                        <Users color={palette.accent} size={SUPPORT_ICON_SIZE} />
+                        <View style={styles.supportIconSlot}>
+                            <Users
+                                color={palette.accent}
+                                size={SUPPORT_ICON_SIZE}
+                            />
+                        </View>
                         <Text
                             style={[
                                 typography.body,
@@ -267,7 +323,12 @@ export default function WelcomeScreen() {
                         </Text>
                     </View>
                     <View style={styles.supportRow}>
-                        <Play color={palette.accent} size={SUPPORT_ICON_SIZE} />
+                        <View style={styles.supportIconSlot}>
+                            <Play
+                                color={palette.accent}
+                                size={SUPPORT_ICON_SIZE}
+                            />
+                        </View>
                         <Text
                             style={[
                                 typography.body,
@@ -332,20 +393,43 @@ const styles = StyleSheet.create({
         // HEADLINE_WORDS) so wrapping reads natural.
     },
     support: {
-        // Left-aligned as a block (not centred like the headline): the
-        // two icons need a shared left edge or the rows read ragged.
-        alignSelf: 'stretch',
+        // Centred as a BLOCK, left-aligned WITHIN it. alignSelf:'center'
+        // sizes the block to its widest row (287pt — measured, fits the
+        // 343pt content width of an SE) and centres it under the
+        // headline; the rows then stretch to that block width by the
+        // column default, so both icons share a left edge instead of
+        // each row centring independently and staggering them.
+        alignSelf: 'center',
+        // Rows stay tight (sm/8) so the two benefits read as one pair.
         gap: spacing.sm,
+        // Extra separation from the headline ON TOP of the body's own
+        // gap.lg, making headline→support 48pt against the 8pt row gap —
+        // without it the 24pt gap sat close enough to the row gap that
+        // the pitch and the benefits read as one continuous block. Set
+        // here rather than raising body.gap because that single gap also
+        // governs logo→headline, which is correctly 24.
+        marginTop: spacing.lg,
     },
     supportRow: {
         flexDirection: 'row',
+        // Centres the icon slot against its text line.
         alignItems: 'center',
+        // Slot-to-text gap. Unchanged (sm/8) — the slot absorbs the
+        // per-glyph width difference, so this stays a constant.
         gap: spacing.sm,
     },
+    supportIconSlot: {
+        // Invisible fixed-width measuring box (see SUPPORT_ICON_SLOT).
+        // No fill/border by design — alignment only.
+        width: SUPPORT_ICON_SLOT,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     supportText: {
-        // flex so a long line wraps under itself rather than pushing
-        // the row wider than the screen.
-        flex: 1,
+        // shrink (not flex:1): flex:1 would force each row to fill the
+        // block, defeating the content-sizing that centring depends on.
+        // shrink still lets the text wrap under large font scaling.
+        flexShrink: 1,
     },
     footer: {
         paddingBottom: spacing.md,
