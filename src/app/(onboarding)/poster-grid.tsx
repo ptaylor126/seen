@@ -410,8 +410,8 @@ export default function PosterGridScreen() {
                         { color: palette.textMuted },
                     ]}
                 >
-                    Already track your films elsewhere? You can import your
-                    history from your profile any time.
+                    Already track your films elsewhere? Import your history
+                    from your profile.
                 </Text>
             </View>
 
