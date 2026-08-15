@@ -98,24 +98,30 @@ export default function SignInScreen() {
                         style={({ pressed }) => [
                             styles.googleButton,
                             {
-                                // Google's dark-variant button colour from the
-                                // branding guidelines (#131314); pressed lifts
-                                // to a slightly lighter dark grey. Hardcoded,
-                                // not tokenised — this is Google's asset spec,
-                                // it must not follow the app palette.
-                                backgroundColor: pressed ? '#1a1a1a' : '#131314',
+                                // Google's LIGHT-variant button colour from
+                                // the branding guidelines (#FFFFFF); pressed
+                                // darkens one step to #F2F2F2. Hardcoded, not
+                                // tokenised — this is Google's asset spec, it
+                                // must not follow the app palette.
+                                //
+                                // Light, not dark: the dark variant (#131314)
+                                // measured 1.03:1 against the navy ground, so
+                                // the button had no visible edge and read as
+                                // floating text. White is 19.09:1.
+                                backgroundColor: pressed ? '#F2F2F2' : '#FFFFFF',
                                 opacity: busy ? 0.6 : 1,
                             },
                         ]}
                     >
                         {busy ? (
-                            // Same hardcoded Google dark-variant colour as
+                            // Same hardcoded Google light-variant colour as
                             // the label below, and NOT palette.textInverse
                             // for the same reason: that token flipped from
-                            // #FFFFFF (V1) to the navy #0B0D26 (V2), which
-                            // rendered this spinner invisible on the dark
-                            // button.
-                            <ActivityIndicator color="#E3E3E3" />
+                            // #FFFFFF (V1) to the navy #0B0D26 (V2), so it
+                            // tracks the app theme rather than Google's
+                            // asset spec. On the white button the spinner
+                            // must be dark or it vanishes.
+                            <ActivityIndicator color="#1F1F1F" />
                         ) : (
                             <View style={styles.googleContent}>
                                 <Image
@@ -127,14 +133,15 @@ export default function SignInScreen() {
                                 <Text
                                     style={[
                                         typography.bodyEmphasis,
-                                        // Google's dark-variant label colour.
+                                        // Google's light-variant label colour.
                                         // NOT palette.textInverse: that token
                                         // means "text on accent fills" and
                                         // flipped from #FFFFFF (V1) to the
-                                        // navy #0B0D26 (V2), which rendered
-                                        // this label at 1.10:1 on the dark
-                                        // button. #E3E3E3 reads 14.47:1.
-                                        { color: '#E3E3E3' },
+                                        // navy #0B0D26 (V2), so it follows the
+                                        // app theme rather than Google's asset
+                                        // spec. #1F1F1F reads 16.48:1 on the
+                                        // white button.
+                                        { color: '#1F1F1F' },
                                     ]}
                                 >
                                     Sign in with Google
