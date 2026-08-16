@@ -20,12 +20,7 @@
 // Anything that isn't an invite URL passes through untouched, so every
 // existing deep route (seen://rec/…, push-tap navigation) is unaffected.
 
-// Deliberately NARROW matchers — the exact invite shapes only, not "any
-// URL with a t= param":
-//   scheme  seen://i?t=…    seen://r?t=…    (with or without the slash)
-//   https   https://seenrecs.com/i/?t=…     https://seenrecs.com/r/?t=…
-const SCHEME_INVITE_RE = /^seen:\/\/(?:i|r)\/?\?/;
-const HTTPS_INVITE_RE = /^https:\/\/(?:www\.)?seenrecs\.com\/(?:i|r)\/?\?/;
+import { isAuthResetUrl, isAuthUrl, isInviteUrl } from '@/lib/url-kinds';
 
 export function redirectSystemPath({
     path,
@@ -33,9 +28,17 @@ export function redirectSystemPath({
     path: string;
     initial: boolean;
 }): string {
-    if (SCHEME_INVITE_RE.test(path) || HTTPS_INVITE_RE.test(path)) {
+    if (isInviteUrl(path)) {
         // Home. The stashed token claims from there and routes onward.
         return '/';
+    }
+    if (isAuthUrl(path)) {
+        // Password reset lands on the set-new-password screen (route
+        // arrives in stage 5; until then +not-found bounces it home,
+        // which is the safe interim). Every other auth callback (email
+        // verification, PKCE code exchange) completes silently in the
+        // handler — the router just goes home.
+        return isAuthResetUrl(path) ? '/reset-password' : '/';
     }
     return path;
 }

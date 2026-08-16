@@ -37,6 +37,13 @@ const supabase = createClient<Database>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY,
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,
+        // PKCE for the email flows (verification / password-reset deep
+        // links arrive as seen://auth/…?code=… and exchange via
+        // exchangeCodeForSession) — the mobile-recommended flow, tokens
+        // never ride the URL. Does NOT touch the social sign-ins:
+        // signInWithIdToken is a direct token exchange with no redirect
+        // leg, so flowType never enters that path.
+        flowType: 'pkce',
     },
 });
 
