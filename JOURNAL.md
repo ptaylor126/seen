@@ -37,6 +37,26 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-08-15/16 — Email auth + invite deep links ship; 1.0.8 submitted; deletion made whole
+
+**Lessons**
+
+- **`useURL()` misses Android deep-link intents; use `useLinkingURL()`.** `useURL` sits on RN core's legacy linking channel; Android delivers the intent on expo-linking's native module pipe (`onNewIntent`). Symptom: expo-router gets the URL and renders, while a `useURL` hook logs null. `useLinkingURL` is the documented replacement. Found by instrumenting, not predicting.
+- **`+native-intent` runs before JS is ready and rewrites the URL before any hook sees it.** Preserve data the handler needs (a PKCE code) through the rewrite as a query param, or cold-start — the normal case, links open cold — loses it. Router copy and hook copy are separate consumers.
+- **`expo.version` is hashed into the runtime fingerprint.** A version bump alone moves BOTH platform fingerprints and closes the OTA path until the new binaries are live.
+- **Apple resubmission needs a higher VERSION (CFBundleShortVersionString), not just a higher build number.** EAS `autoIncrement` bumps the build number, not `expo.version` — a rebuild keeps the old version and Apple rejects it (ITMS-90186 / ITMS-90062). Bump `expo.version` before rebuilding.
+- **Custom SMTP sender must exactly match the verified sending domain (bare vs subdomain).** DNS record NAMES on a `send` prefix don't mean you send FROM `send.domain.com`. Sender/verified-domain mismatch → 550 domain not verified → every signup 500s at the email-send step. Looked like broken auth; was a sender config mismatch.
+- **Supabase built-in auth email is testing-only** (few/hour, poor deliverability); custom SMTP with a verified domain is required before shipping email/password. The Supabase email RATE LIMIT caps sends regardless of provider — raise it before signup-driving marketing.
+- **Play's app-signing page moved** (Protected with Play → Play Store distribution → Play app signing); the App integrity overview no longer shows fingerprints. `assetlinks.json` SHA-256 must be the app-signing key, not the upload key.
+- **GitHub Pages serves extensionless files as octet-stream and can't set custom headers;** Apple's AASA CDN accepted it anyway (verify via `app-site-association.cdn-apple.com/a/v1/<domain>`). `.nojekyll` is required or Jekyll strips `.well-known`; confirm dot-paths aren't gitignored either.
+- **A "delete account" that doesn't remove the auth.users record is incomplete deletion:** email stays registered (blocks re-signup), the account still exists in auth (privacy/GDPR gap). Full deletion needs an edge function with service_role calling `auth.admin.deleteUser`; existing ON DELETE CASCADE FKs clean up owned data. The user id MUST come from the verified JWT, never a request-body param — a body id would make it a delete-any-user hole.
+- **Deletion is a per-table policy, not a blanket wipe.** Own data → remove; data now in another user's possession (received recs) → keep, de-identify (SET NULL sender, render "Former user"). Then the deleted user's comments on surviving recs must be explicitly removed, and their identity stripped from other users' notification payloads. Enumerate every table — one missed table is still a leak.
+- **CC's diagnostic CODE can lie even when its reasoning is sound.** The `iosUrlScheme` "not configured" was a flattening bug in its own print statement; the value had shipped since May. Verify a "configured with nothing" claim against the actual file.
+- **Anti-enumeration means you can't detect a social/email collision client-side** (Supabase returns obfuscated fake-success; supabase-js maps it to null). Fix with guidance-without-detection ("already have an account? use Google/Apple", shown to everyone), not a fetch interceptor.
+- **Persistent stash for deferred deep-link flows:** a token that must survive a fresh install (invite claim, auth callback) lives in AsyncStorage, not memory — the OS round-trips through the store and sign-in sheets between the tap and first usable launch. Verified by force-killing mid-onboarding.
+
+---
+
 ## 2026-07-16 (cont.) — Android invite-path audit ahead of Play production
 
 **Lessons**
