@@ -37,6 +37,19 @@ Product or interaction gaps that need a decision, not a code cleanup. Land in a 
 
 ---
 
+## 2026-08-16 (cont.) — Reset ships end to end; the flash was one screen; colour rules; bio
+
+**Lessons**
+
+- **Password reset on PKCE can't rely on the `PASSWORD_RECOVERY` auth event.** That event only fires when supabase-js auto-parses a recovery token from a URL fragment; with PKCE + manual `exchangeCodeForSession`, the exchange emits a normal `SIGNED_IN`, so recovery is indistinguishable from verification by event type. Distinguish by URL type instead (`isAuthResetUrl`), set a recovery-intent BEFORE the exchange, and have root routing respect it — the reset screen becomes the deterministic destination, not a race winner.
+- **A recovery session establishes a real session before the reset screen mounts.** If the user backs out without setting a password, they'd be silently signed in — a recovery-link-as-passwordless-login gap. The reset screen must sign the user out on abandon, AND clear the recovery-intent, or a later normal login is misrouted.
+- **The "profile not available" flash on session transitions was ONE screen-level bug, not per-flow.** The profile screen showed its error branch on `profile === null` without distinguishing "still loading / transitioning" from "loaded and genuinely absent." The provider legitimately produces ready+null during sign-out teardown and refresh-in-flight (the post-reset landing). Fix: gate the error on signedIn + a settle grace, so transitions show a loader and only a genuine, settled miss shows the error. Fixing at the screen level killed the flash in ALL transitions (sign-in/out/up/recovery) at once — chase the shared screen, not each trigger.
+- **Colour discipline: the accent means "act here / you are here"** — primary action, interactive text, active state — nothing else. Overusing it destroys its signalling value. Notifications (toasts) are the one non-action bright colour, and they use a distinct light lavender (#CFC9EE), NOT the accent, so a toast is never mistaken for a button. Navy-on-navy toasts are invisible (measured: the surface variants sit ~6% off the ground); a light surface with dark text gives 12:1 and can't read as background. Rules live in BRANDING.md — reference it in prompts so it governs new work.
+- **Adding a nullable column under migration-history drift:** apply directly in the SQL editor (history is untracked past 16 June; `db push` would replay ~50 migrations), verify with an `information_schema` column query (not "Success"), AND write the migration file to the repo for history even though applied directly. Hand-apply the `database.types.ts` delta — a fresh generation would also drop the unused `graphql_public` block.
+- **Variable-height content can't join a fixed-height collapsing header** without redesigning the collapse geometry (the clamp and content paddingTop key off a hard constant) — so the bio lands in different places on the friend vs non-friend view. Flag placement inconsistencies like this rather than silently breaking the collapse.
+
+---
+
 ## 2026-08-15/16 — Email auth + invite deep links ship; 1.0.8 submitted; deletion made whole
 
 **Lessons**
