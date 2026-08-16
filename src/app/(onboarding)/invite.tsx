@@ -87,14 +87,7 @@ export default function InviteScreen() {
 
             <View style={styles.body}>
                 <Text style={[typography.display, { color: palette.text }]}>
-                    Bring the people who know your taste
-                </Text>
-                {/* "3" is a suggestion in copy ONLY — nothing counts
-                    invites or gates completion on it. One invite (or
-                    Skip) still finishes the step, as below. */}
-                <Text style={[typography.body, { color: palette.textMuted }]}>
-                    Pick 3 people who know what you like. They can start
-                    sending you things worth watching.
+                    Invite the friends you share recs with
                 </Text>
             </View>
 
@@ -164,9 +157,10 @@ export default function InviteScreen() {
 const styles = StyleSheet.create({
     root: { flex: 1, paddingHorizontal: spacing.base },
     header: { paddingVertical: spacing.sm },
-    // Content vertically centered; the footer is pushed to the bottom by
-    // body's flex: 1.
-    body: { flex: 1, justifyContent: 'center', gap: spacing.md },
+    // Heading vertically centered (gap removed with the body text — the
+    // heading is the block's only child now); the footer is pushed to the
+    // bottom by body's flex: 1.
+    body: { flex: 1, justifyContent: 'center' },
     footer: { gap: spacing.sm, paddingBottom: spacing.md },
     primaryButton: {
         paddingVertical: button.paddingVertical,
