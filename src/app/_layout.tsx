@@ -32,6 +32,7 @@ import { useAuthLink } from '@/hooks/use-auth-link';
 import { useInviteLink } from '@/hooks/use-invite-link';
 import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
+import { useRecoveryIntent } from '@/lib/recovery-intent';
 import {
     palette,
     paletteV2,
@@ -142,6 +143,10 @@ function RootLayoutInner() {
     const profile = useProfile();
     const segments = useSegments();
     const router = useRouter();
+    // True while a password-reset link is being handled (set before the
+    // code exchange, cleared on complete/abandon/failure) — see
+    // lib/recovery-intent.ts and the routing branch below.
+    const recoveryActive = useRecoveryIntent();
 
     // Drive routing once both the session AND the profile have resolved.
     // Three terminal states:
@@ -156,6 +161,25 @@ function RootLayoutInner() {
 
         if (!session.session) {
             if (!inAuthGroup) router.replace('/(auth)/sign-in');
+            return;
+        }
+
+        // Password-reset in progress: useAuthLink raised the intent BEFORE
+        // exchanging the recovery code, so there is no frame where this
+        // effect sees the recovery session without knowing what it is. The
+        // ONLY destination while it's up is the set-new-password screen —
+        // never a profile-dependent screen (deliberately ahead of the
+        // profile gate below, which also keeps a not-yet-onboarded account
+        // on the reset screen instead of bouncing it into onboarding
+        // mid-reset). The intent clears on completion, abandon, and the
+        // exchange failure paths, so normal sign-ins can't be misrouted.
+        if (recoveryActive) {
+            if (segments[0] !== 'reset-password') {
+                router.replace({
+                    pathname: '/reset-password',
+                    params: { via: 'recovery' },
+                });
+            }
             return;
         }
 
@@ -185,7 +209,7 @@ function RootLayoutInner() {
         if (inAuthGroup || inOnboardingGroup) {
             router.replace('/(tabs)');
         }
-    }, [session, profile, segments, router]);
+    }, [session, profile, segments, router, recoveryActive]);
 
     // Launch readiness — the launch sequence stays up until the real
     // destination is ready (not a timer). Signed-out → just session resolved;

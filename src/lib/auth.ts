@@ -180,6 +180,54 @@ export async function resendVerificationEmail(
     return true;
 }
 
+// Password reset, request side. GoTrue deliberately returns success for
+// an email with NO account (anti-enumeration), so the boolean carries no
+// account-existence signal — false means rate limit / network only, and
+// the UI shows an unconditional "check your email" ack either way. The
+// redirect uses the seen:// scheme (works on every shipped binary);
+// useAuthLink exchanges the code and routes to /reset-password.
+const RESET_REDIRECT = 'seen://auth/reset';
+
+export async function requestPasswordReset(email: string): Promise<boolean> {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: RESET_REDIRECT,
+    });
+    if (error) {
+        console.error('password reset request failed:', error);
+        return false;
+    }
+    return true;
+}
+
+export type UpdatePasswordResult =
+    | { ok: true }
+    | { ok: false; error: 'same_password' | 'weak_password' | 'generic' };
+
+// Sets a new password for the CURRENT session — on /reset-password that is
+// the recovery session useAuthLink's code exchange established. The only
+// place the app ever sets a password; the value goes straight to
+// supabase.auth over HTTPS and is never logged or stored.
+export async function updatePassword(
+    newPassword: string,
+): Promise<UpdatePasswordResult> {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (!error) return { ok: true };
+    if (
+        error.code === 'same_password' ||
+        /different from the old/i.test(error.message ?? '')
+    ) {
+        return { ok: false, error: 'same_password' };
+    }
+    if (
+        error.code === 'weak_password' ||
+        /at least/i.test(error.message ?? '')
+    ) {
+        return { ok: false, error: 'weak_password' };
+    }
+    console.error('password update failed:', error);
+    return { ok: false, error: 'generic' };
+}
+
 export async function signOut(): Promise<void> {
     // Shared-device hygiene BEFORE the session is cleared: delete this
     // device's push_tokens rows (RLS is owner-only, so this is only

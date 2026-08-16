@@ -539,7 +539,9 @@ const styles = StyleSheet.create({
     // request".
     inviteButton: {
         paddingVertical: spacing.md,
-        borderRadius: radius.sm,
+        // Full pill, matching every other button under V2 (was radius.sm,
+        // which read square against the pill primaries).
+        borderRadius: radius.full,
         borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',

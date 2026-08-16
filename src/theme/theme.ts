@@ -66,6 +66,11 @@ export const palette = {
         accent: '#7A3960',
         accentPressed: '#6A3252',
         accentSubtle: '#F0E4EC',
+        // No V1 consumers — added so the Palette contract covers the
+        // BRANDING.md notification tier (transient toasts, dark text on
+        // it). Placeholder in the V1 plum family; the real definition is
+        // paletteV2's.
+        notification: '#F0E4EC',
         // Shared "selected" fill for the Library filter zone — used by
         // ALL THREE selector controls (the segmented status picker, the
         // All/Movies/TV + Genre chips, and the grid/density view
@@ -137,6 +142,8 @@ export const palette = {
         accent: '#9B5079',
         accentPressed: '#7A3960',
         accentSubtle: '#3A2233',
+        // Parallel placeholder to light.notification (dark unvalidated).
+        notification: '#CFC9EE',
         // Parallel to light.accentWash — the shared filter-zone selected
         // fill, back at the lighter pre-bump value. Dark mode isn't
         // rendered/validated yet (app.json pinned to light); this exists
@@ -485,6 +492,14 @@ export const paletteV2: Palette = {
     // accentMuted per the brief: #D5CFEB at 18% over surface, for wash
     // and selected fills. Both wash-role tokens share it.
     accentSubtle: 'rgba(213,207,235,0.18)',
+    // BRANDING.md: transient informational feedback ONLY (toasts,
+    // momentary status — "Marked watched", "Seen it", "Copied"). Light
+    // lavender: same hue family as the accent so it reads as Seen, but
+    // clearly distinct so a toast is never mistaken for a button — the
+    // accent stays "actions & wayfinding only". Text/icon on it: dark
+    // (textInverse). The one non-action use of a bright colour, licensed
+    // only because toasts are transient.
+    notification: '#CFC9EE',
     accentWash: 'rgba(213,207,235,0.18)',
     // PROVISIONAL — carried from the dark palette (built for dark bg).
     success: '#6FA86E',

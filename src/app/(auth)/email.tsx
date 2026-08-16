@@ -13,6 +13,11 @@
  *                     screen switches to the check-your-email state.
  *   sent            — holding state after sign-up: the verification link
  *                     must be tapped before the account can sign in.
+ *   forgot          — password-reset request: email only →
+ *                     requestPasswordReset, then an unconditional
+ *                     check-your-email ack (anti-enumeration: shown whether
+ *                     or not the email has an account). The link itself is
+ *                     handled by useAuthLink → /reset-password.
  *
  * Client-side validation (email shape, password ≥ 6) is UX ONLY — it
  * exists to catch typos before a round-trip. The enforced rules live in
@@ -38,6 +43,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useToast } from '@/components/toast';
 import {
+    requestPasswordReset,
     resendVerificationEmail,
     signInWithEmail,
     signUpWithEmail,
@@ -118,11 +124,24 @@ export default function EmailAuthScreen() {
     // does anything; sign-in mode (the default) closes the loop — an
     // unconfirmed user signing in hits email_not_confirmed, whose resend
     // affordance issues a fresh link.
-    const { linkError } = useLocalSearchParams<{ linkError?: string }>();
+    const { linkError, forgot } = useLocalSearchParams<{
+        linkError?: string;
+        forgot?: string;
+    }>();
     const [showLinkError, setShowLinkError] = useState(false);
     useEffect(() => {
         if (linkError) setShowLinkError(true);
     }, [linkError]);
+
+    // Password-reset request state. forgotMode swaps the form for the
+    // email-only request; resetSentTo (non-null) is the unconditional
+    // "check your email" ack. Openable via param too — the reset screen's
+    // invalid-link state routes here with forgot=1.
+    const [forgotMode, setForgotMode] = useState(false);
+    const [resetSentTo, setResetSentTo] = useState<string | null>(null);
+    useEffect(() => {
+        if (forgot) setForgotMode(true);
+    }, [forgot]);
 
     const [mode, setMode] = useState<Mode>('sign-in');
     const [email, setEmail] = useState('');
@@ -210,13 +229,40 @@ export default function EmailAuthScreen() {
         setResendBusy(false);
         if (ok) {
             showToast('Verification email sent.');
-            setResendCoolingDown(true);
-            cooldownTimer.current = setTimeout(() => {
-                setResendCoolingDown(false);
-                cooldownTimer.current = null;
-            }, RESEND_COOLDOWN_MS);
+            startResendCooldown();
         } else {
             showToast("Couldn't resend. Try again.");
+        }
+    }
+
+    function startResendCooldown() {
+        setResendCoolingDown(true);
+        if (cooldownTimer.current) clearTimeout(cooldownTimer.current);
+        cooldownTimer.current = setTimeout(() => {
+            setResendCoolingDown(false);
+            cooldownTimer.current = null;
+        }, RESEND_COOLDOWN_MS);
+    }
+
+    // Reset-request submit AND its ack-state resend (same call both times;
+    // the shared cooldown is fine — the two flows are never live at once).
+    // ok=false is rate limit / network ONLY (the helper's contract): GoTrue
+    // fake-succeeds for unknown emails, so nothing here can leak account
+    // existence — the ack shows unconditionally on success.
+    async function handleSendReset() {
+        if (!emailValid || busy || resendBusy || resendCoolingDown) return;
+        const isResend = resetSentTo !== null;
+        setBusy(true);
+        const ok = await requestPasswordReset(trimmedEmail);
+        setBusy(false);
+        if (ok) {
+            setResetSentTo(trimmedEmail);
+            if (isResend) {
+                showToast('Reset email sent.');
+                startResendCooldown();
+            }
+        } else {
+            showToast("Couldn't send the email. Try again.");
         }
     }
 
@@ -320,6 +366,189 @@ export default function EmailAuthScreen() {
                             >
                                 {SENT_STATE_HINT}
                             </Text>
+                        </View>
+                    ) : resetSentTo ? (
+                        <View style={styles.sentBody}>
+                            <EnvelopeSimple color={palette.accent} size={48} />
+                            <Text
+                                style={[
+                                    typography.display,
+                                    styles.centeredText,
+                                    { color: palette.text },
+                                ]}
+                            >
+                                Check your email
+                            </Text>
+                            {/* Hedged like the signup ack (anti-enumeration:
+                                identical whether or not the email has an
+                                account), plus the PKCE device caveat — the
+                                code only exchanges against the verifier
+                                stored on the device that requested it. */}
+                            <Text
+                                style={[
+                                    typography.body,
+                                    styles.centeredText,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                If an account exists for{' '}
+                                <Text
+                                    style={[
+                                        typography.bodyEmphasis,
+                                        { color: palette.text },
+                                    ]}
+                                >
+                                    {resetSentTo}
+                                </Text>
+                                , we've sent a password reset link. Open the
+                                link on this device to reset your password.
+                            </Text>
+                            <Pressable
+                                onPress={handleSendReset}
+                                disabled={resendDisabled || busy}
+                                hitSlop={spacing.sm}
+                                accessibilityRole="button"
+                                style={({ pressed }) => [
+                                    styles.quietAction,
+                                    {
+                                        opacity:
+                                            resendDisabled || busy
+                                                ? 0.4
+                                                : pressed
+                                                  ? 0.6
+                                                  : 1,
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.accent },
+                                    ]}
+                                >
+                                    Resend email
+                                </Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={() => {
+                                    setResetSentTo(null);
+                                    setForgotMode(false);
+                                }}
+                                hitSlop={spacing.sm}
+                                accessibilityRole="button"
+                                style={({ pressed }) => [
+                                    styles.quietAction,
+                                    { opacity: pressed ? 0.6 : 1 },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.accent },
+                                    ]}
+                                >
+                                    Back to sign in
+                                </Text>
+                            </Pressable>
+                        </View>
+                    ) : forgotMode ? (
+                        <View style={styles.body}>
+                            <Text
+                                style={[typography.display, { color: palette.text }]}
+                            >
+                                Reset your password
+                            </Text>
+
+                            <View
+                                style={[
+                                    styles.inputRow,
+                                    {
+                                        backgroundColor: palette.surface,
+                                        borderColor: palette.border,
+                                    },
+                                ]}
+                            >
+                                <TextInput
+                                    value={email}
+                                    onChangeText={setEmail}
+                                    placeholder="Email"
+                                    placeholderTextColor={palette.textMuted}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    spellCheck={false}
+                                    keyboardType="email-address"
+                                    autoComplete="email"
+                                    textContentType="emailAddress"
+                                    editable={!busy}
+                                    returnKeyType="go"
+                                    onSubmitEditing={handleSendReset}
+                                    style={[
+                                        styles.input,
+                                        typography.body,
+                                        { color: palette.text },
+                                    ]}
+                                />
+                            </View>
+                            {emailCaption ? (
+                                <Text
+                                    style={[
+                                        typography.caption,
+                                        { color: palette.textMuted },
+                                    ]}
+                                >
+                                    {emailCaption}
+                                </Text>
+                            ) : null}
+
+                            <Pressable
+                                onPress={handleSendReset}
+                                disabled={!emailValid || busy}
+                                style={({ pressed }) => [
+                                    styles.submitButton,
+                                    {
+                                        backgroundColor: palette.accent,
+                                        opacity:
+                                            !emailValid || busy
+                                                ? 0.4
+                                                : pressed
+                                                  ? 0.6
+                                                  : 1,
+                                    },
+                                ]}
+                            >
+                                {busy ? (
+                                    <ActivityIndicator color={palette.textInverse} />
+                                ) : (
+                                    <Text
+                                        style={[
+                                            typography.bodyEmphasis,
+                                            styles.centeredText,
+                                            { color: palette.textInverse },
+                                        ]}
+                                    >
+                                        Send reset link
+                                    </Text>
+                                )}
+                            </Pressable>
+
+                            <Pressable
+                                onPress={() => setForgotMode(false)}
+                                hitSlop={spacing.sm}
+                                accessibilityRole="button"
+                                style={({ pressed }) => [
+                                    styles.modeToggle,
+                                    { opacity: pressed ? 0.6 : 1 },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        typography.body,
+                                        { color: palette.accent },
+                                    ]}
+                                >
+                                    Back to sign in
+                                </Text>
+                            </Pressable>
                         </View>
                     ) : (
                         <View style={styles.body}>
@@ -513,6 +742,35 @@ export default function EmailAuthScreen() {
                                         ]}
                                     >
                                         Resend verification email
+                                    </Text>
+                                </Pressable>
+                            ) : null}
+                            {mode === 'sign-in' ? (
+                                // Always visible in sign-in mode, sitting
+                                // right under the error slot so it reads as
+                                // the way out of wrong_credentials. Opens
+                                // the request state with the email carried
+                                // over.
+                                <Pressable
+                                    onPress={() => {
+                                        setForgotMode(true);
+                                        setFormError(null);
+                                        setShowLinkError(false);
+                                        setCollisionNotice(false);
+                                    }}
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    style={({ pressed }) => [
+                                        pressed && { opacity: 0.6 },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.accent },
+                                        ]}
+                                    >
+                                        Forgot password?
                                     </Text>
                                 </Pressable>
                             ) : null}

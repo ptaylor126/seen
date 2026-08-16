@@ -4,7 +4,7 @@ import {
     CaretRight,
     PencilSimple,
 } from 'phosphor-react-native';
-import { Fragment, useCallback, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
     Alert,
     Pressable,
@@ -22,6 +22,7 @@ import { ArchCap, ARCH_DEPTH } from '@/components/profile-arch';
 import { ScreenHeader } from '@/components/screen-header';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { useProfile } from '@/hooks/use-profile';
+import { useSession } from '@/hooks/use-session';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { signOut } from '@/lib/auth';
 import { LIBRARY_IMPORT_ENABLED } from '@/lib/feature-flags';
@@ -46,6 +47,16 @@ const BANNER_ZONE = 74;
 // half over plum, half over the sheet.
 const AVATAR_TOP = BANNER_ZONE - AVATAR_SIZE / 2 - 4;
 
+// How long a ready-but-null profile must PERSIST before the "Profile not
+// available" error renders. ready+null is not only "genuinely absent": the
+// provider also produces it during sign-out teardown (cleared before the
+// sign-in replace lands) and while a refresh() is in flight from a null
+// start (refresh never flips status back to 'loading', by design — e.g.
+// the post-password-reset landing). Those transition frames flashed the
+// error; the grace converts them to the loader, while a genuine miss
+// (signup trigger never created a row) still surfaces after it.
+const PROFILE_MISS_GRACE_MS = 1200;
+
 export default function ProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
@@ -59,6 +70,25 @@ export default function ProfileScreen() {
     // and the effect never re-fired.
     const { status, profile } = useProfile();
     const showLoader = useDeferredLoading(status === 'loading');
+    // Three-state gate for the missing-profile error (see
+    // PROFILE_MISS_GRACE_MS): the error branch requires a live session AND
+    // a ready+null state that has SETTLED — session transitions and
+    // in-flight refreshes render the loader instead.
+    const session = useSession();
+    const signedIn = session.status === 'ready' && !!session.session;
+    const profileMissing = status === 'ready' && !profile;
+    const [missingSettled, setMissingSettled] = useState(false);
+    useEffect(() => {
+        if (!profileMissing) {
+            setMissingSettled(false);
+            return;
+        }
+        const timer = setTimeout(
+            () => setMissingSettled(true),
+            PROFILE_MISS_GRACE_MS,
+        );
+        return () => clearTimeout(timer);
+    }, [profileMissing]);
     const [favorites, setFavorites] = useState<UserFavorites>({
         movies: [],
         tv: [],
@@ -167,9 +197,20 @@ export default function ProfileScreen() {
     }
 
     if (!profile) {
-        // useProfile retries on transient errors internally, so a null
-        // profile after status=ready is a genuine miss (e.g. trigger
-        // never created a row). Same fallback copy as before.
+        // LOADED + null. Only a genuine miss (trigger never created a row)
+        // should show the error — but ready+null is also the sign-out
+        // teardown frame (session already gone) and the refresh-in-flight
+        // window (session present, row about to load). Gate on a live
+        // session AND the settled grace; the transition frames get the
+        // loader, which either resolves or the replace lands first.
+        if (!signedIn || !missingSettled) {
+            return (
+                <View style={[styles.root, { backgroundColor: palette.bg }]}>
+                    <ScreenHeader title="Profile" unreadCount={unreadCount} />
+                    <FullScreenLoader />
+                </View>
+            );
+        }
         return (
             <View style={[styles.root, { backgroundColor: palette.bg }]}>
                 <ScreenHeader title="Profile" unreadCount={unreadCount} />

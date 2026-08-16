@@ -20,7 +20,7 @@
 // Anything that isn't an invite URL passes through untouched, so every
 // existing deep route (seen://rec/…, push-tap navigation) is unaffected.
 
-import { isAuthResetUrl, isAuthUrl, isInviteUrl } from '@/lib/url-kinds';
+import { isAuthUrl, isInviteUrl } from '@/lib/url-kinds';
 
 export function redirectSystemPath({
     path,
@@ -33,12 +33,15 @@ export function redirectSystemPath({
         return '/';
     }
     if (isAuthUrl(path)) {
-        // Password reset lands on the set-new-password screen (route
-        // arrives in stage 5; until then +not-found bounces it home,
-        // which is the safe interim). Every other auth callback (email
-        // verification, PKCE code exchange) completes silently in the
-        // handler — the router just goes home.
-        return isAuthResetUrl(path) ? '/reset-password' : '/';
+        // ALL auth callbacks send the router's copy home — including
+        // password reset. The reset destination is driven by root routing
+        // via the recovery intent useAuthLink raises BEFORE the code
+        // exchange, so /reset-password only ever mounts AFTER the recovery
+        // session exists. Steering the router there directly (the old
+        // behaviour) mounted the screen pre-exchange, where its no-session
+        // guard flashed the "link not valid" state for the duration of the
+        // network round-trip.
+        return '/';
     }
     return path;
 }

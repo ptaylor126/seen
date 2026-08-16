@@ -1,7 +1,8 @@
 import * as Linking from 'expo-linking';
-import { router, type Href } from 'expo-router';
+import { router } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
+import { setRecoveryIntent } from '@/lib/recovery-intent';
 import supabase from '@/lib/supabase';
 import { isAuthResetUrl, isAuthUrl } from '@/lib/url-kinds';
 
@@ -46,6 +47,14 @@ export function useAuthLink({ launchDone }: { launchDone: boolean }): void {
         const isReset = isAuthResetUrl(url);
         const code = getParam(url, 'code');
 
+        // Recovery intent goes up BEFORE the exchange (reset URLs only —
+        // never verification/callback): root routing must never see a
+        // frame where the recovery session exists without knowing it's a
+        // recovery, or it would race the user into a profile-dependent
+        // screen. Cleared on every terminal path: both failure branches
+        // below, the reset screen's completion, and its abandon sign-out.
+        if (isReset) setRecoveryIntent(true);
+
         void (async () => {
             if (!code) {
                 // GoTrue signalled failure via redirect params (expired /
@@ -58,6 +67,7 @@ export function useAuthLink({ launchDone }: { launchDone: boolean }): void {
                         getParam(url, 'error') ??
                         'no error param',
                 );
+                setRecoveryIntent(false); // no session is coming
                 routeToEmailWithLinkError();
                 return;
             }
@@ -69,27 +79,21 @@ export function useAuthLink({ launchDone }: { launchDone: boolean }): void {
                 // exchanged (link tapped twice), or a missing verifier
                 // (link opened on a different device than the signup).
                 console.warn('auth code exchange failed:', error.message);
+                setRecoveryIntent(false); // no session materialised
                 routeToEmailWithLinkError();
                 return;
             }
 
             // Exchange succeeded — the session is now set and persisted
-            // through the singleton client's normal path. For a
-            // verification callback that is ALL this hook does: no manual
-            // navigation, onAuthStateChange fires and the root layout's
-            // routing effect sends the fresh user to onboarding, exactly
-            // as it does after a social sign-in.
-            if (isReset) {
-                // Stage-5 seam: a recovery link must land on the
-                // set-new-password screen, and the routing effect won't
-                // fight this (it only redirects OUT of the auth/onboarding
-                // groups). Until the screen exists, +not-found bounces to
-                // (tabs) — safe, since the recovery exchange signed the
-                // user in. The cast exists because typed routes don't know
-                // the screen yet — remove it when stage 5 adds the route
-                // file.
-                router.replace('/reset-password' as Href);
-            }
+            // through the singleton client's normal path, and this hook
+            // does NO navigation for either flavour:
+            //   - verification/callback: onAuthStateChange fires and the
+            //     root routing effect sends the fresh user to onboarding,
+            //     exactly as after a social sign-in (unchanged);
+            //   - reset: the recovery intent raised above makes the root
+            //     routing effect route to /reset-password?via=recovery —
+            //     the reset screen is the deterministic destination, not
+            //     a race winner.
         })();
     }, [url, launchDone]);
 }

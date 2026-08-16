@@ -119,7 +119,15 @@ export function OverlapBanner({
                 style={({ pressed }) => [
                     styles.banner,
                     {
-                        backgroundColor: palette.surface,
+                        // The BRANDING.md notification tier: light
+                        // lavender, deliberately OUTSIDE the navy family
+                        // (both navy variants tried first — surface
+                        // #151838, surfaceAlt #162954 — read as background
+                        // on device) and deliberately NOT the accent (a
+                        // toast is informational, not an action; the
+                        // accent stays "act here" only). Content on it is
+                        // textInverse — dark on the light surface.
+                        backgroundColor: palette.notification,
                         borderColor: palette.border,
                         opacity: pressed ? 0.8 : 1,
                     },
@@ -132,7 +140,14 @@ export function OverlapBanner({
                     size={28}
                 />
                 <Text
-                    style={[typography.body, styles.text, { color: palette.text }]}
+                    // textInverse, not text: light text would vanish on
+                    // the light accent fill. The nested bodyEmphasis spans
+                    // set only the face, so they inherit this colour.
+                    style={[
+                        typography.body,
+                        styles.text,
+                        { color: palette.textInverse },
+                    ]}
                     numberOfLines={1}
                 >
                     <Text style={typography.bodyEmphasis}>{leadName}</Text>
@@ -154,7 +169,8 @@ export function OverlapBanner({
                     style={({ pressed }) => [pressed && { opacity: 0.5 }]}
                 >
                     <X
-                        color={palette.textMuted}
+                        // Same dark-on-accent flip as the body text.
+                        color={palette.textInverse}
                         size={16}
                     />
                 </Pressable>
@@ -177,7 +193,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: spacing.sm,
         paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
+        // md (was sm): the sm banner read too small to register as a
+        // tappable surface next to the contrast bump.
+        paddingVertical: spacing.md,
         borderRadius: radius.md,
         borderWidth: StyleSheet.hairlineWidth,
     },
