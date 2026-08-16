@@ -16,6 +16,7 @@
     "ios": {
       "bundleIdentifier": "com.paultaylor.seen",
       "usesAppleSignIn": true,
+      "associatedDomains": ["applinks:seenrecs.com"],
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -32,7 +33,20 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "seenrecs.com", "pathPrefix": "/i/" },
+            { "scheme": "https", "host": "seenrecs.com", "path": "/i" },
+            { "scheme": "https", "host": "seenrecs.com", "pathPrefix": "/r/" },
+            { "scheme": "https", "host": "seenrecs.com", "path": "/r" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "output": "single",

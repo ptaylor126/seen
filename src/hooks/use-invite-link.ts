@@ -10,6 +10,7 @@ import {
     parseInviteInput,
 } from '@/lib/pending-recs';
 import { goToProfile } from '@/lib/profile-nav';
+import { normalizeInviteUrl } from '@/lib/url-kinds';
 
 // Claims an invite link the app was OPENED WITH, mirroring
 // usePushNavigation (its sibling in RootLayoutInner): receive an external
@@ -35,20 +36,9 @@ interface PendingInvite {
     hint: 'rec' | 'friend' | null;
 }
 
-// The scheme shape puts i/r in the HOST position (seen://i?t=…), which
-// parseInviteInput's hint regexes — written for the https PATH shape
-// (/i/?t=…) — don't match; the token would still parse via the bare-token
-// fallback but the hint would be lost. Normalising the scheme URL to the
-// path shape (rather than widening the parser) keeps parseInviteInput's
-// behaviour byte-identical for its existing paste-flow callers.
-function normalizeInviteUrl(url: string): string {
-    const match = url.match(/^seen:\/\/(i|r)\/?(\?.*)?$/);
-    if (match) {
-        return `https://seenrecs.com/${match[1]}/${match[2] ?? ''}`;
-    }
-    return url;
-}
-
+// Recognition + scheme→path normalisation live in url-kinds.ts (shared
+// with +native-intent so the router steering and this handler can never
+// drift). Pure move — the normalisation behaviour is unchanged.
 function parseInviteUrl(url: string): PendingInvite | null {
     return parseInviteInput(normalizeInviteUrl(url));
 }
