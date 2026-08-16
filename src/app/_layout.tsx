@@ -28,6 +28,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LaunchSequence } from '@/components/launch-sequence';
 import { LaunchReadyContext } from '@/hooks/use-launch-ready';
 import { ProfileProvider, useProfile } from '@/hooks/use-profile';
+import { useAuthLink } from '@/hooks/use-auth-link';
 import { useInviteLink } from '@/hooks/use-invite-link';
 import { usePushNavigation } from '@/hooks/use-push-navigation';
 import { useSession } from '@/hooks/use-session';
@@ -224,6 +225,10 @@ function RootLayoutInner() {
     // shape, for invite links the app was opened with (seen:// today,
     // https://seenrecs.com once the native link config ships).
     useInviteLink({ session, profile, launchDone: !launchActive });
+    // Third sibling: seen://auth/… links (email verification / password
+    // reset). Gates ONLY on launchDone — these links are used signed-out
+    // by definition, the PKCE exchange itself produces the session.
+    useAuthLink({ launchDone: !launchActive });
 
     return (
         <LaunchReadyContext.Provider value={{ markDestinationReady }}>

@@ -3,6 +3,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { Image } from 'expo-image';
 
 import { WORDMARK } from '@/lib/brand';
+import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import {
@@ -35,11 +36,16 @@ const PRIVACY_URL = 'https://ptaylor126.github.io/seen/privacy.html';
 export default function SignInScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
-    const [busy, setBusy] = useState(false);
+    const router = useRouter();
+    // Which provider's flow is in flight. Per-provider (not a boolean)
+    // because iOS shows BOTH buttons: the Google button's spinner must
+    // only run for the Google flow, while any in-flight flow locks both
+    // buttons.
+    const [busy, setBusy] = useState<'apple' | 'google' | null>(null);
 
     async function handleApplePress() {
         if (busy) return;
-        setBusy(true);
+        setBusy('apple');
         try {
             await signInWithApple();
         } catch (err) {
@@ -50,13 +56,13 @@ export default function SignInScreen() {
             }
             Alert.alert('Sign-in failed', err instanceof Error ? err.message : 'Unknown error');
         } finally {
-            setBusy(false);
+            setBusy(null);
         }
     }
 
     async function handleGooglePress() {
         if (busy) return;
-        setBusy(true);
+        setBusy('google');
         try {
             await signInWithGoogle();
         } catch (err) {
@@ -65,9 +71,74 @@ export default function SignInScreen() {
             }
             Alert.alert('Sign-in failed', err instanceof Error ? err.message : 'Unknown error');
         } finally {
-            setBusy(false);
+            setBusy(null);
         }
     }
+
+    // Shared by both platform branches: Android renders it alone (as it
+    // always has), iOS renders it below the Apple button. The native
+    // plumbing it needs on iOS (iosClientId here + iosUrlScheme in
+    // app.json) has been in every shipped binary since May, so this is
+    // pure JS.
+    const googleButton = (
+        <Pressable
+            onPress={handleGooglePress}
+            disabled={busy !== null}
+            style={({ pressed }) => [
+                styles.googleButton,
+                {
+                    // Google's LIGHT-variant button colour from
+                    // the branding guidelines (#FFFFFF); pressed
+                    // darkens one step to #F2F2F2. Hardcoded, not
+                    // tokenised — this is Google's asset spec, it
+                    // must not follow the app palette.
+                    //
+                    // Light, not dark: the dark variant (#131314)
+                    // measured 1.03:1 against the navy ground, so
+                    // the button had no visible edge and read as
+                    // floating text. White is 19.09:1.
+                    backgroundColor: pressed ? '#F2F2F2' : '#FFFFFF',
+                    opacity: busy ? 0.6 : 1,
+                },
+            ]}
+        >
+            {busy === 'google' ? (
+                // Same hardcoded Google light-variant colour as
+                // the label below, and NOT palette.textInverse
+                // for the same reason: that token flipped from
+                // #FFFFFF (V1) to the navy #0B0D26 (V2), so it
+                // tracks the app theme rather than Google's
+                // asset spec. On the white button the spinner
+                // must be dark or it vanishes.
+                <ActivityIndicator color="#1F1F1F" />
+            ) : (
+                <View style={styles.googleContent}>
+                    <Image
+                        source={require('../../../assets/images/google-g.png')}
+                        style={styles.googleLogo}
+                        contentFit="contain"
+                        accessibilityLabel="Google"
+                    />
+                    <Text
+                        style={[
+                            typography.bodyEmphasis,
+                            // Google's light-variant label colour.
+                            // NOT palette.textInverse: that token
+                            // means "text on accent fills" and
+                            // flipped from #FFFFFF (V1) to the
+                            // navy #0B0D26 (V2), so it follows the
+                            // app theme rather than Google's asset
+                            // spec. #1F1F1F reads 16.48:1 on the
+                            // white button.
+                            { color: '#1F1F1F' },
+                        ]}
+                    >
+                        Sign in with Google
+                    </Text>
+                </View>
+            )}
+        </Pressable>
+    );
 
     return (
         <SafeAreaView style={[styles.root, { backgroundColor: palette.bg }]}>
@@ -80,76 +151,44 @@ export default function SignInScreen() {
                 />
 
                 {Platform.OS === 'ios' ? (
-                    <AppleAuthentication.AppleAuthenticationButton
-                        buttonType={
-                            AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
-                        }
-                        buttonStyle={
-                            AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
-                        }
-                        cornerRadius={radius.md}
-                        style={styles.appleButton}
-                        onPress={handleApplePress}
-                    />
+                    // Apple first: guideline 4.8 requires Sign in with
+                    // Apple to remain offered, and it stays primary as the
+                    // platform-native expectation. The tighter stack gap
+                    // (md vs the cluster's lg) keeps the two social
+                    // buttons reading as one group.
+                    <View style={styles.socialStack}>
+                        <AppleAuthentication.AppleAuthenticationButton
+                            buttonType={
+                                AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
+                            }
+                            buttonStyle={
+                                AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                            }
+                            cornerRadius={radius.md}
+                            style={styles.appleButton}
+                            onPress={handleApplePress}
+                        />
+                        {googleButton}
+                    </View>
                 ) : (
-                    <Pressable
-                        onPress={handleGooglePress}
-                        disabled={busy}
-                        style={({ pressed }) => [
-                            styles.googleButton,
-                            {
-                                // Google's LIGHT-variant button colour from
-                                // the branding guidelines (#FFFFFF); pressed
-                                // darkens one step to #F2F2F2. Hardcoded, not
-                                // tokenised — this is Google's asset spec, it
-                                // must not follow the app palette.
-                                //
-                                // Light, not dark: the dark variant (#131314)
-                                // measured 1.03:1 against the navy ground, so
-                                // the button had no visible edge and read as
-                                // floating text. White is 19.09:1.
-                                backgroundColor: pressed ? '#F2F2F2' : '#FFFFFF',
-                                opacity: busy ? 0.6 : 1,
-                            },
-                        ]}
-                    >
-                        {busy ? (
-                            // Same hardcoded Google light-variant colour as
-                            // the label below, and NOT palette.textInverse
-                            // for the same reason: that token flipped from
-                            // #FFFFFF (V1) to the navy #0B0D26 (V2), so it
-                            // tracks the app theme rather than Google's
-                            // asset spec. On the white button the spinner
-                            // must be dark or it vanishes.
-                            <ActivityIndicator color="#1F1F1F" />
-                        ) : (
-                            <View style={styles.googleContent}>
-                                <Image
-                                    source={require('../../../assets/images/google-g.png')}
-                                    style={styles.googleLogo}
-                                    contentFit="contain"
-                                    accessibilityLabel="Google"
-                                />
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        // Google's light-variant label colour.
-                                        // NOT palette.textInverse: that token
-                                        // means "text on accent fills" and
-                                        // flipped from #FFFFFF (V1) to the
-                                        // navy #0B0D26 (V2), so it follows the
-                                        // app theme rather than Google's asset
-                                        // spec. #1F1F1F reads 16.48:1 on the
-                                        // white button.
-                                        { color: '#1F1F1F' },
-                                    ]}
-                                >
-                                    Sign in with Google
-                                </Text>
-                            </View>
-                        )}
-                    </Pressable>
+                    googleButton
                 )}
+
+                {/* Quiet escape hatch to the email/password form — same
+                    register as onboarding's "Have an invite link?" line.
+                    Accent (the Terms/Privacy link colour), not textMuted:
+                    in muted it was identical to the tagline below and read
+                    as a caption, not a control. */}
+                <Pressable
+                    onPress={() => router.push('/(auth)/email')}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+                >
+                    <Text style={[typography.body, { color: palette.accent }]}>
+                        Continue with email
+                    </Text>
+                </Pressable>
 
                 <Text
                     style={[
@@ -223,6 +262,11 @@ const styles = StyleSheet.create({
     appleButton: {
         width: BUTTON_WIDTH,
         height: BUTTON_HEIGHT,
+    },
+    // iOS-only wrapper for the Apple + Google pair.
+    socialStack: {
+        gap: spacing.md,
+        alignItems: 'center',
     },
     googleButton: {
         width: BUTTON_WIDTH,

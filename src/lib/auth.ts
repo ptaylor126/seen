@@ -1,11 +1,11 @@
 /**
  * Auth helpers.
  *
- * Two native providers — Sign in with Apple on iOS, Google Sign-In on
- * Android (and iOS once an Android EAS build is wired up). Both flows
- * obtain an identity token from the provider client-side, then exchange it
- * via Supabase's `signInWithIdToken` so the resulting session is bound to
- * a single `auth.users` row regardless of provider.
+ * Native social providers — Sign in with Apple (iOS only) and Google
+ * Sign-In (Android and iOS). Both flows obtain an identity token from the
+ * provider client-side, then exchange it via Supabase's `signInWithIdToken`
+ * so the resulting session is bound to a single `auth.users` row
+ * regardless of provider. Email/password lives below them.
  *
  * The Supabase client (src/lib/supabase.ts) is configured to persist
  * sessions via AsyncStorage, so subsequent launches restore the session
@@ -49,6 +49,10 @@ export async function signInWithApple(): Promise<void> {
     if (error) throw error;
 }
 
+// Used by BOTH platforms' Google buttons. hasPlayServices() is an
+// Android-shaped check but iOS-safe: the library short-circuits it to
+// `return true` on iOS before touching the native module (verified in
+// GoogleSignin.js), so no platform guard is needed here.
 export async function signInWithGoogle(): Promise<void> {
     await GoogleSignin.hasPlayServices();
     await GoogleSignin.signIn();
@@ -64,6 +68,116 @@ export async function signInWithGoogle(): Promise<void> {
     });
 
     if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// Email/password. Confirm-email is ON in the Supabase project, which shapes
+// both helpers:
+//   - signUp returns NO session — the user must tap the verification link
+//     (seen://auth/callback, handled in the auth-link stage) before they can
+//     sign in. The UI holds them on a "check your email" state.
+//   - An unconfirmed user trying to sign IN gets a distinct
+//     'email_not_confirmed' result, never a misleading "wrong password".
+// Results are discriminated unions (same shape as the claim helpers in
+// pending-recs.ts) so screens branch on stable codes, not on raw Postgrest/
+// GoTrue message strings.
+// ---------------------------------------------------------------------------
+
+const EMAIL_VERIFY_REDIRECT = 'seen://auth/callback';
+
+export type EmailSignUpResult =
+    | { ok: true; verificationSentTo: string }
+    | { ok: false; error: 'already_registered' | 'generic' };
+
+export async function signUpWithEmail(
+    email: string,
+    password: string,
+): Promise<EmailSignUpResult> {
+    const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: EMAIL_VERIFY_REDIRECT },
+    });
+    if (error) {
+        // user_already_exists is the explicit server code; the message
+        // match is a fallback for older gateway variants.
+        if (
+            error.code === 'user_already_exists' ||
+            /already registered/i.test(error.message ?? '')
+        ) {
+            return { ok: false, error: 'already_registered' };
+        }
+        console.error('email sign-up failed:', error);
+        return { ok: false, error: 'generic' };
+    }
+    // With confirm-email ON, GoTrue deliberately does NOT error when the
+    // email already has an account — via ANY provider; live probes showed
+    // the response is identical for a Google-only account and an
+    // email/password account (anti-enumeration): a fake user whose
+    // identities array is EMPTY, and no email is sent. This guard is the
+    // documented detection for that — but it is DEAD on the installed
+    // auth-js (its transform maps the obfuscated top-level user to null,
+    // so data.user is null here for fresh AND collision signups alike).
+    // Kept because it's harmless and fires on lib versions where
+    // data.user survives; the product-level answer is detection-free
+    // guidance instead (the unconditional "already have an account?"
+    // lines on the check-your-email state and the sign-in error).
+    if (data.user && (data.user.identities?.length ?? 0) === 0) {
+        return { ok: false, error: 'already_registered' };
+    }
+    return { ok: true, verificationSentTo: email };
+}
+
+export type EmailSignInResult =
+    | { ok: true }
+    | {
+          ok: false;
+          error: 'wrong_credentials' | 'email_not_confirmed' | 'generic';
+      };
+
+export async function signInWithEmail(
+    email: string,
+    password: string,
+): Promise<EmailSignInResult> {
+    const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+    });
+    if (!error) return { ok: true };
+    // Unconfirmed FIRST: GoTrue reports it distinctly, and telling this
+    // user "wrong password" would send them to a reset loop instead of
+    // their inbox.
+    if (
+        error.code === 'email_not_confirmed' ||
+        /not confirmed/i.test(error.message ?? '')
+    ) {
+        return { ok: false, error: 'email_not_confirmed' };
+    }
+    if (
+        error.code === 'invalid_credentials' ||
+        /invalid login credentials/i.test(error.message ?? '')
+    ) {
+        return { ok: false, error: 'wrong_credentials' };
+    }
+    console.error('email sign-in failed:', error);
+    return { ok: false, error: 'generic' };
+}
+
+// Re-send the signup verification email (the "check your email" state's
+// resend affordance). Same redirect as the original send.
+export async function resendVerificationEmail(
+    email: string,
+): Promise<boolean> {
+    const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: EMAIL_VERIFY_REDIRECT },
+    });
+    if (error) {
+        console.error('verification resend failed:', error);
+        return false;
+    }
+    return true;
 }
 
 export async function signOut(): Promise<void> {
