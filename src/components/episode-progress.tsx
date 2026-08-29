@@ -13,11 +13,11 @@ import {
 import {
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 
+import { Text } from '@/components/text';
 import supabase from '@/lib/supabase';
 import type { TMDBSeason } from '@/lib/tmdb';
 import {

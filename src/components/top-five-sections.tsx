@@ -16,10 +16,10 @@ import {
     Dimensions,
     Pressable,
     StyleSheet,
-    Text,
     View,
 } from 'react-native';
 
+import { Text } from '@/components/text';
 import type { FavoriteItem } from '@/lib/favorites';
 import { imageUrl } from '@/lib/tmdb';
 import { fontFamily, posterFrame, getPalette, radius, spacing, typography } from '@/theme/theme';
@@ -189,8 +189,10 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: spacing.xs,
         left: spacing.xs,
-        width: 22,
-        height: 22,
+        // min, not fixed: the rank digit scales with OS font settings (to
+        // the app-wide 1.3 clamp) and must grow the circle, not clip.
+        minWidth: 22,
+        minHeight: 22,
         borderRadius: radius.full,
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: 'center',

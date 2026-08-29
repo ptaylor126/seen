@@ -16,8 +16,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -36,6 +34,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { Chip } from '@/components/chip';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';
 import { createPendingRec, sharePendingRec } from '@/lib/pending-recs';

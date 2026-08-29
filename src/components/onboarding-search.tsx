@@ -7,13 +7,13 @@ import {
     Keyboard,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
 
 import { AnimatedLogo } from '@/components/animated-logo';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';
 import {
     posterFrame,

@@ -13,8 +13,6 @@ import {
     FlatList,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -29,6 +27,8 @@ import {
     SearchBarOverlay,
     useSearchBar,
 } from '@/components/search-bar';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import {
     type LibraryGridCols,

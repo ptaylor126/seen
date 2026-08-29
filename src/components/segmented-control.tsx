@@ -24,8 +24,9 @@
 // its narrowed type through the onChange callback — no string cast at
 // the call site.
 
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
+import { Text } from '@/components/text';
 import {
     fontFamily,
     getPalette,

@@ -13,13 +13,13 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { Text } from '@/components/text';
 import { ratingGlyphs } from '@/lib/rating';
 import { imageUrl } from '@/lib/tmdb';
 import {

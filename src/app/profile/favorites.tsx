@@ -12,7 +12,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -29,6 +28,7 @@ import {
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { RatingSheet } from '@/components/rating-sheet';
 import { ScreenHeader } from '@/components/screen-header';
+import { Text } from '@/components/text';
 import { useProfile } from '@/hooks/use-profile';
 import {
     addFavoriteAtRank,

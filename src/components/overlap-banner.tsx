@@ -7,7 +7,6 @@ import {
     PanResponder,
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
     type StyleProp,
@@ -15,6 +14,7 @@ import {
 } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
+import { Text } from '@/components/text';
 import type { WatcherSheetItem } from '@/components/watchers-sheet';
 import {
     getPalette,

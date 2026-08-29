@@ -10,14 +10,14 @@ import {
     Modal,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { signOut } from '@/lib/auth';
 import supabase from '@/lib/supabase';
 import {

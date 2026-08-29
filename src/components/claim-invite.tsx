@@ -3,12 +3,12 @@ import {
     ActivityIndicator,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
 
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import {
     CLAIM_ERROR_COPY,
     claimFriendInvite,

@@ -8,8 +8,6 @@ import {
     Alert,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -17,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ClaimInvite } from '@/components/claim-invite';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { shareInvite } from '@/lib/invite';
 import { goToProfile } from '@/lib/profile-nav';
 import supabase from '@/lib/supabase';

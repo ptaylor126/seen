@@ -4,8 +4,6 @@ import {
     Modal,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -20,6 +18,8 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface RequestRecSheetProps {

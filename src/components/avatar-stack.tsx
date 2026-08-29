@@ -1,6 +1,7 @@
-import { useColorScheme, View, StyleSheet, Text } from 'react-native';
+import { useColorScheme, View, StyleSheet } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
+import { Text } from '@/components/text';
 import { getPalette, typography } from '@/theme/theme';
 
 export interface AvatarStackItem {

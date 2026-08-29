@@ -10,7 +10,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -30,6 +29,7 @@ import {
     OnboardingSearch,
     type SearchableItem,
 } from '@/components/onboarding-search';
+import { Text } from '@/components/text';
 import { setOnboardingItemStatus } from '@/lib/onboarding-utils';
 import { imageUrl } from '@/lib/tmdb';
 import {

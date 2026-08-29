@@ -10,7 +10,6 @@ import {
     AppState,
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -31,6 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { LoadError } from '@/components/load-error';
+import { Text } from '@/components/text';
 import { ThreadCommentList } from '@/components/thread/comment-list';
 import { ThreadCommentMenu } from '@/components/thread/comment-menu';
 import { ThreadComposer } from '@/components/thread/composer';

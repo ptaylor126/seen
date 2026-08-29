@@ -10,8 +10,6 @@ import {
     Pressable,
     SectionList,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -20,6 +18,8 @@ import { Avatar } from '@/components/avatar';
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { LoadError } from '@/components/load-error';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import supabase from '@/lib/supabase';
 import {
     getPopular,

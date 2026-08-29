@@ -26,12 +26,12 @@ import {
     Pressable,
     SectionList,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
 import { IMPORT_SOURCES } from '@/lib/import/registry';
 import { resolveRow, resolveRows } from '@/lib/import/resolve';
 import {

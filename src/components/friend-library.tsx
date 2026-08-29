@@ -10,8 +10,6 @@ import {
     Dimensions,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -21,6 +19,8 @@ import Animated, {
 
 import { LibraryFilterControls } from '@/components/library-filter-controls';
 import { SegmentedControl } from '@/components/segmented-control';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import { type LibraryGridCols, useLibraryView } from '@/lib/library-view';

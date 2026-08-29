@@ -19,7 +19,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -32,6 +31,7 @@ import { DeclineSheet } from '@/components/decline-sheet';
 import { LoadError } from '@/components/load-error';
 import { RatingSheet } from '@/components/rating-sheet';
 import { RecActionSheet } from '@/components/rec-action-sheet';
+import { Text } from '@/components/text';
 import { ThreadCommentList } from '@/components/thread/comment-list';
 import { ThreadCommentMenu } from '@/components/thread/comment-menu';
 import { ThreadComposer } from '@/components/thread/composer';

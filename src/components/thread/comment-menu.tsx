@@ -5,13 +5,13 @@ import {
     Modal,
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 import { useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
 import {
     type CommentMenuTarget,
     type ReactionEmoji,

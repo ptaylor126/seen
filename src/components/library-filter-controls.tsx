@@ -30,7 +30,7 @@ import {
     SquaresFour,
 } from 'phosphor-react-native';
 import { type ReactNode, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, {
     FadeIn,
     FadeOut,
@@ -42,6 +42,7 @@ import Animated, {
 
 import { Chip } from '@/components/chip';
 import { SortSheet } from '@/components/sort-sheet';
+import { Text } from '@/components/text';
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
 import type { LibraryGridCols, LibraryMode } from '@/lib/library-view';
 import {
@@ -545,12 +546,14 @@ const styles = StyleSheet.create({
         // shrinks every sibling with `flexShrink: 1` (the default),
         // and the ScrollView collapses — chips clip to empty
         // outlines because the contentContainer is taller than the
-        // now-squeezed outer ScrollView frame. height: 36 matches
-        // intrinsic content (chip lineHeight 18 + pill paddingVertical
-        // 2×4 + border 2×1 = 28; plus contentContainer paddingVertical
-        // 2×4 = 36). Belt-and-braces; either alone would suffice,
-        // both together makes the intent obvious to future readers.
-        height: 36,
+        // now-squeezed outer ScrollView frame. minHeight: 36 matches
+        // intrinsic content AT 1.0 FONT SCALE (chip lineHeight 18 + pill
+        // paddingVertical 2×4 + border 2×1 = 28; plus contentContainer
+        // paddingVertical 2×4 = 36). min rather than fixed: at larger OS
+        // font scales (clamped app-wide at 1.3) the chip labels outgrow
+        // that arithmetic and the row must grow, not clip the chips —
+        // flexShrink: 0 below already prevents the collapse on its own.
+        minHeight: 36,
         flexGrow: 0,
         flexShrink: 0,
         marginBottom: spacing.sm,

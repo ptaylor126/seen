@@ -1,6 +1,7 @@
 import { MotiView } from 'moti';
-import { StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
+import { Text } from '@/components/text';
 import { type ReactionRow } from '@/components/thread/shared';
 import { getPalette, radius, spacing } from '@/theme/theme';
 

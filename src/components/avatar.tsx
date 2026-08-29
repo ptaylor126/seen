@@ -1,7 +1,8 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Text, useColorScheme } from 'react-native';
+import { useColorScheme } from 'react-native';
 
+import { Text } from '@/components/text';
 import { fontFamily, getPalette, onImage } from '@/theme/theme';
 
 interface AvatarProps {

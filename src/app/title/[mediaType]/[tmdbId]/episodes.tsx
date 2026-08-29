@@ -10,7 +10,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -19,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Chip } from '@/components/chip';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { LoadError } from '@/components/load-error';
+import { Text } from '@/components/text';
 import supabase from '@/lib/supabase';
 import {
     getTV,

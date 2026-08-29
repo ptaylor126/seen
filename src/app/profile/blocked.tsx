@@ -9,7 +9,6 @@ import {
     FlatList,
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -17,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { Text } from '@/components/text';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import supabase from '@/lib/supabase';
 import {

@@ -10,7 +10,6 @@ import {
     FlatList,
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -22,6 +21,7 @@ import {
 } from '@/components/full-screen-loader';
 import { LoadError } from '@/components/load-error';
 import { OnboardingProgress } from '@/components/onboarding-progress';
+import { Text } from '@/components/text';
 import {
     setOnboardingItemStatus,
     type OnboardingTitle,

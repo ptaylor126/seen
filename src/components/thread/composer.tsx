@@ -4,7 +4,6 @@ import {
 import {
     Pressable,
     StyleSheet,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -16,6 +15,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { TextInput } from '@/components/text-input';
 import { COMMENT_MAX_CHARS } from '@/components/thread/shared';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 

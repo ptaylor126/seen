@@ -15,7 +15,6 @@ import {
     ScrollView,
     StatusBar,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -32,6 +31,7 @@ import { Avatar } from '@/components/avatar';
 import { ArchCap, ARCH_DEPTH } from '@/components/profile-arch';
 import { ChatsBetweenSection } from '@/components/chats-between-section';
 import { FriendLibrary } from '@/components/friend-library';
+import { Text } from '@/components/text';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { fetchFavoritesForUser, type UserFavorites } from '@/lib/favorites';
@@ -63,6 +63,7 @@ interface FriendProfile {
     handle: string;
     displayName: string;
     avatarUrl: string | null;
+    bio: string | null;
 }
 
 // One rec in the "Recs between you" strip — either direction. `direction`
@@ -269,7 +270,7 @@ export default function FriendDetailScreen() {
                     // the same graceful not-found state below.
                     const profilesQuery = supabase
                         .from('profiles')
-                        .select('id, display_name, handle, avatar_url');
+                        .select('id, display_name, handle, avatar_url, bio');
                     const { data: profileData, error: profileError } = await (
                         targetUserId
                             ? profilesQuery.eq('id', targetUserId)
@@ -295,6 +296,7 @@ export default function FriendDetailScreen() {
                         handle: profileData.handle,
                         displayName: profileData.display_name,
                         avatarUrl: profileData.avatar_url,
+                        bio: profileData.bio,
                     };
 
                     // Friendships are stored with (least, greatest) so we
@@ -601,6 +603,17 @@ export default function FriendDetailScreen() {
                     >
                         @{state.profile.handle}
                     </Text>
+                    {state.profile.bio ? (
+                        <Text
+                            style={[
+                                typography.body,
+                                styles.bioText,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            {state.profile.bio}
+                        </Text>
+                    ) : null}
                 </View>
                 <View style={styles.notFriendsBlock}>
                     <Text
@@ -798,6 +811,23 @@ export default function FriendDetailScreen() {
                 the tabs' background. */}
             <View style={styles.tabContentGap} />
             <View style={styles.profileBlock}>
+                {/* Bio sits in the SCROLLABLE profile content, not the
+                    identity block above: IDENTITY_H is a hard constant
+                    (the collapse clamp and content paddingTop key off it),
+                    so variable-height text can't join the name/handle
+                    without breaking the pin seam. Absent when null — no
+                    empty line. */}
+                {profile.bio ? (
+                    <Text
+                        style={[
+                            typography.body,
+                            styles.bioText,
+                            { color: palette.textMuted },
+                        ]}
+                    >
+                        {profile.bio}
+                    </Text>
+                ) : null}
                 <Text style={[typography.micro, { color: palette.textMuted }]}>
                     {formatFriendsSince(friendshipCreatedAt)}
                 </Text>
@@ -1567,6 +1597,14 @@ const styles = StyleSheet.create({
     },
     centerText: {
         textAlign: 'center',
+    },
+    // Bio: descriptive text, muted, centred with side padding so a full
+    // 160-char bio wraps as a readable measure. No accent (BRANDING: a
+    // bio is not an action).
+    bioText: {
+        textAlign: 'center',
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.xs,
     },
     primaryButton: {
         flexDirection: 'row',

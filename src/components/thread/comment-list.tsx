@@ -2,13 +2,13 @@ import { Fragment, useRef, useState } from 'react';
 import {
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
     type StyleProp,
     type ViewStyle,
 } from 'react-native';
 
+import { Text } from '@/components/text';
 import { ReactionBadge } from '@/components/thread/reaction-badge';
 import {
     type CommentMenuTarget,

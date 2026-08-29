@@ -12,8 +12,6 @@ import {
     PanResponder,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -29,6 +27,8 @@ import Reanimated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { Toggle } from '@/components/toggle';
 import { postRecComment } from '@/lib/comments';
 import { setItemVisibility } from '@/lib/item-status';

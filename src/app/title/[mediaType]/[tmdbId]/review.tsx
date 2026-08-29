@@ -8,8 +8,6 @@ import {
     Pressable,
     StyleSheet,
     Switch,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -24,6 +22,8 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import supabase from '@/lib/supabase';
 import { getMovie, getTV, imageUrl, type TMDBMovie, type TMDBTV } from '@/lib/tmdb';
 import {

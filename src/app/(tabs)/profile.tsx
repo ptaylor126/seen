@@ -11,7 +11,6 @@ import {
     ScrollView,
     StatusBar,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -20,6 +19,7 @@ import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-l
 import { useFloatingTabBarInset } from '@/components/floating-tab-bar';
 import { ArchCap, ARCH_DEPTH } from '@/components/profile-arch';
 import { ScreenHeader } from '@/components/screen-header';
+import { Text } from '@/components/text';
 import { TopFiveSections } from '@/components/top-five-sections';
 import { useProfile } from '@/hooks/use-profile';
 import { useSession } from '@/hooks/use-session';
@@ -272,6 +272,20 @@ export default function ProfileScreen() {
                     <Text style={[typography.body, { color: palette.textMuted }]}>
                         @{profile.handle}
                     </Text>
+                    {/* Absent when null — no empty line, no placeholder.
+                        Muted, no accent (BRANDING: descriptive, not an
+                        action). */}
+                    {profile.bio ? (
+                        <Text
+                            style={[
+                                typography.body,
+                                styles.bioText,
+                                { color: palette.textMuted },
+                            ]}
+                        >
+                            {profile.bio}
+                        </Text>
+                    ) : null}
                 </View>
                 {/* Avatar cluster — absolute over the banner/sheet boundary,
                     half on the plum, half on the arch. Keeps the edit
@@ -485,6 +499,14 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: spacing.md,
         paddingBottom: spacing.xl,
+    },
+    // Bio under the handle: centred with side padding so a full 160-char
+    // bio wraps as a readable measure. Muted, no accent (BRANDING:
+    // descriptive, not an action).
+    bioText: {
+        textAlign: 'center',
+        paddingHorizontal: spacing.base,
+        marginTop: spacing.xs,
     },
     settingsRow: {
         flexDirection: 'row',

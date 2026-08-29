@@ -13,8 +13,6 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -31,6 +29,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { Avatar } from '@/components/avatar';
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { COMMENT_MAX_CHARS } from '@/components/thread/shared';
 import { createTitleChat } from '@/lib/chats';
 import supabase from '@/lib/supabase';

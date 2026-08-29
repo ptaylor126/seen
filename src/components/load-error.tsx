@@ -11,11 +11,11 @@
 import {
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 
+import { Text } from '@/components/text';
 import { button, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface LoadErrorProps {

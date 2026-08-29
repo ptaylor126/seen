@@ -12,7 +12,6 @@ import {
     FlatList,
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
@@ -21,6 +20,7 @@ import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-l
 import { Avatar } from '@/components/avatar';
 import { ScreenHeader } from '@/components/screen-header';
 import { SegmentedControl } from '@/components/segmented-control';
+import { Text } from '@/components/text';
 import { UserLink } from '@/components/user-link';
 import {
     WatchersSheet,

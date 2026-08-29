@@ -10,8 +10,6 @@ import {
     Alert,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -20,6 +18,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
 import { Avatar } from '@/components/avatar';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { useToast } from '@/components/toast';
 import { useProfile } from '@/hooks/use-profile';
 import { pickAndUploadAvatar, removeAvatar } from '@/lib/avatar-upload';
@@ -32,6 +32,10 @@ import {
 } from '@/theme/theme';
 
 const MAX_DISPLAY_NAME_LENGTH = 30;
+// The one-to-two-line bio register (Instagram 150, X 160), deliberately
+// distinct from the 500-char note/comment class. Mirrored by the DB CHECK
+// (profiles_bio_length_check) so client and server agree.
+const MAX_BIO_LENGTH = 160;
 const AVATAR_SIZE = 96;
 export default function EditProfileScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -46,6 +50,9 @@ export default function EditProfileScreen() {
     const [nameSaving, setNameSaving] = useState(false);
     const [nameError, setNameError] = useState<string | null>(null);
 
+    const [bio, setBio] = useState('');
+    const [bioSaving, setBioSaving] = useState(false);
+
     // Hydrate the editable input from the profile context exactly once.
     // We deliberately DO NOT keep a second state slot for the baseline:
     // the previous implementation set displayName and initialDisplayName
@@ -58,6 +65,7 @@ export default function EditProfileScreen() {
     useEffect(() => {
         if (profile && !hydratedRef.current) {
             setDisplayName(profile.displayName);
+            setBio(profile.bio ?? '');
             hydratedRef.current = true;
         }
     }, [profile]);
@@ -128,6 +136,49 @@ export default function EditProfileScreen() {
         void commitNameIfChanged();
     }
 
+    // ---- Bio commit — same two-trigger shape as the name (blur + back).
+    // Unlike the name, EMPTY IS VALID: it saves as NULL (a clean "no
+    // bio"), never as an empty string, so display sites can render
+    // nothing on null without trimming.
+    const commitBioIfChanged = useCallback(async (): Promise<boolean> => {
+        if (!profile || bioSaving) return true;
+        const trimmed = bio.trim();
+        const baseline = (profile.bio ?? '').trim();
+        if (trimmed === baseline) return true; // nothing to do
+
+        setBioSaving(true);
+        try {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+            const userId = session?.user.id;
+            if (!userId) throw new Error('Not authenticated');
+
+            const { error } = await supabase
+                .from('profiles')
+                .update({ bio: trimmed.length === 0 ? null : trimmed })
+                .eq('id', userId);
+            if (error) throw error;
+
+            await refresh();
+            showSavedToast();
+            return true;
+        } catch (err) {
+            console.error('profile bio save failed:', err);
+            Alert.alert(
+                "Couldn't save",
+                err instanceof Error ? err.message : 'Unknown error',
+            );
+            return false;
+        } finally {
+            setBioSaving(false);
+        }
+    }, [bio, profile, bioSaving, refresh, showSavedToast]);
+
+    function handleBioBlur() {
+        void commitBioIfChanged();
+    }
+
     function handleNameChange(value: string) {
         setDisplayName(value);
         // Clear an inline error as soon as the user resumes typing so
@@ -137,13 +188,14 @@ export default function EditProfileScreen() {
     }
 
     async function handleBack() {
-        // Commit any pending name change BEFORE navigating. Don't rely
-        // on the back tap implicitly blurring the input — that's a
-        // platform-dependent behaviour and would silently lose a typed
-        // name change on Android. Validation failures still navigate
-        // (user can fix on re-entry); save failures surface their own
-        // Alert from inside commitNameIfChanged.
+        // Commit any pending changes BEFORE navigating. Don't rely on
+        // the back tap implicitly blurring the inputs — that's a
+        // platform-dependent behaviour and would silently lose typed
+        // changes on Android. Validation failures still navigate (user
+        // can fix on re-entry); save failures surface their own Alert
+        // from inside the commit helpers.
         await commitNameIfChanged();
+        await commitBioIfChanged();
         router.back();
     }
 
@@ -422,6 +474,47 @@ export default function EditProfileScreen() {
                                     { color: palette.textMuted },
                                 ]}
                             >
+                                Bio
+                            </Text>
+                            <TextInput
+                                value={bio}
+                                onChangeText={setBio}
+                                onBlur={handleBioBlur}
+                                placeholder="A line about your taste"
+                                placeholderTextColor={palette.textMuted}
+                                maxLength={MAX_BIO_LENGTH}
+                                multiline
+                                autoCapitalize="sentences"
+                                editable={!bioSaving}
+                                style={[
+                                    styles.textInput,
+                                    styles.bioInput,
+                                    typography.body,
+                                    {
+                                        backgroundColor: palette.surface,
+                                        borderColor: palette.border,
+                                        color: palette.text,
+                                    },
+                                ]}
+                            />
+                            <Text
+                                style={[
+                                    typography.micro,
+                                    styles.counter,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                {bio.length}/{MAX_BIO_LENGTH}
+                            </Text>
+                        </View>
+
+                        <View style={styles.field}>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
                                 Handle
                             </Text>
                             <Text
@@ -504,6 +597,15 @@ const styles = StyleSheet.create({
         borderRadius: radius.md,
         borderWidth: 1,
         paddingHorizontal: spacing.md,
+    },
+    // Multiline bio: ~3 visible lines. textAlignVertical pins the text to
+    // the top on Android (default centres it in the taller box); the
+    // vertical padding replaces the single-line height's implicit
+    // centring.
+    bioInput: {
+        height: 84,
+        paddingVertical: spacing.sm,
+        textAlignVertical: 'top',
     },
     counter: {
         alignSelf: 'flex-end',

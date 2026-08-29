@@ -13,10 +13,11 @@
  * pointerEvents="none" so it can never block taps beneath it.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { StyleSheet, Text, useColorScheme } from 'react-native';
+import { StyleSheet, useColorScheme } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
 import { getPalette, radius, spacing, typography } from '@/theme/theme';
 
 const TOAST_VISIBLE_MS = 1500;

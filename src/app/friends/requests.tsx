@@ -9,13 +9,13 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
+import { Text } from '@/components/text';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { promptPushAtHighIntent } from '@/lib/push';
 import supabase from '@/lib/supabase';

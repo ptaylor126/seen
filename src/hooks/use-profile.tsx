@@ -15,6 +15,7 @@ export interface Profile {
     handle: string;
     displayName: string;
     avatarUrl: string | null;
+    bio: string | null;
     onboarded: boolean;
 }
 
@@ -83,7 +84,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
 
                 const { data, error } = await supabase
                     .from('profiles')
-                    .select('id, handle, display_name, avatar_url, onboarded')
+                    .select('id, handle, display_name, avatar_url, bio, onboarded')
                     .eq('id', userId)
                     .maybeSingle();
                 if (generationRef.current !== gen) return;
@@ -150,6 +151,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
                         handle: data.handle,
                         displayName: data.display_name,
                         avatarUrl: data.avatar_url,
+                        bio: data.bio,
                         onboarded: data.onboarded,
                     },
                 });

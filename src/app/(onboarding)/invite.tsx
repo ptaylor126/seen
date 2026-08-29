@@ -5,13 +5,13 @@ import {
 import {
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ClaimInvite } from '@/components/claim-invite';
+import { Text } from '@/components/text';
 import { useProfile } from '@/hooks/use-profile';
 import { shareInvite } from '@/lib/invite';
 import { finishOnboarding } from '@/lib/onboarding-utils';

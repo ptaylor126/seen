@@ -8,8 +8,6 @@ import {
     Alert,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
@@ -25,6 +23,8 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OnboardingProgress } from '@/components/onboarding-progress';
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { useProfile } from '@/hooks/use-profile';
 import { validateHandle } from '@/lib/onboarding-utils';
 import supabase from '@/lib/supabase';

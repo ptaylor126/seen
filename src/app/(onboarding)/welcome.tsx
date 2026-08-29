@@ -1,10 +1,11 @@
 import { Image } from 'expo-image';
 
+import { MAX_FONT_SCALE, Text } from '@/components/text';
 import { WORDMARK } from '@/lib/brand';
 import { useRouter } from 'expo-router';
 import { Play, Users } from 'phosphor-react-native';
 import { useEffect } from 'react';
-import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { Pressable, StyleSheet, useColorScheme, View } from 'react-native';
 import Animated, {
     Easing,
     type SharedValue,
@@ -152,6 +153,9 @@ function AnimatedWord({
 
     return (
         <Animated.Text
+            // Animated.Text wraps RN's Text directly, so it bypasses the
+            // clamped wrapper — apply the app-wide font-scale cap here.
+            maxFontSizeMultiplier={MAX_FONT_SCALE}
             style={[
                 typography.display,
                 light && { fontFamily: HEADLINE_LIGHT_FACE },

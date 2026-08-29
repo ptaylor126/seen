@@ -21,10 +21,17 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
+    useWindowDimensions,
     View,
 } from 'react-native';
+import Reanimated, {
+    Extrapolation,
+    interpolate,
+    useAnimatedScrollHandler,
+    useAnimatedStyle,
+    useSharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FullScreenLoader, useDeferredLoading } from '@/components/full-screen-loader';
@@ -33,6 +40,7 @@ import { LoadError } from '@/components/load-error';
 import { AvatarStack } from '@/components/avatar-stack';
 import { EpisodeProgress } from '@/components/episode-progress';
 import { RatingSheet } from '@/components/rating-sheet';
+import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { useToast } from '@/components/toast';
 import {
@@ -101,6 +109,10 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
 // as distinct: there the title sits ON the image; here the image is a band
 // the poster straddles, with the title beside it on the plum page.
 const BACKDROP_HEIGHT = Math.round(Dimensions.get('window').height * 0.36);
+
+// Close-X pill diameter — shared by the button style and the chrome bar's
+// height so the bar always fully covers the X's band.
+const CLOSE_BUTTON_SIZE = 36;
 const POSTER_WIDTH = 100;
 const POSTER_HEIGHT = 150;
 // Trailer play badge on the hero: an invitation to tap the image, not a
@@ -216,6 +228,12 @@ export default function TitleDetailScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    // OS font scale, live. 1 (or below) = default text: the layout must be
+    // EXACTLY the original — the large-font adaptations below (content-sized
+    // status pills, the chrome scrim over the close X) are gated on this and
+    // engage only when text is actually enlarged.
+    const { fontScale } = useWindowDimensions();
+    const fontScaled = fontScale > 1;
     const { showToast, toast } = useToast();
 
     const mediaType: MediaType | null =
@@ -931,6 +949,34 @@ export default function TitleDetailScreen() {
     // notch, leaving just the spacing.base gap).
     const closeButtonTop = insets.top + spacing.base;
 
+    // Scroll-linked chrome scrim, LARGE FONT ONLY (fontScaled gates the
+    // render below; at default font the page is exactly the original —
+    // scrolled text passes behind just the close X's own pill). At larger
+    // scales text is bigger and collides harder with the X, so once the
+    // hero backdrop scrolls away a bg-coloured gradient over the X's band
+    // fades in: solid through the button, dissolving below it, so scaled
+    // text fades out under the top edge instead of running through the X
+    // (or hard-clipping against an invisible bar). Hooks live above the
+    // early returns (loader/error render no scroll content and no scrim)
+    // and run at every scale; only the render is gated.
+    const scrollY = useSharedValue(0);
+    const chromeScrollHandler = useAnimatedScrollHandler((e) => {
+        scrollY.value = e.contentOffset.y;
+    });
+    const chromeBarHeight =
+        closeButtonTop + CLOSE_BUTTON_SIZE + spacing.sm;
+    const chromeBarStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(
+            scrollY.value,
+            [
+                BACKDROP_HEIGHT - chromeBarHeight - spacing.xl,
+                BACKDROP_HEIGHT - chromeBarHeight,
+            ],
+            [0, 1],
+            Extrapolation.CLAMP,
+        ),
+    }));
+
     if (showLoader) {
         return (
             <View
@@ -1004,9 +1050,60 @@ export default function TitleDetailScreen() {
     // old TitleTrailer row had; no trailer → plain non-interactive backdrop.
     const trailerKey = selectTrailerKey(detail.data.videos?.results);
 
+    // Status chips (Watchlist / Watching / Watched), built once and rendered
+    // below in one of two wrappers: the original plain row at default font,
+    // or a horizontal ScrollView at large font (see the status-actions JSX).
+    // The style is a per-branch STANDALONE object, never statusChipScaled
+    // layered over statusChip — flex:1's implied flexBasis:0 cannot be
+    // overridden by a later flexBasis:'auto' (auto is Yoga's default
+    // sentinel), which is exactly the trap that once left scaled chips at
+    // fixed thirds and ellipsized the labels.
+    const statusChips = STATUSES.map((status) => {
+        const isActive = currentStatus === status;
+        return (
+            <Pressable
+                key={status}
+                onPress={() => setStatus(status)}
+                hitSlop={spacing.xs}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={STATUS_LABELS[status]}
+                style={({ pressed }) => [
+                    fontScaled ? styles.statusChipScaled : styles.statusChip,
+                    {
+                        // Borderless: soft plum wash fill when unselected,
+                        // solid accent when selected.
+                        backgroundColor: isActive
+                            ? palette.accent
+                            : palette.accentWash,
+                        opacity: pressed ? 0.6 : 1,
+                    },
+                ]}
+            >
+                <Text
+                    numberOfLines={1}
+                    style={[
+                        styles.statusChipText,
+                        {
+                            // Plum text on the wash; white on the selected
+                            // fill.
+                            color: isActive
+                                ? palette.textInverse
+                                : palette.accent,
+                        },
+                    ]}
+                >
+                    {STATUS_LABELS[status]}
+                </Text>
+            </Pressable>
+        );
+    });
+
     return (
         <View style={[styles.root, { backgroundColor: palette.bg }]}>
-            <ScrollView
+            <Reanimated.ScrollView
+                onScroll={chromeScrollHandler}
+                scrollEventThrottle={16}
                 contentContainerStyle={[
                     styles.scrollContent,
                     // Bottom clearance for the last element (the "More details
@@ -1342,48 +1439,26 @@ export default function TitleDetailScreen() {
                     seen what the title is (esp. when discovering via a rec).
                     Its own marginTop/Bottom set it apart as the interactive
                     row between the synopsis and the cast. */}
-                <View style={styles.statusChipRow}>
-                    {STATUSES.map((status) => {
-                        const isActive = currentStatus === status;
-                        return (
-                            <Pressable
-                                key={status}
-                                onPress={() => setStatus(status)}
-                                hitSlop={spacing.xs}
-                                accessibilityRole="button"
-                                accessibilityState={{ selected: isActive }}
-                                accessibilityLabel={STATUS_LABELS[status]}
-                                style={({ pressed }) => [
-                                    styles.statusChip,
-                                    {
-                                        // Borderless: soft plum wash fill
-                                        // when unselected, solid accent when
-                                        // selected.
-                                        backgroundColor: isActive
-                                            ? palette.accent
-                                            : palette.accentWash,
-                                        opacity: pressed ? 0.6 : 1,
-                                    },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        styles.statusChipText,
-                                        {
-                                            // Plum text on the wash; white
-                                            // on the selected fill.
-                                            color: isActive
-                                                ? palette.textInverse
-                                                : palette.accent,
-                                        },
-                                    ]}
-                                >
-                                    {STATUS_LABELS[status]}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
-                </View>
+                {fontScaled ? (
+                    // Large font: content-sized chips in a horizontal
+                    // scroll — full labels always; on a narrow device the
+                    // overflowing pill peeks past the edge as the scroll
+                    // affordance. Chips grow to fill the row when they fit
+                    // (contentContainer flexGrow), so a barely-scaled row
+                    // still reads as the full-width segmented control.
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.statusChipScroll}
+                        contentContainerStyle={styles.statusChipRowScaled}
+                    >
+                        {statusChips}
+                    </ScrollView>
+                ) : (
+                    // Default font: the original equal-thirds row, exactly
+                    // as it always was — no ScrollView.
+                    <View style={styles.statusChipRow}>{statusChips}</View>
+                )}
 
                 {/* Visibility — one quiet line in the same zone as the
                     status pills, directly beneath them: muted label with
@@ -1583,7 +1658,37 @@ export default function TitleDetailScreen() {
                     }
                     palette={palette}
                 />
-            </ScrollView>
+            </Reanimated.ScrollView>
+
+            {/* Large-font-only chrome scrim under the X (see the hooks
+                block above). Solid across the X's band, fading to nothing
+                over the spacing.xl tail below it. pointerEvents none:
+                purely visual, scrolling/taps pass through. */}
+            {fontScaled ? (
+                <Reanimated.View
+                    pointerEvents="none"
+                    style={[
+                        styles.chromeBar,
+                        { height: chromeBarHeight + spacing.xl },
+                        chromeBarStyle,
+                    ]}
+                >
+                    <LinearGradient
+                        colors={[
+                            palette.bg,
+                            palette.bg,
+                            palette.bgTransparent,
+                        ]}
+                        locations={[
+                            0,
+                            chromeBarHeight /
+                                (chromeBarHeight + spacing.xl),
+                            1,
+                        ]}
+                        style={StyleSheet.absoluteFill}
+                    />
+                </Reanimated.View>
+            ) : null}
 
             <CloseButton
                 top={closeButtonTop}
@@ -2857,12 +2962,44 @@ const styles = StyleSheet.create({
     // aligned to the Recommend button below), with the label centred.
     // Borderless — the fill alone defines the chip (soft plum wash
     // unselected / solid accent selected, applied inline per state).
+    // This is the DEFAULT-font style, byte-identical to the original;
+    // when the OS font scale exceeds 1 the chips use statusChipScaled
+    // INSTEAD (a standalone object — never layered over this one).
     statusChip: {
         flex: 1,
         alignItems: 'center',
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
         borderRadius: radius.full,
+    },
+    // Large-font chip (fontScale > 1 only) — STANDALONE, not layered over
+    // statusChip (see the statusChips comment for the flexBasis trap).
+    // No flex shorthand: flexBasis stays auto so the pill is sized by its
+    // label and can never squeeze or truncate it; flexGrow lets the three
+    // stretch to share the row when they fit inside the ScrollView
+    // viewport. Same padding/radius as the default chip.
+    statusChipScaled: {
+        flexGrow: 1,
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.full,
+    },
+    // Large-font wrapper pair: the horizontal ScrollView carries the row's
+    // vertical rhythm (matching statusChipRow's margins); its content
+    // container carries the layout. flexGrow 1 on the content makes it at
+    // least viewport-wide, so when the chips fit they spread full-width
+    // like the default row, and when they don't the row scrolls.
+    statusChipScroll: {
+        marginTop: spacing.lg,
+        marginBottom: 0,
+        flexGrow: 0,
+    },
+    statusChipRowScaled: {
+        flexGrow: 1,
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.base,
     },
     statusChipText: {
         // 14/Medium — same label treatment as the Library chips.
@@ -3184,14 +3321,24 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: spacing.sm,
     },
+    // Scroll-linked scrim behind the close X, rendered only at large font
+    // scales (height + animated opacity applied inline; the gradient fill
+    // is a child). Below the X's zIndex 10.
+    chromeBar: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 9,
+    },
     closeButton: {
         position: 'absolute',
         // Top-right per design — when a rec attribution banner is
         // shown at the top of the scroll, the avatar sits on the left
         // and the close X belongs on the opposite side.
         right: spacing.base,
-        width: 36,
-        height: 36,
+        width: CLOSE_BUTTON_SIZE,
+        height: CLOSE_BUTTON_SIZE,
         borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',

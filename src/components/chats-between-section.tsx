@@ -8,11 +8,11 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';
 
+import { Text } from '@/components/text';
 import { relativeTimestamp } from '@/components/thread/shared';
 import type { MediaType } from '@/lib/rating';
 import supabase from '@/lib/supabase';

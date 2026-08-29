@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 
+import { Text } from '@/components/text';
 import { WORDMARK } from '@/lib/brand';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,7 +16,6 @@ import {
     RefreshControl,
     ScrollView,
     StyleSheet,
-    Text,
     useColorScheme,
     View,
 } from 'react-native';

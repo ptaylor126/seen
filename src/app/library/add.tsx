@@ -11,8 +11,6 @@ import {
     Keyboard,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     useWindowDimensions,
     View,
@@ -20,6 +18,8 @@ import {
 import { useKeyboardState } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import supabase from '@/lib/supabase';
 import { fetchTitlesByItems } from '@/lib/titles';
 import { imageUrl, searchMulti, type TMDBMediaItem } from '@/lib/tmdb';

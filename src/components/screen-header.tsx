@@ -3,10 +3,11 @@ import {
     CaretLeft,
 } from 'phosphor-react-native';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { Pressable, StyleSheet, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import NotificationsIcon from '../../assets/images/icon-notifications.svg';
+import { Text } from '@/components/text';
 import { fontFamily, getPalette, radius, spacing, typography } from '@/theme/theme';
 
 interface ScreenHeaderProps {
@@ -151,7 +152,12 @@ const styles = StyleSheet.create({
         // border-box: height 60 − paddingVertical 12×2 = 36 content) makes
         // all four tabs a fixed 60px. The logo is capped at 36 (see
         // index.tsx headerLogo) so nothing exceeds the content region.
-        height: 36 + spacing.md * 2,
+        // minHeight, not height: at 1.0 font scale nothing exceeds 36 so
+        // the row is exactly 60 and the alignment above holds; at larger
+        // OS font scales (clamped app-wide at 1.3, see components/text)
+        // the display-size title outgrows 36 and the row must grow with
+        // it rather than clip the title.
+        minHeight: 36 + spacing.md * 2,
     },
     title: {
         flex: 1,
@@ -166,7 +172,9 @@ const styles = StyleSheet.create({
         top: -4,
         right: -6,
         minWidth: 16,
-        height: 16,
+        // min, not fixed: the count digit scales with OS font settings (to
+        // the app-wide 1.3 clamp) and must grow the circle, not clip.
+        minHeight: 16,
         borderRadius: radius.full,
         alignItems: 'center',
         justifyContent: 'center',

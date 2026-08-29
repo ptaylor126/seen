@@ -35,14 +35,14 @@ import {
     Alert,
     Pressable,
     StyleSheet,
-    Text,
-    TextInput,
     useColorScheme,
     View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/text';
+import { TextInput } from '@/components/text-input';
 import { useProfile } from '@/hooks/use-profile';
 import {
     signOut,

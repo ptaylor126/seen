@@ -18,12 +18,12 @@
 import {
     Pressable,
     StyleSheet,
-    Text,
     useColorScheme,
     type StyleProp,
     type ViewStyle,
 } from 'react-native';
 
+import { Text } from '@/components/text';
 import {
     chip as chipTokens,
     fontFamily,
