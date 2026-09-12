@@ -12,7 +12,11 @@
  *   - mediaFilter ('all' | 'movie' | 'tv', client-side)
  *   - sortBy (dateWatched | dateAdded | rating, client-side comparator
  *     with explicit NULLS-LAST per field — re-implements the SQL
- *     `ORDER BY … NULLS LAST` the loader used to use server-side)
+ *     `ORDER BY … NULLS LAST` the loader used to use server-side).
+ *     PERSISTED (AsyncStorage, seen.library.sort_by — see
+ *     lib/library-sort.ts) via the same module-singleton-store pattern
+ *     as the view-mode preference: one global value, hydrated once per
+ *     session, shared by every consumer of this hook.
  *   - genreFilter (number | null, client-side `.includes` on genreIds)
  *   - genreStripOpen (controls the genre chip strip visibility)
  *
@@ -41,17 +45,16 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { TMDB_GENRE_NAMES } from '@/lib/genres';
+import { useLibrarySortStore, type SortOption } from '@/lib/library-sort';
 import type { MediaType } from '@/lib/rating';
+
+// Re-exported from the persistence leaf (library-sort.ts) rather than
+// defined here, to avoid a circular import — this module's existing
+// consumers (library-filter-controls.tsx) are unaffected.
+export type { SortOption };
 
 export type ItemStatus = 'watchlist' | 'watching' | 'watched';
 export type MediaFilter = 'all' | 'movie' | 'tv';
-export type SortOption =
-    | 'dateWatched'
-    | 'dateAdded'
-    | 'rating'
-    | 'title'
-    | 'releaseNewest'
-    | 'releaseOldest';
 
 // Minimal row shape the hook needs. Screen-specific row types
 // (LibraryRow with recAttribution, ItemRow without) extend this via
@@ -227,9 +230,11 @@ export function useLibraryFilters<T extends FilterableLibraryRow>(
 ): UseLibraryFiltersResult<T> {
     const [localQuery, setLocalQuery] = useState('');
     const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
-    const [sortBy, setSortBy] = useState<SortOption>(
-        DEFAULT_SORT_BY_TAB.watchlist,
-    );
+    // Persisted (AsyncStorage, seen.library.sort_by) — see library-sort.ts.
+    // Same module-singleton-store shape as the view-mode preference: ONE
+    // global value shared by every useLibraryFilters consumer, hydrated
+    // once per session, write-through on change.
+    const { sortBy, setSortBy } = useLibrarySortStore();
     const [genreFilter, setGenreFilter] = useState<number | null>(null);
     const [genreStripOpen, setGenreStripOpen] = useState(false);
 
