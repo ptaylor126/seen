@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
     Star,
@@ -163,6 +164,7 @@ export function RatingSheet({
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
     const insets = useSafeAreaInsets();
+    const router = useRouter();
     // Animated keyboard height (negative: 0 → -keyboardHeight) + progress (0
     // closed → 1 open) drive the panel's bottom padding so it docks above the
     // keyboard once the note field is focused — same scaffold as DeclineSheet.
@@ -991,6 +993,40 @@ export function RatingSheet({
                                     disabled={busy}
                                 />
                             </View>
+                            {/* Quiet, always-present entry point to the full
+                                review editor (spoiler + visibility toggles,
+                                2000-char body) — a plain link, not a popup:
+                                nothing to dismiss, ignorable by anyone who
+                                only wants to rate. Only shown when there's a
+                                real title to route to. The rating itself is
+                                written on Done as usual; this is a pure
+                                navigation add-on with no effect on submit. */}
+                            {tmdbId !== null && mediaType !== null ? (
+                                <Pressable
+                                    onPress={() =>
+                                        router.push(
+                                            `/title/${mediaType}/${tmdbId}/review`,
+                                        )
+                                    }
+                                    disabled={busy}
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Write a review"
+                                    style={({ pressed }) => [
+                                        styles.writeReviewLink,
+                                        { opacity: pressed || busy ? 0.6 : 1 },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.accent },
+                                        ]}
+                                    >
+                                        Write a review
+                                    </Text>
+                                </Pressable>
+                            ) : null}
                             <Pressable
                                 onPress={handleSubmit}
                                 disabled={primaryDisabled}
@@ -1084,6 +1120,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        marginTop: spacing.md,
+    },
+    writeReviewLink: {
+        alignSelf: 'center',
         marginTop: spacing.md,
     },
     noteInput: {
