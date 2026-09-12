@@ -150,8 +150,8 @@ export interface SearchBarState {
     // section. Lazily loaded once per session via ensureFriendsLoaded.
     friends: FriendHit[] | null;
     ensureFriendsLoaded: () => void;
-    // Opens a friend's profile (dismisses the overlay first) — the
-    // friend-row sibling of openTitle.
+    // Opens a friend's profile (keyboard blurred, overlay and results kept
+    // for the return trip) — the friend-row sibling of openTitle.
     openFriend: (handle: string) => void;
 }
 
@@ -298,32 +298,45 @@ export function useSearchBar(): SearchBarState {
     // The single "open a title" navigation — the add path. Both a tapped
     // search result and a tapped discover tile route through this, so
     // tap-to-add is identical on both.
+    //
+    // Deliberately NOT dismiss(): the query, results, and open overlay are
+    // kept so closing the pushed page lands the user back ON the live
+    // results — adding several related titles (all the Harry Potters) is
+    // one tap per film instead of a retype per film. The tab screen owning
+    // this hook stays mounted under the fullScreenModal, so the state
+    // survives by construction. Blur alone drops the keyboard before the
+    // modal slides up and keeps it from re-popping on return. dismiss()
+    // remains the explicit Cancel / clear-X behaviour.
     const openTitle = useCallback(
         (media: 'movie' | 'tv', id: number) => {
-            dismiss();
+            inputRef.current?.blur();
             router.push({
                 pathname: '/title/[mediaType]/[tmdbId]',
                 params: { mediaType: media, tmdbId: String(id) },
             });
         },
-        [router, dismiss],
+        [router],
     );
 
+    // Same keep-the-results contract as openTitle.
     const openFriend = useCallback(
         (handle: string) => {
-            dismiss();
+            inputRef.current?.blur();
             router.push({
                 pathname: '/friends/[handle]',
                 params: { handle },
             });
         },
-        [router, dismiss],
+        [router],
     );
 
     const handleResultTap = useCallback(
         (item: SearchableItem) => {
             if (item.media_type === 'person') {
-                dismiss();
+                // Same keep-the-results contract as openTitle/openFriend —
+                // blur only, so returning from the actor's page lands back
+                // on the live search results.
+                inputRef.current?.blur();
                 router.push({
                     pathname: '/person/[personId]',
                     params: { personId: String(item.id) },
@@ -332,7 +345,7 @@ export function useSearchBar(): SearchBarState {
             }
             openTitle(item.media_type, item.id);
         },
-        [router, dismiss, openTitle],
+        [router, openTitle],
     );
 
     // Lazily fetch straight trending + popular (movie + tv, page 1) for the
