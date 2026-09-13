@@ -61,7 +61,8 @@ export default function ReviewScreen() {
     // that flipped at keyboardDidShow and overshot mid-animation. paddingBottom
     // is now the constant internal content room; the clearance is a cheap
     // transform. See recommend.tsx for the full rationale.
-    const keyboardProgress = useReanimatedKeyboardAnimation().progress;
+    const { height: keyboardHeight, progress: keyboardProgress } =
+        useReanimatedKeyboardAnimation();
     const barClearanceStyle = useAnimatedStyle(() => ({
         transform: [
             {
@@ -72,6 +73,24 @@ export default function ReviewScreen() {
                 ),
             },
         ],
+    }));
+    // Shrinks bodyBox's actual laid-out height as the keyboard rises — the
+    // shrink bodyBox's own style comment already assumed but nothing ever
+    // implemented. marginBottom on a flex:1 child is subtracted from its
+    // allocated share of the column (Yoga), so growing it genuinely makes
+    // the box (and the multiline TextInput filling it) shorter, rather than
+    // padding the inside of a box that stays the same outer height. A truly
+    // smaller box lets the TextInput's own native caret-follow scrolling
+    // trigger correctly instead of writing blind behind the keyboard.
+    // keyboardHeight.value is 0 at rest and goes NEGATIVE as the keyboard
+    // opens (same convention as RatingSheet's paddingBottom), so
+    // -keyboardHeight.value is the keyboard's height, added on top of the
+    // resting spacing.md margin. Reads the SAME keyboard values already
+    // driving barClearanceStyle below, but writes only to bodyBox — it
+    // never touches the bottom bar's KeyboardStickyView, so the two can't
+    // fight; they just happen to move in step because they share a cause.
+    const bodyBoxKeyboardStyle = useAnimatedStyle(() => ({
+        marginBottom: -keyboardHeight.value + spacing.md,
     }));
     const mediaType: MediaType | null =
         params.mediaType === 'movie' || params.mediaType === 'tv'
@@ -371,7 +390,7 @@ export default function ReviewScreen() {
                             </Text>
                         </View>
                     ) : (
-                        <View
+                        <Animated.View
                             style={[
                                 styles.bodyBox,
                                 styles.flex,
@@ -379,6 +398,7 @@ export default function ReviewScreen() {
                                     backgroundColor: palette.surface,
                                     borderColor: palette.border,
                                 },
+                                bodyBoxKeyboardStyle,
                             ]}
                         >
                             <TextInput
@@ -398,7 +418,7 @@ export default function ReviewScreen() {
                                     { color: palette.text },
                                 ]}
                             />
-                        </View>
+                        </Animated.View>
                     )}
                 </Pressable>
 
@@ -570,16 +590,19 @@ const styles = StyleSheet.create({
     },
     bodyBox: {
         marginHorizontal: spacing.lg,
-        marginBottom: spacing.md,
+        // marginBottom is NOT set here — it's animated (bodyBoxKeyboardStyle,
+        // resting at spacing.md, growing with the keyboard) so the box
+        // genuinely shrinks as the keyboard rises. See that style's comment
+        // for why margin (not padding) is what actually shrinks the box.
         borderRadius: radius.sm,
         borderWidth: 1,
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm,
         // No minHeight — the inline flex:1 in render lets the box fill
         // available space when the keyboard is closed and shrink when
-        // it rises, so the bottom bar always stays above the keyboard.
-        // TextInput multiline scrolls internally for long content, so
-        // we don't need an outer ScrollView fighting for height.
+        // it rises (via bodyBoxKeyboardStyle above). TextInput multiline
+        // scrolls internally for long content, so we don't need an outer
+        // ScrollView fighting for height.
     },
     bodyInput: {
         // Matches the recommend modal's noteInput maxHeight pattern.
