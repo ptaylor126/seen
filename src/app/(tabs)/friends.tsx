@@ -427,7 +427,7 @@ export default function FriendsScreen() {
                                 { color: palette.text },
                             ]}
                         >
-                            Seen is better with friends
+                            Seen works best with a friend
                         </Text>
                         <Text
                             style={[
@@ -436,14 +436,14 @@ export default function FriendsScreen() {
                                 { color: palette.textMuted },
                             ]}
                         >
-                            Invite yours to get started.
+                            Invite the one whose taste you trust.
                         </Text>
                     </View>
                     <View style={styles.emptyButtons}>
                         <Pressable
                             onPress={() => void shareInvite()}
                             accessibilityRole="button"
-                            accessibilityLabel="Invite friends"
+                            accessibilityLabel="Invite a friend"
                             style={({ pressed }) => [
                                 styles.primaryButton,
                                 {
@@ -458,7 +458,7 @@ export default function FriendsScreen() {
                                     { color: palette.textInverse },
                                 ]}
                             >
-                                Invite friends
+                                Invite a friend
                             </Text>
                         </Pressable>
                         <Pressable
@@ -790,7 +790,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
     emptyButtons: {
-        // Primary (Invite friends) on top, secondary (Add by handle) below —
+        // Primary (Invite a friend) on top, secondary (Add by handle) below —
         // both full-width within the centered empty state, standard gap.
         alignSelf: 'stretch',
         gap: spacing.sm,

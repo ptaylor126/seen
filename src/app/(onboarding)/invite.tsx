@@ -51,16 +51,19 @@ export default function InviteScreen() {
     async function handleInvite() {
         // shareInvite shares the user's TOKENIZED seenrecs.com/i/ link (the
         // landing page + claim auto-friend both sides) with this screen's
-        // handle-carrying pitch, and returns true only on an explicit share.
-        // Complete onboarding ONLY on that clear share: Share can't reliably
-        // tell "sent" from "cancelled" on iOS, so a dismissal leaves the
-        // user here to retry or tap "Skip for now" deliberately. The invite
-        // moment is high-value; better to occasionally keep someone here
-        // than to boot them out on an accidental cancel.
-        const shared = await shareInvite(pitch);
-        if (shared) {
-            await finish();
-        }
+        // handle-carrying pitch. Onboarding completes unconditionally once
+        // the share sheet has been offered, REGARDLESS of whether the OS
+        // reports it as sent, cancelled, or dismissed — Share can't
+        // reliably tell "sent" from "cancelled" on iOS, so gating on that
+        // signal made inviting strictly HARDER than tapping "Skip for now"
+        // (which always advances): backing out of the sheet dead-ended the
+        // user on this screen instead. The invite moment is high-value
+        // precisely because it's the LAST screen before the app opens —
+        // trapping the user here on an ambiguous or failed share actively
+        // works against that, since Friends/Home keep offering the same
+        // invite after onboarding (see friends.tsx, index.tsx, add.tsx).
+        await shareInvite(pitch);
+        await finish();
     }
 
     async function handleSkip() {
@@ -87,8 +90,29 @@ export default function InviteScreen() {
 
             <View style={styles.body}>
                 <Text style={[typography.display, { color: palette.text }]}>
-                    Invite the friends you share recs with
+                    Seen is better with the people you talk about films and
+                    tv with
                 </Text>
+                {/* The why, beneath the ask — three tight, unhyped lines,
+                    no exclamation marks, matching BRANDING.md's understated
+                    voice. This is onboarding, not a pitch: three lines max. */}
+                <View style={styles.benefits}>
+                    <Text
+                        style={[typography.body, { color: palette.textMuted }]}
+                    >
+                        See what they're watching
+                    </Text>
+                    <Text
+                        style={[typography.body, { color: palette.textMuted }]}
+                    >
+                        Swap recs, with a note on why
+                    </Text>
+                    <Text
+                        style={[typography.body, { color: palette.textMuted }]}
+                    >
+                        Read their honest ratings
+                    </Text>
+                </View>
             </View>
 
             <View style={styles.footer}>
@@ -161,6 +185,10 @@ const styles = StyleSheet.create({
     // heading is the block's only child now); the footer is pushed to the
     // bottom by body's flex: 1.
     body: { flex: 1, justifyContent: 'center' },
+    benefits: {
+        marginTop: spacing.lg,
+        gap: spacing.xs,
+    },
     footer: { gap: spacing.sm, paddingBottom: spacing.md },
     primaryButton: {
         paddingVertical: button.paddingVertical,

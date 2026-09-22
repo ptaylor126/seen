@@ -343,7 +343,7 @@ export default function AddFriendScreen() {
                             { color: palette.textMuted },
                         ]}
                     >
-                        Know someone who&apos;s not on Seen yet?
+                        The friend whose taste you trust — not on Seen yet?
                     </Text>
                     <Pressable
                         onPress={handleInvite}
@@ -361,7 +361,7 @@ export default function AddFriendScreen() {
                                 { color: palette.accent },
                             ]}
                         >
-                            Invite friends
+                            Invite a friend
                         </Text>
                     </Pressable>
 

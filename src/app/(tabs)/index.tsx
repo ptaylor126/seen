@@ -1158,7 +1158,7 @@ export default function HomeScreen() {
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
-                            When friends recommend something, it shows up here.{' '}
+                            When your friend recommends something, it&apos;ll show up here.{' '}
                             <Text
                                 style={[typography.body, { color: palette.accent }]}
                                 onPress={() =>
@@ -1166,7 +1166,7 @@ export default function HomeScreen() {
                                 }
                                 suppressHighlighting
                             >
-                                Add friends
+                                Invite a friend
                             </Text>
                         </Text>
                     </View>
@@ -1329,7 +1329,7 @@ export default function HomeScreen() {
                 ) : (
                     <View style={styles.inlineEmpty}>
                         <Text style={[typography.body, { color: palette.textMuted }]}>
-                            See what your friends are watching.{'\n'}
+                            See what your friend&apos;s watching.{'\n'}
                             <Text
                                 style={[typography.body, { color: palette.accent }]}
                                 onPress={() =>
@@ -1337,7 +1337,7 @@ export default function HomeScreen() {
                                 }
                                 suppressHighlighting
                             >
-                                Add friends
+                                Invite a friend
                             </Text>
                         </Text>
                     </View>
@@ -1552,7 +1552,7 @@ export default function HomeScreen() {
     // socialEmpty). It replaces THREE separate muted blocks: the old
     // globalEmpty card, plus the recs-for-you and "Friends are watching"
     // inline empties — which in the has-items case stacked two nearly
-    // identical paragraphs, both ending in an "Add friends" link to the
+    // identical paragraphs, both ending in an "Invite a friend" link to the
     // same place, separated by a section header.
     //
     // Leads with RECOMMEND, the core action home never prompted before:
@@ -1612,7 +1612,7 @@ export default function HomeScreen() {
                         <Text
                             style={[typography.bodyEmphasis, { color: palette.accent }]}
                         >
-                            Add friends
+                            Invite a friend
                         </Text>
                     </Pressable>
                 </View>
@@ -2020,7 +2020,7 @@ const styles = StyleSheet.create({
         borderRadius: radius.full,
     },
     // Per-section empty states — simple body copy with an inline
-    // accent-colored CTA word (e.g. "Add friends", "Search to add").
+    // accent-colored CTA word (e.g. "Invite a friend", "Search to add").
     inlineEmpty: {
         marginHorizontal: spacing.base,
         padding: spacing.base,
