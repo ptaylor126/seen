@@ -645,6 +645,14 @@ export function RatingSheet({
         recFork && selectedSenderIds.size > 0 && commentHasContent;
     // Did the privacy toggle change the item's stored visibility?
     const visibilityChanged = hiddenFromFriends !== initialPrivate;
+    // Quiet footer links — see the JSX comment above their render for the
+    // full rationale (persistent conditional links, not popups).
+    const canWriteReview = tmdbId !== null && mediaType !== null;
+    // 8+ on the 1-10 half-star scale = 8 (4★) and up. Matches
+    // SUGGEST_MIN_RATING (library/add.tsx) — the same "recommend-worthy"
+    // bar the app already uses for library recommend suggestions, not a
+    // new number.
+    const canRecommend = canWriteReview && selected !== null && selected >= 8;
     function toggleSender(id: string) {
         setSelectedSenderIds((prev) => {
             const next = new Set(prev);
@@ -993,39 +1001,128 @@ export function RatingSheet({
                                     disabled={busy}
                                 />
                             </View>
-                            {/* Quiet, always-present entry point to the full
-                                review editor (spoiler + visibility toggles,
-                                2000-char body) — a plain link, not a popup:
-                                nothing to dismiss, ignorable by anyone who
-                                only wants to rate. Only shown when there's a
-                                real title to route to. The rating itself is
-                                written on Done as usual; this is a pure
-                                navigation add-on with no effect on submit. */}
-                            {tmdbId !== null && mediaType !== null ? (
-                                <Pressable
-                                    onPress={() =>
-                                        router.push(
-                                            `/title/${mediaType}/${tmdbId}/review`,
-                                        )
-                                    }
-                                    disabled={busy}
-                                    hitSlop={spacing.sm}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="Write a review"
-                                    style={({ pressed }) => [
-                                        styles.writeReviewLink,
-                                        { opacity: pressed || busy ? 0.6 : 1 },
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            typography.body,
-                                            { color: palette.accent },
+                            {/* Quiet, always-present entry points — plain
+                                links, not popups: nothing to dismiss, no
+                                timer, no cooldown, ignorable by anyone who
+                                only wants to rate. The conditional render IS
+                                the rate-limit (a high-rating streak just
+                                shows the same quiet link/row every time, not
+                                a stacking series of interruptions). The
+                                rating itself is written on Done as usual;
+                                these are pure navigation add-ons with no
+                                effect on submit.
+                                — Write a review: shown whenever there's a
+                                  real title to route to.
+                                — Recommend to a friend: additionally gated
+                                  on the rating being 8+ (4★ and up — the same
+                                  SUGGEST_MIN_RATING bar library/add.tsx
+                                  already uses for recommend suggestions).
+                                  Routes to the
+                                  existing recommend screen, which already
+                                  pre-loads the title from the route params
+                                  and already handles recommending to someone
+                                  not yet on Seen via a title-carrying invite
+                                  link that auto-friends on claim — nothing
+                                  new there, this only surfaces it.
+                                When both qualify they share ONE quiet row
+                                (two independently-tappable accent labels,
+                                middle-dot separated) instead of stacking two
+                                separate blocks. */}
+                            {canWriteReview ? (
+                                canRecommend ? (
+                                    <View style={styles.linkRow}>
+                                        <Pressable
+                                            onPress={() =>
+                                                router.push(
+                                                    `/title/${mediaType}/${tmdbId}/review`,
+                                                )
+                                            }
+                                            disabled={busy}
+                                            hitSlop={spacing.sm}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Write a review"
+                                            style={({ pressed }) => [
+                                                {
+                                                    opacity:
+                                                        pressed || busy
+                                                            ? 0.6
+                                                            : 1,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    typography.body,
+                                                    { color: palette.accent },
+                                                ]}
+                                            >
+                                                Write a review
+                                            </Text>
+                                        </Pressable>
+                                        <Text
+                                            style={[
+                                                typography.body,
+                                                { color: palette.textMuted },
+                                            ]}
+                                        >
+                                            {' '}
+                                            ·{' '}
+                                        </Text>
+                                        <Pressable
+                                            onPress={() =>
+                                                router.push(
+                                                    `/title/${mediaType}/${tmdbId}/recommend`,
+                                                )
+                                            }
+                                            disabled={busy}
+                                            hitSlop={spacing.sm}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Recommend to a friend"
+                                            style={({ pressed }) => [
+                                                {
+                                                    opacity:
+                                                        pressed || busy
+                                                            ? 0.6
+                                                            : 1,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    typography.body,
+                                                    { color: palette.accent },
+                                                ]}
+                                            >
+                                                Recommend to a friend
+                                            </Text>
+                                        </Pressable>
+                                    </View>
+                                ) : (
+                                    <Pressable
+                                        onPress={() =>
+                                            router.push(
+                                                `/title/${mediaType}/${tmdbId}/review`,
+                                            )
+                                        }
+                                        disabled={busy}
+                                        hitSlop={spacing.sm}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Write a review"
+                                        style={({ pressed }) => [
+                                            styles.writeReviewLink,
+                                            { opacity: pressed || busy ? 0.6 : 1 },
                                         ]}
                                     >
-                                        Write a review
-                                    </Text>
-                                </Pressable>
+                                        <Text
+                                            style={[
+                                                typography.body,
+                                                { color: palette.accent },
+                                            ]}
+                                        >
+                                            Write a review
+                                        </Text>
+                                    </Pressable>
+                                )
                             ) : null}
                             <Pressable
                                 onPress={handleSubmit}
@@ -1123,6 +1220,15 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
     },
     writeReviewLink: {
+        alignSelf: 'center',
+        marginTop: spacing.md,
+    },
+    // Combined row when both the review and recommend links qualify —
+    // two Pressables + a middle-dot separator, laid out horizontally
+    // instead of stacking as two separate blocks.
+    linkRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
         alignSelf: 'center',
         marginTop: spacing.md,
     },
