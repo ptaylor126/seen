@@ -20,6 +20,7 @@ import {
     View,
 } from 'react-native';
 import {
+    KeyboardAvoidingView,
     KeyboardStickyView,
     useKeyboardState,
     useReanimatedKeyboardAnimation,
@@ -746,6 +747,24 @@ export default function RecommendScreen() {
     // Title + poster + the "what to recommend" scope strip. Collapses while
     // the friend search is focused so the list owns the space above the
     // keyboard. Shared by the FlatList header and the zero-friends branch.
+    // "2026 · TV · Season 2". All three parts come from state the screen
+    // already holds — titleStamp.releaseDate (set alongside titleCtx at load,
+    // from release_date for film / first_air_date for TV), the mediaType
+    // route param, and the live `season` selection — so no extra read. Parts
+    // drop out cleanly when absent: a title with no release date degrades to
+    // "Film" rather than leaving a stray separator. The season part appears
+    // only for a specific season, never for whole-show (season === null),
+    // and re-renders as the chips change because it reads `season` directly.
+    const titleMetaLine = [
+        titleStamp?.releaseDate
+            ? titleStamp.releaseDate.slice(0, 4)
+            : null,
+        mediaType === 'tv' ? 'TV' : mediaType === 'movie' ? 'Film' : null,
+        mediaType === 'tv' && season !== null ? seasonLabel(season) : null,
+    ]
+        .filter(Boolean)
+        .join(' · ');
+
     const titleContextNode =
         titleCtx && !localFocused ? (
             <View style={styles.titleContextBlock}>
@@ -765,16 +784,31 @@ export default function RecommendScreen() {
                             ]}
                         />
                     )}
-                    <Text
-                        style={[
-                            typography.bodyEmphasis,
-                            styles.contextTitle,
-                            { color: palette.text },
-                        ]}
-                        numberOfLines={2}
-                    >
-                        {titleCtx.title}
-                    </Text>
+                    {/* Title + meta as ONE group beside the poster, so the
+                        two lines stay together rather than the meta line
+                        being a third sibling of the row. */}
+                    <View style={styles.contextTextGroup}>
+                        <Text
+                            style={[
+                                typography.bodyEmphasis,
+                                { color: palette.text },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            {titleCtx.title}
+                        </Text>
+                        {titleMetaLine.length > 0 ? (
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {titleMetaLine}
+                            </Text>
+                        ) : null}
+                    </View>
                 </View>
 
                 {/* Scope picker — TV only, ≥2 selectable seasons. Re-placed
@@ -989,7 +1023,13 @@ export default function RecommendScreen() {
                     while typing the note. It hugs its content at rest
                     ("Send") and the LinearTransition wrapper animates its
                     width as the label grows to "Send to N" (replaces the old
-                    minWidth:104 that killed the pop by padding "Send" out). */}
+                    minWidth:104 that killed the pop by padding "Send" out).
+                    HIDDEN with no friends: canSend requires selectedCount > 0,
+                    which is unreachable there, so it could only ever render as
+                    a dead grey "Send" directly above the live primary below.
+                    Hiding it also frees the screen's single filled-accent slot
+                    for that primary (BRANDING: one filled accent per screen). */}
+                {friends.length > 0 ? (
                 <Animated.View layout={LinearTransition.duration(180)}>
                 <Pressable
                     onPress={handleSend}
@@ -1032,6 +1072,7 @@ export default function RecommendScreen() {
                     )}
                 </Pressable>
                 </Animated.View>
+                ) : null}
             </View>
 
             {/* No KeyboardAvoidingView on this column — Send is in the
@@ -1049,64 +1090,98 @@ export default function RecommendScreen() {
                         </Text>
                     </View>
                 ) : friends.length === 0 ? (
-                    // Zero friends — the invite IS the primary path, so it
-                    // keeps its full-size treatment. Scrolls (no list to back).
+                    // Zero friends — the common case, and the whole invite
+                    // loop. The share IS the primary path here, so it gets the
+                    // screen's one filled accent and the note field the
+                    // with-friends bar used to keep from it: handleInviteSend
+                    // already passes `note` to createPendingRec, but the only
+                    // UI that could set it was the pinned bar, gated on
+                    // friends.length > 0 — so a note-less pending rec was the
+                    // only thing this state could ever send.
+                    //
+                    // KeyboardAvoidingView (not the with-friends
+                    // KeyboardStickyView) because the two props that made the
+                    // sticky bar work here are both gone: Send has left the
+                    // header and the note is inline, so there'd be nothing
+                    // above the keyboard to reach. Same
+                    // behavior="padding" shape as (auth)/email.tsx and
+                    // profile/edit.tsx; the ScrollView absorbs any overflow.
+                    <KeyboardAvoidingView
+                        style={styles.flex}
+                        behavior="padding"
+                    >
                     <ScrollView
                         style={styles.flex}
-                        contentContainerStyle={styles.scrollContent}
+                        contentContainerStyle={styles.inviteScrollContent}
                         keyboardShouldPersistTaps="handled"
                     >
                         {titleContextNode}
-                        <View style={styles.statusBlock}>
-                            <Text
-                                style={[
-                                    typography.body,
-                                    { color: palette.textMuted },
-                                ]}
-                                numberOfLines={3}
-                            >
-                                You don&apos;t have any friends yet — but you
-                                can still send this to someone.
-                            </Text>
-                        </View>
-                        <View style={styles.inviteGroup}>
-                            <Text
-                                style={[
-                                    typography.caption,
-                                    styles.inviteCaption,
-                                    { color: palette.textMuted },
-                                ]}
-                            >
-                                Know someone who&apos;s not on Seen yet?
-                            </Text>
+                        {/* Bound to the SAME `note` state the with-friends
+                            bar uses, so handleInviteSend needs no change. No
+                            visible counter: 500 is far above what anyone
+                            writes here, and a counter on an optional field
+                            reads as pressure. */}
+                        <TextInput
+                            value={note}
+                            onChangeText={(v) =>
+                                setNote(v.slice(0, NOTE_MAX_LENGTH))
+                            }
+                            placeholder="Why are you recommending this?"
+                            placeholderTextColor={palette.textMuted}
+                            multiline
+                            maxLength={NOTE_MAX_LENGTH}
+                            editable={!inviteBusy}
+                            style={[
+                                styles.inviteNoteInput,
+                                typography.body,
+                                {
+                                    color: palette.text,
+                                    backgroundColor: palette.surface,
+                                },
+                            ]}
+                        />
+                        <View style={styles.inviteSendGroup}>
                             <Pressable
                                 onPress={() => void handleInviteSend()}
                                 disabled={inviteBusy}
                                 accessibilityRole="button"
-                                accessibilityLabel="Recommend to someone not on Seen"
+                                accessibilityLabel="Send to a friend"
                                 style={({ pressed }) => [
-                                    styles.inviteButton,
+                                    styles.inviteSendButton,
                                     {
-                                        borderColor: palette.accent,
+                                        backgroundColor: palette.accent,
                                         opacity: pressed || inviteBusy ? 0.6 : 1,
                                     },
                                 ]}
                             >
                                 {inviteBusy ? (
-                                    <ActivityIndicator color={palette.accent} />
+                                    <ActivityIndicator
+                                        color={palette.textInverse}
+                                    />
                                 ) : (
                                     <Text
                                         style={[
                                             typography.bodyEmphasis,
-                                            { color: palette.accent },
+                                            { color: palette.textInverse },
                                         ]}
                                     >
-                                        Send them this rec
+                                        Send to a friend
                                     </Text>
                                 )}
                             </Pressable>
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    styles.inviteSendCaption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                They&apos;ll get a link. When they join Seen,
+                                you&apos;re connected and this rec is waiting.
+                            </Text>
                         </View>
                     </ScrollView>
+                    </KeyboardAvoidingView>
                 ) : (
                     <FlatList
                         style={styles.flex}
@@ -1363,8 +1438,12 @@ const styles = StyleSheet.create({
         height: POSTER_H,
         borderRadius: radius.sm,
     },
-    contextTitle: {
+    // Title + meta line as one block beside the poster. flex:1 moved here
+    // from the title Text so the GROUP takes the remaining row width and
+    // both lines wrap against the same edge.
+    contextTextGroup: {
         flex: 1,
+        gap: spacing.xxs,
     },
     statusBlock: {
         alignItems: 'center',
@@ -1391,21 +1470,39 @@ const styles = StyleSheet.create({
     // (mirrors friends/add.tsx's inviteGroup, on the shared button
     // geometry). With no list to lead, the invite IS the primary path
     // here, so it keeps the full-size treatment.
-    inviteGroup: {
+    // No-friends state. One lg (24) rhythm between the three groups (title
+    // block, note, send group) replaces the old statusBlock's 48pt
+    // paddingVertical plus a 32pt marginTop — ~128pt of padding around a
+    // single line of text, which is what read as a void.
+    inviteScrollContent: {
+        paddingBottom: spacing.xl,
+        gap: spacing.lg,
+    },
+    inviteNoteInput: {
+        marginHorizontal: spacing.lg,
+        minHeight: 96,
+        maxHeight: 160,
+        borderRadius: radius.md,
+        padding: spacing.md,
+        textAlignVertical: 'top',
+    },
+    inviteSendGroup: {
+        // sm (8) between the button and its explanatory caption: the caption
+        // belongs TO the button, so it sits tighter than the lg between
+        // groups.
         gap: spacing.sm,
-        marginTop: spacing.xl,
-        // On the 24 spine — the button is no longer full-bleed.
         paddingHorizontal: spacing.lg,
     },
-    inviteCaption: {
-        textAlign: 'center',
-    },
-    inviteButton: {
+    // The screen's one filled accent — the header Send is hidden in this
+    // state, so nothing competes with it.
+    inviteSendButton: {
         paddingVertical: button.paddingVertical,
         borderRadius: button.borderRadius,
-        borderWidth: 1.5,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    inviteSendCaption: {
+        textAlign: 'center',
     },
     sectionLabel: {
         // Positioning only — the typography (overline) is shared with the
