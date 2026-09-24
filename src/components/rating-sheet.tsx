@@ -1,20 +1,28 @@
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
+    FilmStrip,
+    PaperPlaneTilt,
     Star,
     StarHalf,
+    X,
 } from 'phosphor-react-native';
 import { MotiView } from 'moti';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
     Alert,
-    Dimensions,
     Modal,
     PanResponder,
     Pressable,
+    ScrollView,
     StyleSheet,
     useColorScheme,
+    useWindowDimensions,
     View,
+    type StyleProp,
+    type ViewStyle,
 } from 'react-native';
 import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, {
@@ -24,8 +32,13 @@ import Reanimated, {
     useAnimatedStyle,
     useSharedValue,
     withTiming,
+    type SharedValue,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+    initialWindowMetrics,
+    SafeAreaProvider,
+    useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { Text } from '@/components/text';
@@ -37,9 +50,13 @@ import { applyWatchedRating, ratingGlyphs, type MediaType } from '@/lib/rating';
 import { getReceivedRecsForTitle, type ReceivedRec } from '@/lib/recs';
 import { maybeRequestReviewAfterRecRating } from '@/lib/review';
 import supabase from '@/lib/supabase';
+import { fetchTitlesByItems } from '@/lib/titles';
+import { imageUrl } from '@/lib/tmdb';
 import {
     button,
     getPalette,
+    onImage,
+    posterFrame,
     radius,
     spacing,
     typography,
@@ -58,7 +75,7 @@ interface RatingSheetProps {
     tmdbId: number | null;
     mediaType: MediaType | null;
     // Called with the chosen 1-10 rating when the user taps Done, or
-    // null when they dismissed without committing (Skip, backdrop tap,
+    // null when they dismissed without committing (the close X or
     // hardware back).
     onSubmit: (rating: number | null) => void;
 }
@@ -74,20 +91,126 @@ const HALF_COUNT = STAR_COUNT * 2; // = 10
 // Below: a tap, the Pressable handles it. Above: a drag.
 const DRAG_THRESHOLD_PX = 5;
 
-// Bottom-sheet open/close motion: backdrop fades (stationary) while the panel
-// slides up — one shared `progress` value — matching DeclineSheet /
-// RequestRecSheet. Keyboard-aware: the panel rides above the keyboard when the
-// note field (added later) is focused, so the sheet is built on the same
-// react-native-keyboard-controller scaffold rather than Modal's slide.
-const AnimatedPressable = Reanimated.createAnimatedComponent(Pressable);
+// Open/close motion: the whole screen CROSS-FADES on one shared `progress`
+// value — no slide. Opened from the title page (whose hero is the same
+// backdrop), a fade reads as that hero turning into the rating screen;
+// a slide-up read as a second surface arriving over a duplicate image.
+// Keyboard-aware: the control column's bottom padding rides the keyboard so
+// the controls lift above it, on the same react-native-keyboard-controller
+// scaffold as before.
 const OPEN_MS = 240;
 const CLOSE_MS = 180;
 // Max time to wait for the received-recs lookup before opening anyway. Fetch-
-// before-open: the sheet slides up already knowing rec vs no-rec at its true
-// final height, so nothing settles after the slide. Past this cap (slow fetch)
+// before-open: the screen fades in already knowing rec vs no-rec at its true
+// final layout, so nothing settles after the fade. Past this cap (slow fetch)
 // it opens in the no-rec layout and the rec section appears when the fetch
 // lands — a rare fallback.
 const OPEN_MAX_WAIT_MS = 150;
+
+// ─── Backdrop treatment ────────────────────────────────────────────────
+// Three tuning values, deliberately named and grouped: this is the balance
+// between "how much image you see" and "can you read the controls over it",
+// and it's the part most likely to want an on-device nudge.
+//
+// IMAGE_DIM       a flat wash of palette.bg over the WHOLE image, so even
+//                 the clear top of the frame is knocked back from a raw
+//                 photo — stops a bright backdrop fighting the close X.
+// GRADIENT_START  where the vertical ramp begins (fraction of screen
+//                 height). Above this the image carries only IMAGE_DIM.
+// GRADIENT_SOLID  where the ramp reaches solid palette.bg. Below this the
+//                 controls sit on flat ground.
+// The ramp itself is the bgTransparent → bg PURE-ALPHA pair; a
+// 'transparent' → bg ramp greys the midpoint (same seam lesson as the
+// title/rec heroes).
+const IMAGE_DIM = 0.2;
+const GRADIENT_START = 0.1;
+const GRADIENT_SOLID = 0.58;
+// Backdrop blur. The image is atmosphere, not subject — the sharp POSTER
+// below carries the title's identity — so blurring it lets the controls sit
+// on it without fighting detail, and lets IMAGE_DIM come down (0.28 → 0.2)
+// because there's no fine detail left to compete with text. Blurring also
+// means the source can drop a rung: w780 upscaled and blurred is
+// indistinguishable from w1280 blurred, at ~40% of the bytes.
+const BACKDROP_BLUR = 25;
+// Poster — the hero. Sharp (never blurred): it's the one crisp anchor
+// identifying what's being rated. 2:3, sized to whatever vertical room is
+// left after the rest of the no-rec layout, so that mode never scrolls.
+// See posterWidthFor().
+const POSTER_MAX_W = 150;
+// Floor, not the usual size: the budget below normally yields more. It only
+// binds on a very short screen, where a floor ABOVE the computed fit would
+// override the calculation and reintroduce the scroll it exists to prevent.
+const POSTER_MIN_W = 84;
+const POSTER_ASPECT = 1.5; // height / width, i.e. 2:3
+// Close button — matches the title page's (36pt circle, onImage.chip fill,
+// inset + base from the top) so the chrome is identical between the two
+// screens. Also the height the control column reserves at the top so a
+// scrolling layout never runs under it.
+const CLOSE_BUTTON_SIZE = 36;
+// "Loved it? Send it to a friend" — fades rather than mounts as the rating
+// crosses 4 stars, so the line's height is reserved at ALL ratings and
+// nothing below it moves when you drag across the threshold.
+const RECOMMEND_FADE_MS = 200;
+// Everything in the no-rec scroll content EXCEPT the poster: the content
+// container's top padding (24), the identity group's poster→title gap (12)
+// and title block (headingDisplay 28 + xs 4 + caption 18), the lg gap
+// between the two groups (24), and the action group (question 32 + md 12 +
+// stars row 60 + md 12 + recommend line 22 + md 12 + toggle row 28). Kept
+// as a named total because it's the input to the poster sizing.
+//
+// Budgets the title AND the question at ONE line each. Either wrapping to
+// two adds its line height (28 / 32) and can tip a small screen into a
+// short scroll. Budgeting two lines instead would shrink the poster for
+// everyone to serve the rarer case.
+const NO_REC_CONTENT_H =
+    24 + (12 + 28 + 4 + 18) + 24 + (32 + 12 + 60 + 12 + 22 + 12 + 28);
+// The pinned bottom stack: lg padding + the "Write a review" link (body 22)
+// + lg gap + Done 54. Skip and the outlined Recommend button are gone —
+// closing is the top-left X, recommending moved under the stars.
+const BOTTOM_STACK_H = 24 + 22 + 24 + 54;
+// Slack so rounding and font-metric variance can't tip no-rec into a 1pt
+// scroll.
+const POSTER_FIT_BUFFER = 8;
+
+// Largest 2:3 poster that still lets no-rec mode fit without scrolling on
+// this screen, clamped either side. Needs the REAL insets, so it's called
+// from ContentColumn (inside the modal's SafeAreaProvider) — see there.
+// Takes the ALREADY-COMPUTED top inset rather than raw insets.top, so this
+// and the control column's paddingTop can't drift apart — they have to
+// agree or the budget is sizing against a different box than the one the
+// content lands in.
+function posterWidthFor(
+    windowHeight: number,
+    contentTopInset: number,
+    insetBottom: number,
+): number {
+    const available =
+        windowHeight -
+        contentTopInset -
+        (spacing.lg + insetBottom) -
+        BOTTOM_STACK_H -
+        NO_REC_CONTENT_H -
+        POSTER_FIT_BUFFER;
+    const byHeight = Math.floor(available / POSTER_ASPECT);
+    return Math.max(POSTER_MIN_W, Math.min(POSTER_MAX_W, byHeight));
+}
+// Full-screen dim that fades in with the keyboard. With the keyboard up the
+// controls rise into the top ~12% of the screen — above GRADIENT_START, i.e.
+// over near-clear image — and no static ramp can serve both that and a
+// visible backdrop at rest. This layer resolves it: inert at rest, near-solid
+// while composing, restored on blur.
+const KEYBOARD_SCRIM_MAX = 0.9;
+// Cross-fade for the backdrop as it decodes (expo-image `transition`). The
+// screen sits on plain surfaceAlt until then — NOT the glyph fallback — so
+// the image never hard-swaps over a placeholder icon. See titleMeta.
+const IMAGE_FADE_MS = 200;
+// Confirmation beat: everything EXCEPT the stars fades back to this opacity
+// rather than unmounting. Unmounting was the bug — the column is
+// bottom-anchored, so removing content let the survivors drop down and the
+// "★ N" popped somewhere other than where the stars had just been. Fading
+// keeps every box exactly where it was.
+const CONFIRM_DIM_OPACITY = 0.3;
+const CONFIRM_DIM_MS = 150;
 // Confirmation beat duration — how long the "row collapses, ★ N pops" plays
 // after Done before onSubmit fires (and the parent closes the sheet). The
 // collapse timing + pop spring below are scaled to fill this window so the
@@ -96,6 +219,21 @@ const CONFIRM_BEAT_MS = 1000;
 // Collapse of the stars row (scales/fades toward center). ~60% of the beat,
 // so the row is gone with a beat of breathing room before onSubmit fires.
 const CONFIRM_COLLAPSE_MS = 600;
+
+// Catalogue metadata for the image zone + meta line, read from public.titles
+// on open. `null` (the state's initial value) means STILL LOADING — the zone
+// shows plain surfaceAlt with no glyph. A resolved object with a null
+// backdropPath means "confirmed no backdrop / no catalogue row" and IS the
+// glyph-fallback signal. Keeping those two cases distinct is what prevents a
+// glyph→image hard swap.
+interface TitleMeta {
+    backdropPath: string | null;
+    // Independent of backdropPath — a catalogue row can have one and not
+    // the other, so the poster renders (or is omitted) on its own merits.
+    posterPath: string | null;
+    title: string | null;
+    year: string | null;
+}
 
 // Half-scale (1-10) rating → display stars number, e.g. 7 -> "3.5", 10 -> "5".
 function formatStarsLabel(rating: number): string {
@@ -148,11 +286,160 @@ function valueFromRowX(localX: number, rowWidth: number): number {
     return Math.max(1, Math.min(HALF_COUNT, idx + 1));
 }
 
-// Bottom-sheet star rating prompt used after a Watched transition.
-// Caller controls visible / busy / initialRating; the sheet owns
-// (a) the tentative selection the user is building toward Done and
-// (b) the press-in fill preview that lights stars while the finger
-// is down.
+// The control column, extracted for ONE reason: it is the only part of this
+// screen that reads safe-area insets, and it has to read them from the
+// SafeAreaProvider nested INSIDE the Modal.
+//
+// A React Native Modal renders into its own native window (a
+// UIViewController on iOS, a Dialog on Android) — outside the view the root
+// SafeAreaProvider measures. React context still flows through the Modal, so
+// a useSafeAreaInsets() call in the OUTER component silently returns the
+// ROOT window's insets, which is why the old close button sat too high.
+// Calling the hook here, under the nested provider, measures the modal's own
+// window. This is the pattern react-native-safe-area-context documents for
+// modals, and it only works because this component is a DESCENDANT of that
+// provider — moving the hook alone would have changed nothing.
+//
+// Everything else (shared values, the keyboard subscription) is passed down
+// so there's exactly one source for each and no duplicate subscriptions.
+function ContentColumn({
+    active,
+    frozenPad,
+    keyboardHeight,
+    keyboardProgress,
+    children,
+}: {
+    active: SharedValue<number>;
+    frozenPad: SharedValue<number>;
+    keyboardHeight: SharedValue<number>;
+    keyboardProgress: SharedValue<number>;
+    // Render prop, not plain children: the poster's size depends on the
+    // real insets, which only this component can read (see above), so the
+    // computed width has to flow DOWN from here rather than being worked
+    // out by the caller against the wrong window.
+    children: (posterWidth: number) => ReactNode;
+}) {
+    const insets = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
+    // Top clearance: status bar + the close button's band. Only binds when
+    // content OVERFLOWS (short content is bottom-anchored and never reaches
+    // up here) — it's what stops a tall rec-fork layout scrolling under
+    // either the status bar or the X.
+    const contentTopInset =
+        insets.top + spacing.base + CLOSE_BUTTON_SIZE;
+    // Keyboard-driven bottom padding lifts the controls above the keyboard
+    // (-keyboardHeight) plus a constant lg gap, minus the home-indicator
+    // inset as the keyboard rises. While dismissing (active === 0) it holds
+    // frozenPad so the fade-out has no reflow.
+    const padStyle = useAnimatedStyle(() => {
+        let paddingBottom;
+        if (active.value === 1) {
+            paddingBottom =
+                -keyboardHeight.value +
+                spacing.lg +
+                insets.bottom * (1 - keyboardProgress.value);
+            frozenPad.value = paddingBottom;
+        } else {
+            paddingBottom = frozenPad.value;
+        }
+        return { paddingBottom };
+    });
+    const posterWidth = posterWidthFor(
+        windowHeight,
+        contentTopInset,
+        insets.bottom,
+    );
+    return (
+        <Reanimated.View
+            style={[
+                styles.contentColumn,
+                { paddingTop: contentTopInset },
+                padStyle,
+            ]}
+        >
+            {children(posterWidth)}
+        </Reanimated.View>
+    );
+}
+
+// Wraps a block that should recede — but NOT move — during the confirmation
+// beat. Stays mounted at all times so its box keeps its size and position in
+// the bottom-anchored column; only opacity changes, and pointerEvents goes
+// inert so a dimmed control can't be tapped mid-beat.
+function DimDuringConfirm({
+    confirming,
+    style,
+    children,
+}: {
+    confirming: boolean;
+    style?: StyleProp<ViewStyle>;
+    children: ReactNode;
+}) {
+    return (
+        <MotiView
+            animate={{ opacity: confirming ? CONFIRM_DIM_OPACITY : 1 }}
+            transition={{ type: 'timing', duration: CONFIRM_DIM_MS }}
+            pointerEvents={confirming ? 'none' : 'auto'}
+            style={style}
+        >
+            {children}
+        </MotiView>
+    );
+}
+
+// Top-left close. Its own component for the same reason as ContentColumn:
+// it needs the MODAL's safe-area inset, which only a descendant of the
+// nested SafeAreaProvider can read. Chip + size match the title page's
+// close button so the chrome doesn't shift between the two screens.
+//
+// Semantics are CLOSE WITHOUT RATING, not cancel: by the time this screen
+// is up, every call site has already committed status='watched' to the DB,
+// so there is nothing here to undo (handleSkip's own write path is
+// unchanged).
+function CloseButton({
+    confirming,
+    onPress,
+}: {
+    confirming: boolean;
+    onPress: () => void;
+}) {
+    const insets = useSafeAreaInsets();
+    return (
+        <DimDuringConfirm
+            confirming={confirming}
+            style={[
+                styles.closeButtonWrap,
+                { top: insets.top + spacing.base },
+            ]}
+        >
+            <Pressable
+                onPress={onPress}
+                hitSlop={spacing.sm}
+                accessibilityRole="button"
+                accessibilityLabel="Close without rating"
+                style={({ pressed }) => [
+                    styles.closeButton,
+                    {
+                        backgroundColor: onImage.chip,
+                        opacity: pressed ? 0.6 : 1,
+                    },
+                ]}
+            >
+                <X color={onImage.text} size={20} />
+            </Pressable>
+        </DimDuringConfirm>
+    );
+}
+
+// NOTE: despite the file/export name, this is now a FULL-SCREEN rating
+// SCREEN, not a bottom sheet — the title's backdrop fills the whole frame
+// behind the controls. The name is kept because four screens mount it as
+// `RatingSheet`; renaming is a mechanical follow-up, not a behaviour change.
+//
+// Star rating prompt shown after a Watched transition. Caller controls
+// visible / busy / initialRating; the screen owns (a) the tentative
+// selection the user is building toward Done and (b) the press-in fill
+// preview that lights stars while the finger is down.
 export function RatingSheet({
     visible,
     busy,
@@ -163,7 +450,10 @@ export function RatingSheet({
 }: RatingSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = getPalette(scheme);
-    const insets = useSafeAreaInsets();
+    // NO useSafeAreaInsets() here, deliberately: this component sits OUTSIDE
+    // the Modal, so the hook would report the ROOT window's insets, not the
+    // modal's. Everything inset-dependent lives in ContentColumn, under the
+    // SafeAreaProvider nested inside the Modal below.
     const router = useRouter();
     // Animated keyboard height (negative: 0 → -keyboardHeight) + progress (0
     // closed → 1 open) drive the panel's bottom padding so it docks above the
@@ -173,18 +463,19 @@ export function RatingSheet({
     // Mounted only while opening/open (mounts when the fetch resolves, not on
     // `visible`); stays mounted through the close animation.
     const [mounted, setMounted] = useState(false);
-    // 0 = closed (backdrop transparent, panel off-screen), 1 = open. Starts
-    // closed — the open effect drives it once the fetch settles.
+    // 0 = closed (screen fully transparent), 1 = open. Starts closed — the
+    // open effect drives it once the fetch settles. Drives the cross-fade.
     const progress = useSharedValue(0);
     // 1 while open/settling, 0 the instant dismissal starts — freezes the
     // keyboard-driven padding (frozenPad) so nothing reflows during the exit.
     const active = useSharedValue(0);
-    const frozenPad = useSharedValue(insets.bottom + spacing.lg);
-    // Panel height drives the slide distance; tall fallback until first
-    // onLayout so the panel starts fully off-screen.
-    const [sheetHeight, setSheetHeight] = useState(
-        Dimensions.get('window').height,
-    );
+    // Seeded WITHOUT the bottom inset (which this component can't read
+    // correctly — see above). It's a pre-first-frame fallback only: the
+    // animated style overwrites it on the first frame where active === 1,
+    // and it's never read before then because the Modal isn't mounted.
+    // Explicit <number>: the spacing tokens are `as const`, so the seed
+    // would otherwise narrow this to SharedValue<24>.
+    const frozenPad = useSharedValue<number>(spacing.lg);
     // Tentative selection — committed only when Done is pressed.
     // Tapping the same half-star value a second time deselects it.
     const [selected, setSelected] = useState<number | null>(initialRating);
@@ -218,6 +509,14 @@ export function RatingSheet({
     const [initialPrivate, setInitialPrivate] = useState(false);
     // While the sheet's own writes (comment / note / visibility) are in flight.
     const [submitting, setSubmitting] = useState(false);
+    // Image-zone + meta-line source. null = still loading (see TitleMeta).
+    const [titleMeta, setTitleMeta] = useState<TitleMeta | null>(null);
+    // True while the note field holds focus — i.e. the keyboard is up (the
+    // note is the sheet's only input). Drives the compact keyboard layout:
+    // the heading drops to headingDisplay/1 line, the meta line hides, and
+    // the secondary group (visibility + recommend + review) collapses so the
+    // note and the pinned actions stay reachable. Everything returns on blur.
+    const [noteFocused, setNoteFocused] = useState(false);
 
     // Refs mirror state for the PanResponder closures: the responder is
     // created once via useRef, so its handlers can't close over the
@@ -298,6 +597,8 @@ export function RatingSheet({
         setHiddenFromFriends(false);
         setInitialPrivate(false);
         setSubmitting(false);
+        setTitleMeta(null);
+        setNoteFocused(false);
         lastHapticValueRef.current = null;
         openedRef.current = false;
 
@@ -314,10 +615,24 @@ export function RatingSheet({
         };
         const timer = setTimeout(open, OPEN_MAX_WAIT_MS);
 
+        // Resolves the image zone out of its loading state. Any path that
+        // can't produce a backdrop lands here with nulls, which is the
+        // glyph-fallback signal (distinct from the null STATE = loading).
+        const resolveTitleMeta = (meta: TitleMeta) => {
+            if (!cancelled) setTitleMeta(meta);
+        };
+        const NO_TITLE: TitleMeta = {
+            backdropPath: null,
+            posterPath: null,
+            title: null,
+            year: null,
+        };
+
         (async () => {
             try {
                 if (tmdbId === null || mediaType === null) {
                     if (!cancelled) setReceived([]);
+                    resolveTitleMeta(NO_TITLE);
                     return;
                 }
                 const {
@@ -326,9 +641,10 @@ export function RatingSheet({
                 const uid = session?.user.id ?? null;
                 if (!uid) {
                     if (!cancelled) setReceived([]);
+                    resolveTitleMeta(NO_TITLE);
                     return;
                 }
-                const [recs, itemRow] = await Promise.all([
+                const [recs, itemRow, titleByKey] = await Promise.all([
                     getReceivedRecsForTitle(uid, tmdbId, mediaType),
                     supabase
                         .from('items')
@@ -337,6 +653,13 @@ export function RatingSheet({
                         .eq('tmdb_id', tmdbId)
                         .eq('media_type', mediaType)
                         .maybeSingle(),
+                    // Catalogue read for the image zone + meta line. `.catch`
+                    // isolates it: a titles failure must not reject the whole
+                    // Promise.all and take the rec fork down with it — the
+                    // sheet's job is rating, the image is decoration.
+                    fetchTitlesByItems([
+                        { tmdb_id: tmdbId, media_type: mediaType },
+                    ]).catch(() => null),
                 ]);
                 if (cancelled) return;
                 const isPrivate = itemRow.data?.visibility === 'private';
@@ -345,9 +668,20 @@ export function RatingSheet({
                 setSelectedSenderIds(new Set(recs.map((r) => r.fromUserId)));
                 setInitialPrivate(isPrivate);
                 setHiddenFromFriends(isPrivate);
+                const row =
+                    titleByKey?.get(`${mediaType}:${tmdbId}`) ?? null;
+                resolveTitleMeta({
+                    backdropPath: row?.backdrop_path ?? null,
+                    posterPath: row?.poster_path ?? null,
+                    title: row?.title ?? null,
+                    year: row?.release_date
+                        ? row.release_date.slice(0, 4)
+                        : null,
+                });
             } catch (err) {
                 console.warn('rating sheet: received recs fetch failed', err);
                 if (!cancelled) setReceived([]);
+                resolveTitleMeta(NO_TITLE);
             } finally {
                 // Content now known — open (or the timer already did).
                 clearTimeout(timer);
@@ -390,26 +724,24 @@ export function RatingSheet({
         void maybeRequestReviewAfterRecRating(facts);
     }, [mounted]);
 
-    const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
-    // Panel slide (translateY) always runs — it IS the exit animation. The
-    // keyboard-driven bottom padding lifts content above the keyboard
-    // (-keyboardHeight) plus a constant lg gap, minus the home-indicator inset
-    // as the keyboard rises. While dismissing (active === 0) it holds frozenPad
-    // so the exit is a pure slide with no reflow.
-    const sheetStyle = useAnimatedStyle(() => {
-        const translateY = interpolate(progress.value, [0, 1], [sheetHeight, 0]);
-        let paddingBottom;
-        if (active.value === 1) {
-            paddingBottom =
-                -keyboardHeight.value +
-                spacing.lg +
-                insets.bottom * (1 - keyboardProgress.value);
-            frozenPad.value = paddingBottom;
-        } else {
-            paddingBottom = frozenPad.value;
-        }
-        return { transform: [{ translateY }], paddingBottom };
-    });
+    // The whole screen cross-fades — this IS the entrance and the exit.
+    // No translateY: opened from the title page, whose hero is this same
+    // backdrop, a dissolve reads as that hero becoming the rating screen.
+    const rootFadeStyle = useAnimatedStyle(() => ({
+        opacity: progress.value,
+    }));
+    // The control column's keyboard-aware padding moved into ContentColumn
+    // (it needs the modal's own bottom inset) — see that component.
+    // Keyboard scrim — see KEYBOARD_SCRIM_MAX. Rides the same
+    // keyboardProgress everything else keyboard-driven reads, so it arrives
+    // exactly as the controls rise into the clear top of the frame.
+    const keyboardScrimStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(
+            keyboardProgress.value,
+            [0, 1],
+            [0, KEYBOARD_SCRIM_MAX],
+        ),
+    }));
 
     // Captures both the row's width and its absolute page-X position
     // (via measure()). pageX is required to translate the gesture's
@@ -425,12 +757,18 @@ export function RatingSheet({
     // Row-level drag gesture. Quick taps still go through the per-half
     // Pressables (onStartShouldSet returns false); only crossing the
     // DRAG_THRESHOLD_PX claims the responder for drag-to-rate.
+    //
+    // Axis dominance (|dx| > |dy|) is REQUIRED, not cosmetic: the control
+    // zone is a ScrollView now, and the old "either axis past the threshold"
+    // test meant a vertical swipe that happened to start on the stars set a
+    // rating instead of scrolling the sheet. Claiming only on a
+    // horizontally-dominant drag leaves vertical gestures to the ScrollView.
     const panResponder = useRef(
         PanResponder.create({
             onStartShouldSetPanResponder: () => false,
             onMoveShouldSetPanResponder: (_, g) =>
-                Math.abs(g.dx) > DRAG_THRESHOLD_PX ||
-                Math.abs(g.dy) > DRAG_THRESHOLD_PX,
+                Math.abs(g.dx) > Math.abs(g.dy) &&
+                Math.abs(g.dx) > DRAG_THRESHOLD_PX,
             onPanResponderGrant: (_, g) => {
                 const localX = g.x0 - rowPageXRef.current;
                 const value = valueFromRowX(localX, rowWidthRef.current);
@@ -635,6 +973,26 @@ export function RatingSheet({
     const headerText = recFork
         ? `Tell ${recipientLabel} what you thought`
         : 'What did you think?';
+    // The title is its own headline in the identity group now, so the meta
+    // line below it is just "2024 · Film". Parts drop out cleanly when the
+    // catalogue row is thin (no release date), so a sparse row degrades to
+    // "Film" rather than leaving a stray separator.
+    const titleText = titleMeta?.title ?? null;
+    const metaLine = [
+        titleMeta?.year ?? null,
+        mediaType === 'tv' ? 'TV' : mediaType === 'movie' ? 'Film' : null,
+    ]
+        .filter(Boolean)
+        .join(' · ');
+    // Backdrop resolved and present → image. Resolved and absent → glyph.
+    // Still loading (titleMeta === null) → neither; plain surfaceAlt.
+    const backdropPath = titleMeta?.backdropPath ?? null;
+    const titleMetaResolved = titleMeta !== null;
+    // Null → the poster is omitted and the identity group closes up around
+    // it. The whole group (poster included) is hidden in the compact
+    // note-focused state — it's the biggest single thing we can reclaim to
+    // keep Send above the keyboard.
+    const posterPath = titleMeta?.posterPath ?? null;
     // Chips only when there's more than one sender to pick between.
     const showChips = recFork && recs.length > 1;
     // A comment has content when there's a note, or a rating being shared.
@@ -666,7 +1024,7 @@ export function RatingSheet({
     // fall back to the committed selection.
     const effectiveRating = pressedRating ?? selected;
     // Rating is optional: the primary enables when there's ANYTHING to commit —
-    // a rating, a non-empty note, or a privacy change. All-empty → use Skip.
+    // a rating, a non-empty note, or a privacy change. All-empty → close.
     // The note only counts when it can actually be written — i.e. in the rec
     // fork (2a). Outside it the field is hidden and there's no target, so a
     // leftover note (typed, then privacy toggled ON) must not keep the button
@@ -683,94 +1041,200 @@ export function RatingSheet({
             visible={mounted}
             transparent
             animationType="none"
+            // Full-screen now: on Android the modal must draw under the
+            // status bar or the image stops short of it and the top strip
+            // reads as a band again.
+            statusBarTranslucent
             onRequestClose={handleSkip}
         >
-            <View style={styles.backdrop}>
-                {/* Backdrop: fades only, never moves. */}
-                <AnimatedPressable
-                    style={[
-                        StyleSheet.absoluteFill,
-                        { backgroundColor: palette.overlay },
-                        backdropStyle,
-                    ]}
-                    onPress={handleSkip}
-                />
-                {/* Panel: slides up; on top of the backdrop so taps on it
-                    don't fall through to dismiss. */}
-                <Reanimated.View
-                    onLayout={(e) =>
-                        setSheetHeight(e.nativeEvent.layout.height)
-                    }
-                    style={[
-                        styles.sheet,
-                        { backgroundColor: palette.surface },
-                        sheetStyle,
-                    ]}
-                >
-                    {/* Header + chips. The received-recs lookup runs before the
-                        open slide (fetch-before-open), so headerText / recs are
-                        already correct here — no fade gate needed; the sheet
-                        opens at its true final height. */}
-                    <Text
+            {/* Nested provider — measures THIS modal's window rather than
+                the app root's, so ContentColumn's insets are the real ones.
+                Seeded with initialWindowMetrics so the first frame has
+                sensible values instead of zeros (which would show as a
+                one-frame jump in the top padding) before measurement lands. */}
+            <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+            {/* Root — the whole screen, cross-fading on `progress`. Base
+                colour is the ground so the dissolve lands on solid navy
+                rather than showing the page beneath through a half-drawn
+                image. No dismiss-on-tap layer: the top-left X and hardware
+                back are the exits (both handleSkip). */}
+            <Reanimated.View
+                style={[
+                    StyleSheet.absoluteFill,
+                    { backgroundColor: palette.bg },
+                    rootFadeStyle,
+                ]}
+            >
+                {/* LAYER 1 — the backdrop, full screen. Three states, and
+                    the loading/absent split is what avoids a glyph→image
+                    hard swap: present → cross-fades in over bare
+                    surfaceAlt; resolved-but-absent → FilmStrip; still
+                    loading → neither. The glyph sits high in the frame
+                    (not screen-centred) so it lands where the image reads
+                    rather than under the gradient's solid half. */}
+                {backdropPath ? (
+                    <Image
+                        source={{ uri: imageUrl(backdropPath, 'w780') }}
+                        style={StyleSheet.absoluteFillObject}
+                        contentFit="cover"
+                        blurRadius={BACKDROP_BLUR}
+                        transition={IMAGE_FADE_MS}
+                    />
+                ) : (
+                    <View
                         style={[
-                            typography.heading,
-                            styles.title,
+                            StyleSheet.absoluteFillObject,
+                            { backgroundColor: palette.surfaceAlt },
+                        ]}
+                    >
+                        {titleMetaResolved ? (
+                            <View style={styles.imageFallback}>
+                                <FilmStrip
+                                    color={palette.textMuted}
+                                    size={48}
+                                />
+                            </View>
+                        ) : null}
+                    </View>
+                )}
+                {/* LAYER 1b — flat dim over the whole image (IMAGE_DIM), so
+                    even the clear top of the frame is knocked back and the
+                    close X always has something to sit on. */}
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        {
+                            backgroundColor: palette.bg,
+                            opacity: IMAGE_DIM,
+                        },
+                    ]}
+                />
+                {/* LAYER 2 — the vertical ramp. PURE-ALPHA pair
+                    (bgTransparent → bg); a 'transparent' → bg ramp greys
+                    the midpoint. Clear above GRADIENT_START, solid below
+                    GRADIENT_SOLID — see those constants. */}
+                <LinearGradient
+                    colors={[
+                        palette.bgTransparent,
+                        palette.bg,
+                        palette.bg,
+                    ]}
+                    locations={[GRADIENT_START, GRADIENT_SOLID, 1]}
+                    style={StyleSheet.absoluteFillObject}
+                    pointerEvents="none"
+                />
+                {/* LAYER 3 — keyboard scrim. Inert at rest. */}
+                <Reanimated.View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        { backgroundColor: palette.bg },
+                        keyboardScrimStyle,
+                    ]}
+                />
+
+                    {/* LAYER 4 — CONTROL COLUMN. Bottom-anchored
+                        (justifyContent flex-end) so short content sits low
+                        over the solid part of the ramp and tall content
+                        grows upward. paddingTop keeps an overflowing layout
+                        clear of the status bar; the ScrollView absorbs the
+                        overflow while the actions below stay pinned. */}
+                    <ContentColumn
+                        active={active}
+                        frozenPad={frozenPad}
+                        keyboardHeight={keyboardHeight}
+                        keyboardProgress={keyboardProgress}
+                    >
+                    {(posterWidth) => (
+                    <>
+                    <ScrollView
+                        style={styles.scroll}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        showsVerticalScrollIndicator={false}
+                    >
+                    {/* IDENTITY GROUP — what is being rated: the sharp
+                        poster, the title directly under it, then year ·
+                        type. Hidden WHOLESALE in the compact note-focused
+                        state (gating the group, not each child, so no stray
+                        lg gap is left behind). The title is no longer part
+                        of the meta line — it's the group's own headline. */}
+                    {!noteFocused ? (
+                        <DimDuringConfirm
+                            confirming={confirming}
+                            style={styles.identityGroup}
+                        >
+                            {posterPath ? (
+                                <Image
+                                    source={{
+                                        uri: imageUrl(posterPath, 'w342'),
+                                    }}
+                                    style={[
+                                        styles.poster,
+                                        {
+                                            width: posterWidth,
+                                            height: Math.round(
+                                                posterWidth * POSTER_ASPECT,
+                                            ),
+                                        },
+                                    ]}
+                                    contentFit="cover"
+                                    transition={IMAGE_FADE_MS}
+                                />
+                            ) : null}
+                            <View style={styles.titleBlock}>
+                                {titleText ? (
+                                    <Text
+                                        numberOfLines={2}
+                                        style={[
+                                            typography.headingDisplay,
+                                            styles.centredText,
+                                            { color: palette.text },
+                                        ]}
+                                    >
+                                        {titleText}
+                                    </Text>
+                                ) : null}
+                                {metaLine.length > 0 ? (
+                                    <Text
+                                        numberOfLines={1}
+                                        style={[
+                                            typography.caption,
+                                            styles.centredText,
+                                            { color: palette.textMuted },
+                                        ]}
+                                    >
+                                        {metaLine}
+                                    </Text>
+                                ) : null}
+                            </View>
+                        </DimDuringConfirm>
+                    ) : null}
+                    {/* ACTION GROUP — the question, the stars it's asking
+                        about, and the privacy row, as one tight unit. The
+                        question sits a size ABOVE the title but in the body
+                        semibold face, so identity and instruction read as
+                        different kinds of thing rather than competing
+                        headlines. The received-recs lookup runs before the
+                        open fade, so headerText is already correct here; no
+                        fade gate. */}
+                    <View style={styles.actionGroup}>
+                    <DimDuringConfirm
+                        confirming={confirming}
+                        style={styles.questionWrap}
+                    >
+                    <Text
+                        numberOfLines={noteFocused ? 1 : 2}
+                        style={[
+                            styles.question,
+                            styles.centredText,
                             { color: palette.text },
                         ]}
                     >
                         {headerText}
                     </Text>
-                    {/* Rec case with multiple senders: recipient chips, all
-                        pre-selected, tap to toggle who the note goes to. */}
-                    {showChips && !confirming ? (
-                        <View style={styles.chipsRow}>
-                            {recs.map((r) => {
-                                const on = selectedSenderIds.has(r.fromUserId);
-                                return (
-                                    <Pressable
-                                        key={r.fromUserId}
-                                        onPress={() =>
-                                            toggleSender(r.fromUserId)
-                                        }
-                                        disabled={busy}
-                                        accessibilityRole="button"
-                                        accessibilityState={{ selected: on }}
-                                        style={[
-                                            styles.chip,
-                                            {
-                                                borderColor: on
-                                                    ? palette.accent
-                                                    : palette.border,
-                                                backgroundColor: on
-                                                    ? palette.accentWash
-                                                    : 'transparent',
-                                                opacity: busy ? 0.6 : 1,
-                                            },
-                                        ]}
-                                    >
-                                        <Avatar
-                                            avatarUrl={r.sender.avatarUrl}
-                                            displayName={r.sender.displayName}
-                                            seedId={r.fromUserId}
-                                            size={20}
-                                        />
-                                        <Text
-                                            style={[
-                                                typography.caption,
-                                                {
-                                                    color: on
-                                                        ? palette.accent
-                                                        : palette.textMuted,
-                                                },
-                                            ]}
-                                        >
-                                            {firstNameOf(r.sender.displayName)}
-                                        </Text>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
-                    ) : null}
+                    </DimDuringConfirm>
                     <View style={styles.ratingArea}>
                     <MotiView
                         // Collapses toward center as the confirmation beat
@@ -922,61 +1386,167 @@ export function RatingSheet({
                         </MotiView>
                     ) : null}
                     </View>
-                    {/* Done / Skip hide during the confirmation beat so the
-                        "★ N" stands alone before the sheet closes. */}
-                    {!confirming ? (
-                        <>
-                            {/* Note + toggles. Content is known before the open
-                                slide (fetch-before-open), so recFork / placeholder
-                                are correct here — no fade gate. */}
-                            {/* Rec case (and not private): append the rating to
-                                the comment when ON. Default ON. Beneath the
-                                stars; collapses when Hidden-from-friends is ON. */}
-                            {recFork ? (
-                                <View style={styles.toggleRow}>
+                    {/* "Loved it? Send it to a friend" — appears once the
+                        rating reaches 4 stars (selected >= 8, the same
+                        SUGGEST_MIN_RATING bar library/add.tsx uses). It is
+                        ALWAYS rendered while not note-focused and only
+                        fades: dragging the stars across the threshold must
+                        not move the visibility row or anything below it, so
+                        the line's height stays reserved at every rating.
+                        Routes to the same recommend screen the outlined
+                        button used to. */}
+                    {!noteFocused ? (
+                        <DimDuringConfirm confirming={confirming}>
+                            <MotiView
+                                animate={{ opacity: canRecommend ? 1 : 0 }}
+                                transition={{
+                                    type: 'timing',
+                                    duration: RECOMMEND_FADE_MS,
+                                }}
+                                pointerEvents={
+                                    canRecommend ? 'auto' : 'none'
+                                }
+                            >
+                                <Pressable
+                                    onPress={() =>
+                                        router.push(
+                                            `/title/${mediaType}/${tmdbId}/recommend`,
+                                        )
+                                    }
+                                    disabled={busy || !canRecommend}
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Send it to a friend"
+                                    style={({ pressed }) => [
+                                        styles.recommendLine,
+                                        { opacity: pressed ? 0.6 : 1 },
+                                    ]}
+                                >
+                                    <PaperPlaneTilt
+                                        color={palette.accent}
+                                        size={16}
+                                    />
                                     <Text
+                                        numberOfLines={1}
                                         style={[
                                             typography.body,
-                                            { color: palette.text },
+                                            { color: palette.accent },
                                         ]}
                                     >
-                                        Share rating with {recipientLabel}
+                                        Loved it? Send it to a friend
                                     </Text>
-                                    <Toggle
-                                        value={shareRating}
-                                        onValueChange={setShareRating}
-                                        palette={palette}
-                                        disabled={busy}
-                                    />
+                                </Pressable>
+                            </MotiView>
+                        </DimDuringConfirm>
+                    ) : null}
+                    {/* Privacy — a quiet caption-sized row directly under
+                        the stars, centred with the rest of the column. NOT
+                        hidden in the compact note-focused state: it's one
+                        line and it's relevant to what's being written.
+                        Unified polarity app-wide: ON = shared, OFF =
+                        private — same phrasing + switch direction as the
+                        title page's row. The internal state
+                        (hiddenFromFriends) and the write path are
+                        unchanged; only the presentation moved. */}
+                    <DimDuringConfirm
+                        confirming={confirming}
+                        style={styles.visibilityRow}
+                    >
+                            <Text
+                                style={[
+                                    typography.caption,
+                                    { color: palette.textMuted },
+                                ]}
+                            >
+                                Visible to friends
+                            </Text>
+                            <Toggle
+                                value={!hiddenFromFriends}
+                                onValueChange={(v) =>
+                                    setHiddenFromFriends(!v)
+                                }
+                                palette={palette}
+                                disabled={busy}
+                            />
+                    </DimDuringConfirm>
+                    </View>
+                    {/* REC-FORK GROUP — who the note goes to, whether the
+                        rating rides along, and the note itself. One group:
+                        tight md rhythm inside, lg gap to its neighbours.
+                        Content is known before the open slide, so recFork is
+                        correct here — no fade gate. Sits BELOW the stars now
+                        (the chips used to lead the sheet above them), so the
+                        rating stays the hero control. */}
+                    {recFork ? (
+                        <DimDuringConfirm
+                            confirming={confirming}
+                            style={styles.recGroup}
+                        >
+                            {/* Multiple senders: recipient chips, all
+                                pre-selected, tap to toggle who the note
+                                goes to. */}
+                            {showChips ? (
+                                <View style={styles.chipsRow}>
+                                    {recs.map((r) => {
+                                        const on = selectedSenderIds.has(
+                                            r.fromUserId,
+                                        );
+                                        return (
+                                            <Pressable
+                                                key={r.fromUserId}
+                                                onPress={() =>
+                                                    toggleSender(r.fromUserId)
+                                                }
+                                                disabled={busy}
+                                                accessibilityRole="button"
+                                                accessibilityState={{
+                                                    selected: on,
+                                                }}
+                                                style={[
+                                                    styles.chip,
+                                                    {
+                                                        borderColor: on
+                                                            ? palette.accent
+                                                            : palette.border,
+                                                        backgroundColor: on
+                                                            ? palette.accentWash
+                                                            : 'transparent',
+                                                        opacity: busy ? 0.6 : 1,
+                                                    },
+                                                ]}
+                                            >
+                                                <Avatar
+                                                    avatarUrl={
+                                                        r.sender.avatarUrl
+                                                    }
+                                                    displayName={
+                                                        r.sender.displayName
+                                                    }
+                                                    seedId={r.fromUserId}
+                                                    size={20}
+                                                />
+                                                <Text
+                                                    style={[
+                                                        typography.caption,
+                                                        {
+                                                            color: on
+                                                                ? palette.accent
+                                                                : palette.textMuted,
+                                                        },
+                                                    ]}
+                                                >
+                                                    {firstNameOf(
+                                                        r.sender.displayName,
+                                                    )}
+                                                </Text>
+                                            </Pressable>
+                                        );
+                                    })}
                                 </View>
                             ) : null}
-                            {/* Note only in the rec fork — it posts to the
-                                sender's rec (2a). Outside it (no-rec, or a
-                                private rec) there's no target, so no field. */}
-                            {recFork ? (
-                                <TextInput
-                                    value={note}
-                                    onChangeText={(v) =>
-                                        setNote(v.slice(0, NOTE_MAX))
-                                    }
-                                    editable={!busy}
-                                    multiline
-                                    maxLength={NOTE_MAX}
-                                    placeholder="Add a note"
-                                    placeholderTextColor={palette.textMuted}
-                                    style={[
-                                        styles.noteInput,
-                                        typography.body,
-                                        {
-                                            color: palette.text,
-                                            backgroundColor: palette.bg,
-                                        },
-                                    ]}
-                                />
-                            ) : null}
-                            {/* Privacy — marks the item private. Default OFF.
-                                Shown in both cases; ON collapses the rec
-                                framing above (chips + share-rating toggle). */}
+                            {/* Append the rating to the comment when ON.
+                                Default ON. Collapses with the whole rec
+                                framing when Visible-to-friends is OFF. */}
                             <View style={styles.toggleRow}>
                                 <Text
                                     style={[
@@ -984,145 +1554,87 @@ export function RatingSheet({
                                         { color: palette.text },
                                     ]}
                                 >
-                                    Visible to friends
+                                    Share rating with {recipientLabel}
                                 </Text>
-                                {/* Unified polarity app-wide: ON = shared,
-                                    OFF = private — same phrasing + switch
-                                    direction as the title page's row. The
-                                    internal state (hiddenFromFriends) and
-                                    the write path are unchanged; only the
-                                    label and switch direction flipped. */}
                                 <Toggle
-                                    value={!hiddenFromFriends}
-                                    onValueChange={(v) =>
-                                        setHiddenFromFriends(!v)
-                                    }
+                                    value={shareRating}
+                                    onValueChange={setShareRating}
                                     palette={palette}
                                     disabled={busy}
                                 />
                             </View>
-                            {/* Quiet, always-present entry points — plain
-                                links, not popups: nothing to dismiss, no
-                                timer, no cooldown, ignorable by anyone who
-                                only wants to rate. The conditional render IS
-                                the rate-limit (a high-rating streak just
-                                shows the same quiet link/row every time, not
-                                a stacking series of interruptions). The
-                                rating itself is written on Done as usual;
-                                these are pure navigation add-ons with no
-                                effect on submit.
-                                — Write a review: shown whenever there's a
-                                  real title to route to.
-                                — Recommend to a friend: additionally gated
-                                  on the rating being 8+ (4★ and up — the same
-                                  SUGGEST_MIN_RATING bar library/add.tsx
-                                  already uses for recommend suggestions).
-                                  Routes to the
-                                  existing recommend screen, which already
-                                  pre-loads the title from the route params
-                                  and already handles recommending to someone
-                                  not yet on Seen via a title-carrying invite
-                                  link that auto-friends on claim — nothing
-                                  new there, this only surfaces it.
-                                When both qualify they share ONE quiet row
-                                (two independently-tappable accent labels,
-                                middle-dot separated) instead of stacking two
-                                separate blocks. */}
-                            {canWriteReview ? (
-                                canRecommend ? (
-                                    <View style={styles.linkRow}>
-                                        <Pressable
-                                            onPress={() =>
-                                                router.push(
-                                                    `/title/${mediaType}/${tmdbId}/review`,
-                                                )
-                                            }
-                                            disabled={busy}
-                                            hitSlop={spacing.sm}
-                                            accessibilityRole="button"
-                                            accessibilityLabel="Write a review"
-                                            style={({ pressed }) => [
-                                                {
-                                                    opacity:
-                                                        pressed || busy
-                                                            ? 0.6
-                                                            : 1,
-                                                },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    typography.body,
-                                                    { color: palette.accent },
-                                                ]}
-                                            >
-                                                Write a review
-                                            </Text>
-                                        </Pressable>
-                                        <Text
-                                            style={[
-                                                typography.body,
-                                                { color: palette.textMuted },
-                                            ]}
-                                        >
-                                            {' '}
-                                            ·{' '}
-                                        </Text>
-                                        <Pressable
-                                            onPress={() =>
-                                                router.push(
-                                                    `/title/${mediaType}/${tmdbId}/recommend`,
-                                                )
-                                            }
-                                            disabled={busy}
-                                            hitSlop={spacing.sm}
-                                            accessibilityRole="button"
-                                            accessibilityLabel="Recommend to a friend"
-                                            style={({ pressed }) => [
-                                                {
-                                                    opacity:
-                                                        pressed || busy
-                                                            ? 0.6
-                                                            : 1,
-                                                },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    typography.body,
-                                                    { color: palette.accent },
-                                                ]}
-                                            >
-                                                Recommend to a friend
-                                            </Text>
-                                        </Pressable>
-                                    </View>
-                                ) : (
-                                    <Pressable
-                                        onPress={() =>
-                                            router.push(
-                                                `/title/${mediaType}/${tmdbId}/review`,
-                                            )
-                                        }
-                                        disabled={busy}
-                                        hitSlop={spacing.sm}
-                                        accessibilityRole="button"
-                                        accessibilityLabel="Write a review"
-                                        style={({ pressed }) => [
-                                            styles.writeReviewLink,
-                                            { opacity: pressed || busy ? 0.6 : 1 },
+                            {/* Note only in the rec fork — it posts to the
+                                sender's rec (2a). Outside it (no-rec, or a
+                                private rec) there's no target, so no field.
+                                Focus drives the compact keyboard layout. */}
+                            <TextInput
+                                value={note}
+                                onChangeText={(v) =>
+                                    setNote(v.slice(0, NOTE_MAX))
+                                }
+                                onFocus={() => setNoteFocused(true)}
+                                onBlur={() => setNoteFocused(false)}
+                                editable={!busy}
+                                multiline
+                                maxLength={NOTE_MAX}
+                                placeholder="Add a note"
+                                placeholderTextColor={palette.textMuted}
+                                style={[
+                                    styles.noteInput,
+                                    typography.body,
+                                    {
+                                        color: palette.text,
+                                        backgroundColor: palette.surface,
+                                    },
+                                ]}
+                            />
+                        </DimDuringConfirm>
+                    ) : null}
+                    </ScrollView>
+                    {/* PINNED ACTIONS — outside the ScrollView so the primary
+                        stays on screen at any content height, font scale, or
+                        keyboard state. The rec-fork-with-keyboard case does
+                        scroll on a small phone, and Send must never be the
+                        thing you have to scroll to find. Recedes (never
+                        unmounts) during the confirmation beat — see
+                        DimDuringConfirm; handleSubmit's own re-entrancy guard
+                        already ignores taps while confirming, and
+                        pointerEvents makes that visible as well as true. */}
+                    <DimDuringConfirm
+                        confirming={confirming}
+                        style={styles.actions}
+                    >
+                            {/* Write a review — a plain centred accent
+                                text link, the quieter sibling of Done.
+                                Recommend is no longer here: it moved under
+                                the stars, where it can key off the rating.
+                                Hides in the compact note-focused state —
+                                reclaiming it keeps Send above the keyboard. */}
+                            {!noteFocused && canWriteReview ? (
+                                <Pressable
+                                    onPress={() =>
+                                        router.push(
+                                            `/title/${mediaType}/${tmdbId}/review`,
+                                        )
+                                    }
+                                    disabled={busy}
+                                    hitSlop={spacing.sm}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Write a review"
+                                    style={({ pressed }) => [
+                                        styles.reviewLink,
+                                        { opacity: pressed || busy ? 0.6 : 1 },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            typography.body,
+                                            { color: palette.accent },
                                         ]}
                                     >
-                                        <Text
-                                            style={[
-                                                typography.body,
-                                                { color: palette.accent },
-                                            ]}
-                                        >
-                                            Write a review
-                                        </Text>
-                                    </Pressable>
-                                )
+                                        Write a review
+                                    </Text>
+                                </Pressable>
                             ) : null}
                             <Pressable
                                 onPress={handleSubmit}
@@ -1148,32 +1660,19 @@ export function RatingSheet({
                                     {willSend ? 'Send' : 'Done'}
                                 </Text>
                             </Pressable>
-                            <Pressable
-                                onPress={handleSkip}
-                                disabled={busy || submitting}
-                                style={({ pressed }) => [
-                                    styles.skipButton,
-                                    {
-                                        opacity:
-                                            pressed || busy || submitting
-                                                ? 0.6
-                                                : 1,
-                                    },
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        typography.bodyEmphasis,
-                                        { color: palette.textMuted },
-                                    ]}
-                                >
-                                    Skip
-                                </Text>
-                            </Pressable>
-                        </>
-                    ) : null}
-                </Reanimated.View>
-            </View>
+                    </DimDuringConfirm>
+                    </>
+                    )}
+                    </ContentColumn>
+                {/* LAYER 5 — close. Sibling of the control column (not
+                    inside it) so it floats over the image at the screen's
+                    own top-left, independent of the column's padding. */}
+                <CloseButton
+                    confirming={confirming}
+                    onPress={handleSkip}
+                />
+            </Reanimated.View>
+            </SafeAreaProvider>
         </Modal>
     );
 }
@@ -1181,27 +1680,152 @@ export function RatingSheet({
 const STAR_CELL_SIZE = 44;
 
 const styles = StyleSheet.create({
-    backdrop: {
+    // No-backdrop fallback glyph: high in the frame (~22% down) rather than
+    // screen-centred, so it sits where the image would read instead of
+    // under the gradient's solid half and the controls.
+    imageFallback: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        paddingTop: '22%',
+    },
+    // The control column, over the image layers. Bottom-anchored so short
+    // content (no-rec) sits low on solid ground and tall content (rec-fork)
+    // grows upward toward the image. paddingTop is applied inline (it
+    // depends on insets, to clear the close X); paddingBottom is animated
+    // (keyboard-aware) via contentPadStyle.
+    contentColumn: {
         flex: 1,
         justifyContent: 'flex-end',
-    },
-    sheet: {
-        borderTopLeftRadius: radius.xl,
-        borderTopRightRadius: radius.xl,
         paddingHorizontal: spacing.base,
-        paddingTop: spacing.lg,
-        // paddingBottom is animated (keyboard-aware) via sheetStyle.
     },
-    title: {
+    scroll: {
+        flexShrink: 1,
+    },
+    // ONE lg (24) gap between every top-level group; groups keep their own
+    // tighter internal rhythm. Replaces the old flat md (12) step between
+    // every individual control, which made six unrelated rows read as one
+    // undifferentiated list.
+    //
+    // flexGrow + flex-end BOTTOM-ANCHOR the content. The ScrollView fills
+    // its slot rather than sizing to content, so without these the controls
+    // pinned to the TOP of that viewport — floating up onto the bright part
+    // of the image and leaving dead navy between them and the actions.
+    // Growing the content container to fill and packing its children to the
+    // end puts them directly above the pinned actions (whose own lg
+    // paddingTop is the gap), with the image showing in the space above.
+    // When content is TALLER than the viewport (rec-fork on a small phone)
+    // there's no free space to distribute, so both properties are inert and
+    // it scrolls exactly as before.
+    // alignItems centre puts the poster, heading group and stars group on
+    // one axis. Groups that need full width (the heading's text block, the
+    // rec-fork block) opt back out with alignSelf 'stretch'.
+    scrollContent: {
+        flexGrow: 1,
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        paddingTop: spacing.lg,
+        gap: spacing.lg,
+    },
+    centredText: {
         textAlign: 'center',
-        marginBottom: spacing.lg,
+    },
+    // The prompt. Spreads `heading` to inherit its face (body semibold) and
+    // only bumps the size — there's no 26pt tier in the type scale, and the
+    // face is what separates it from the title above (display face at 22).
+    // Bigger than the title on purpose: the title is what you're rating,
+    // this is the question being asked, and the question should lead.
+    question: {
+        ...typography.heading,
+        fontSize: 26,
+        lineHeight: 32,
+    },
+    // Stretches so the centred question text has the full column width to
+    // centre within — the DimDuringConfirm wrapper would otherwise shrink
+    // to the text's own width inside actionGroup's alignItems: 'center'.
+    questionWrap: {
+        alignSelf: 'stretch',
+    },
+    // WHAT is being rated: poster → title → year · type. Nested so the
+    // poster gets an md gap to the title block while the title and its
+    // meta line stay tight (xs) — two different gaps need two containers.
+    identityGroup: {
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    titleBlock: {
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    // The ASK: question → stars → privacy row, as one unit.
+    actionGroup: {
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    // Quiet centred row (label + switch side by side) rather than a
+    // full-width space-between settings row — it has to read as an aside
+    // under the stars, not as its own section.
+    visibilityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    // Rec-fork block: chips + share toggle + note, tight md rhythm inside.
+    // Stretches so the note field and toggle row keep full width inside the
+    // otherwise-centred column.
+    recGroup: {
+        alignSelf: 'stretch',
+        gap: spacing.md,
+    },
+    // Icon + label, centred. Always rendered (while not note-focused) and
+    // only faded, so its height is reserved at every rating — see the JSX.
+    recommendLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    // The quieter sibling of Done: a bare accent link, centred above it.
+    reviewLink: {
+        alignSelf: 'center',
+    },
+    // Absolute wrapper carrying the position; `top` is applied inline (it
+    // depends on the modal's own inset). Sits above the control column.
+    closeButtonWrap: {
+        position: 'absolute',
+        // Top-RIGHT, matching the title page's close button exactly (same
+        // corner, inset, 36pt circle and onImage.chip fill) so the control
+        // doesn't jump when the rating screen opens over that page.
+        right: spacing.base,
+        zIndex: 10,
+    },
+    closeButton: {
+        width: CLOSE_BUTTON_SIZE,
+        height: CLOSE_BUTTON_SIZE,
+        borderRadius: radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    // Pinned below the scroll — always on screen.
+    actions: {
+        paddingTop: spacing.lg,
+        gap: spacing.lg,
+    },
+    // Sharp poster over the blurred backdrop. Explicit width so the
+    // column's default `alignItems: stretch` can't stretch it — that's what
+    // keeps it left-aligned without an alignSelf.
+    // width/height are applied inline — they're derived from the available
+    // height (posterWidthFor), which needs the modal's real insets.
+    poster: {
+        ...posterFrame,
+        borderRadius: radius.sm,
     },
     chipsRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        justifyContent: 'center',
         gap: spacing.sm,
-        marginBottom: spacing.base,
     },
     chip: {
         flexDirection: 'row',
@@ -1213,24 +1837,13 @@ const styles = StyleSheet.create({
         paddingRight: spacing.sm,
         paddingVertical: spacing.xs,
     },
+    // marginTop dropped throughout this block — the group containers
+    // (recGroup / actionGroup / actions) and scrollContent's gap own the
+    // rhythm now, so individual controls carry no spacing of their own.
     toggleRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginTop: spacing.md,
-    },
-    writeReviewLink: {
-        alignSelf: 'center',
-        marginTop: spacing.md,
-    },
-    // Combined row when both the review and recommend links qualify —
-    // two Pressables + a middle-dot separator, laid out horizontally
-    // instead of stacking as two separate blocks.
-    linkRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        alignSelf: 'center',
-        marginTop: spacing.md,
     },
     noteInput: {
         minHeight: 72,
@@ -1238,13 +1851,18 @@ const styles = StyleSheet.create({
         borderRadius: radius.md,
         padding: spacing.md,
         textAlignVertical: 'top',
-        marginTop: spacing.md,
     },
     // Wraps the star row + the confirmation "★ N" overlay so the latter
     // centers over the same area as the row collapses out.
     ratingArea: {
         alignItems: 'center',
         justifyContent: 'center',
+        // FIXED height — the star row's natural size (44 cell + sm padding
+        // top and bottom), pinned so the beat can't resize it. The collapse
+        // is a transform and the "★ N" overlay is absolute, so neither
+        // affects layout today; stating the height explicitly means a later
+        // change to either can't start nudging the column.
+        height: STAR_CELL_SIZE + spacing.sm * 2,
     },
     confirmOverlay: {
         ...StyleSheet.absoluteFillObject,
@@ -1293,17 +1911,14 @@ const styles = StyleSheet.create({
     halfRight: {
         right: 0,
     },
+    // Full-width now (was a centred, padded-to-content pill) — it's the
+    // single filled-accent primary, and full width matches the outlined
+    // Recommend button above it so the two read as one action stack.
+    // Spacing is owned by `actions`.
     doneButton: {
-        alignSelf: 'center',
-        marginTop: spacing.md,
-        paddingHorizontal: spacing.xl,
+        alignItems: 'center',
+        justifyContent: 'center',
         paddingVertical: button.paddingVertical,
         borderRadius: button.borderRadius,
-    },
-    skipButton: {
-        alignSelf: 'center',
-        paddingHorizontal: spacing.base,
-        paddingVertical: spacing.md,
-        marginTop: spacing.sm,
     },
 });
