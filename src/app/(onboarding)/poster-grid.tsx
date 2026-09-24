@@ -374,7 +374,7 @@ export default function PosterGridScreen() {
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top']}
         >
-            <OnboardingProgress currentStep={4} totalSteps={4} />
+            <OnboardingProgress currentStep={5} totalSteps={5} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}

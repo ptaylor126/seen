@@ -123,7 +123,7 @@ export default function HandleScreen() {
                 );
             }
 
-            router.push('/(onboarding)/currently-watching');
+            router.push('/(onboarding)/source');
         } catch (err) {
             console.error('handle save failed:', err);
             Alert.alert(
@@ -150,7 +150,7 @@ export default function HandleScreen() {
             style={styles.root}
             edges={['top']}
         >
-            <OnboardingProgress currentStep={2} totalSteps={4} />
+            <OnboardingProgress currentStep={2} totalSteps={5} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -163,6 +163,15 @@ export default function HandleScreen() {
                     />
                 </Pressable>
             </View>
+            {/* Single field, no ScrollView needed — this screen is back to
+                just the handle question (the "How did you hear about
+                Seen?" chips that used to live here moved to their own step,
+                source.tsx, specifically because a handle field + a 7-chip
+                question + Continue couldn't all coexist above the keyboard
+                without the content outgrowing the keyboard-shrunk space.
+                A single field comfortably fits under KeyboardAvoidingView's
+                padding alone, same as (auth)/email.tsx and
+                profile/edit.tsx. */}
             <View style={styles.body}>
                 <Text style={[typography.display, { color: palette.text }]}>
                     Pick a handle

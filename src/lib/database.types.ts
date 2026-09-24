@@ -542,6 +542,7 @@ export type Database = {
           handle_changed_at: string | null
           id: string
           onboarded: boolean
+          signup_source: string | null
         }
         Insert: {
           avatar_url?: string | null
@@ -553,6 +554,7 @@ export type Database = {
           handle_changed_at?: string | null
           id: string
           onboarded?: boolean
+          signup_source?: string | null
         }
         Update: {
           avatar_url?: string | null
@@ -564,6 +566,7 @@ export type Database = {
           handle_changed_at?: string | null
           id?: string
           onboarded?: boolean
+          signup_source?: string | null
         }
         Relationships: []
       }

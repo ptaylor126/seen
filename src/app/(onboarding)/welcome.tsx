@@ -85,8 +85,8 @@ const HEADLINE_LIGHT_FACE = THEME_V2_ENABLED
     ? 'BricolageGrotesque_300Light'
     : fontFamily.default;
 
-const HEADLINE_PART_LIGHT = 'People who know your taste,';
-const HEADLINE_PART_BOLD = 'showing you what to watch';
+const HEADLINE_PART_LIGHT = 'What to watch,';
+const HEADLINE_PART_BOLD = 'from the people who actually know you.';
 
 // ONE continuous word list across both weight parts. The cascade indexes
 // into this array, so the 60 ms stagger runs unbroken straight through the
@@ -279,7 +279,7 @@ export default function WelcomeScreen() {
             style={[styles.root, { backgroundColor: palette.bg }]}
             edges={['top', 'bottom']}
         >
-            <OnboardingProgress currentStep={1} totalSteps={4} />
+            <OnboardingProgress currentStep={1} totalSteps={5} />
             <View style={styles.body}>
                 <Animated.View style={[styles.logoWrap, logoStyle]}>
                     <Image

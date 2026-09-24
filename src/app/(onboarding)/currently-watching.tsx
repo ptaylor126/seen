@@ -159,7 +159,7 @@ export default function CurrentlyWatchingScreen() {
             behavior="padding"
         >
         <SafeAreaView style={styles.root} edges={['top']}>
-            <OnboardingProgress currentStep={3} totalSteps={4} />
+            <OnboardingProgress currentStep={4} totalSteps={5} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
