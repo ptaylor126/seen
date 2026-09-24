@@ -2037,12 +2037,16 @@ const styles = StyleSheet.create({
         // with the search bar above them (SearchBarInput's row carries
         // marginHorizontal: spacing.base). One gutter down the screen.
         paddingHorizontal: spacing.base,
-        // xs (4) — the SAME first-section gap the populated home uses
-        // (styles.sectionFirst), so the search-bar-to-content distance is
-        // identical in both states: 8pt searchBarWrapper marginBottom + 4
-        // = 12pt. Was xxl (48), a leftover from when this block was
-        // vertically centred and rendered alone; that read as a void.
-        paddingTop: spacing.xs,
+        // xl (32) — deliberately NOT matched to the populated home's
+        // first-section gap (styles.sectionFirst, xs/4) any more. At 4 the
+        // total search-bar-to-content distance was 8pt searchBarWrapper
+        // marginBottom + 4 = 12pt, which read as cramped when the block
+        // below is a lone empty-state line rather than a dense section: an
+        // empty state needs the breathing room a populated one gets from
+        // its own content. Now 8 + 32 = 40pt. The populated home is
+        // untouched. (lg/24 → 32pt total is the nearer token to 36 if this
+        // overshoots on device.)
+        paddingTop: spacing.xl,
         gap: spacing.base,
     },
     socialEmptyLine: {
